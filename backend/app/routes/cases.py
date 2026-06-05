@@ -3,6 +3,8 @@ import asyncio
 import logging
 import os
 import importlib.util
+import shutil
+import tempfile
 from fastapi import APIRouter, HTTPException, Depends, Query, UploadFile, File
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
@@ -20,6 +22,11 @@ from app.services.langchain_loaders import DocumentLoaderService
 from app.services.document_classifier_service import DocumentClassifierService
 from app.services.document_processor import DocumentProcessor, get_document_processor
 from app.services.chat.entity_index_service import merge_case_entity_index
+from app.services.case_file_bytes import case_file_content_for_db
+from app.services.case_file_serve import (
+    case_file_bytes_response,
+    case_file_text_fallback_response,
+)
 from fastapi import BackgroundTasks
 from sqlalchemy import text
 
@@ -259,6 +266,13 @@ async def get_case(
     
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
+
+    try:
+        from app.services.bm25_case_prewarm import schedule_bm25_prewarm
+
+        schedule_bm25_prewarm(case_id)
+    except Exception:
+        pass
     
     return CaseResponse(
         id=case.id,
@@ -627,13 +641,15 @@ async def get_file_indexed_chunks(
 
     from app.services.chat.citation_payload import (
         build_retrieval_citations,
-        fetch_original_text_map_for_case,
+        fetch_originals_for_citation_docs,
     )
 
-    originals = fetch_original_text_map_for_case(db, case_id)
+    originals = fetch_originals_for_citation_docs(db, case_id, docs)
     citations = build_retrieval_citations(
         docs,
         original_text_by_file_id=originals or None,
+        case_id=case_id,
+        db=db,
     )
     chunks_out = []
     for idx, (doc, cit) in enumerate(zip(docs, citations)):
@@ -799,7 +815,7 @@ async def add_files_to_case(
                 file_type=file_type,
                 original_text="",          # filled by background task
                 file_path=relative_file_path,
-                file_content=content,
+                file_content=case_file_content_for_db(content),
                 processing_status="pending",
             )
             try:
@@ -845,7 +861,6 @@ async def add_files_to_case(
         case.file_names = [f.filename for f in all_files]
         db.commit()
 
-        # Launch background processing task
         import asyncio as _asyncio
         from app.services.file_processor_bg import process_files_background
 
@@ -853,10 +868,17 @@ async def add_files_to_case(
             try:
                 await _asyncio.to_thread(process_files_background, new_file_ids, case_id)
             except Exception as _e:
-                logger.error(f"Background processing task error for case {case_id}: {_e}", exc_info=True)
+                logger.error(
+                    f"Background processing task error for case {case_id}: {_e}",
+                    exc_info=True,
+                )
 
         _asyncio.create_task(_bg())
-        logger.info(f"Background processing started for {len(new_file_ids)} files in case {case_id}")
+        logger.info(
+            "Background processing started for %s files in case %s",
+            len(new_file_ids),
+            case_id,
+        )
 
         new_file_objs = db.query(FileModel).filter(FileModel.id.in_(new_file_ids)).all()
         return {
@@ -886,6 +908,184 @@ async def add_files_to_case(
             status_code=500,
             detail=f"Ошибка при добавлении файлов к делу: {str(e)}"
         )
+
+
+class GoogleDriveFileIn(BaseModel):
+    id: str = Field(..., min_length=1, max_length=128)
+    name: str = Field(..., min_length=1, max_length=512)
+    mime_type: str = Field(..., min_length=3, max_length=255)
+
+
+class GoogleDriveImportIn(BaseModel):
+    access_token: str = Field(..., min_length=20, max_length=4096)
+    files: List[GoogleDriveFileIn] = Field(..., min_length=1)
+
+
+@router.post("/{case_id}/import/google-drive")
+async def import_files_from_google_drive(
+    case_id: str,
+    body: GoogleDriveImportIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Import files selected in Google Picker into the case.
+
+    Uses the same disk + background pipeline as POST /{case_id}/files.
+    The access token is used only for this request (not stored).
+    """
+    max_files = config.GOOGLE_DRIVE_IMPORT_MAX_FILES
+    if len(body.files) > max_files:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Можно импортировать не более {max_files} файлов за раз",
+        )
+
+    case = db.query(Case).filter(
+        Case.id == case_id,
+        Case.user_id == current_user.id,
+    ).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Дело не найдено")
+
+    try:
+        from app.services.google_drive_import_service import (
+            DriveFileRef,
+            build_download_plan,
+            download_drive_file_to_path,
+        )
+        from app.services.case_file_ingest import (
+            persist_case_file_bytes,
+            refresh_case_file_metadata,
+            schedule_case_files_processing,
+            cleanup_absolute_paths,
+        )
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="Импорт Google Drive недоступен: не установлены зависимости google-api-python-client",
+        )
+
+    has_pdf = any(
+        (f.mime_type == "application/pdf")
+        or (f.mime_type == "application/vnd.google-apps.document")
+        or (f.mime_type == "application/vnd.google-apps.presentation")
+        or (f.name and f.name.lower().endswith(".pdf"))
+        for f in body.files
+    )
+    if has_pdf and importlib.util.find_spec("docling") is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Импорт PDF временно недоступен: не установлен пакет 'docling'. "
+                "Установите зависимости и перезапустите backend."
+            ),
+        )
+
+    new_file_ids: List[str] = []
+    saved_paths: List[str] = []
+    import_errors: List[dict] = []
+    temp_dir = tempfile.mkdtemp(prefix=f"gdrive_{case_id}_")
+
+    try:
+        for item in body.files:
+            ref = DriveFileRef(id=item.id, name=item.name, mime_type=item.mime_type)
+            temp_path = os.path.join(temp_dir, f"{item.id}_part")
+            try:
+                plan = build_download_plan(ref)
+                download_drive_file_to_path(
+                    body.access_token,
+                    plan,
+                    temp_path,
+                )
+                with open(temp_path, "rb") as fh:
+                    content = fh.read()
+                ingested = persist_case_file_bytes(
+                    db,
+                    case_id=case_id,
+                    filename=plan.output_filename,
+                    content=content,
+                    reconnect_db=_reconnect_db,
+                )
+                new_file_ids.append(ingested.file_id)
+                saved_paths.append(ingested.absolute_path)
+                logger.info(
+                    "Google Drive import queued file %s (%s) for case %s",
+                    ingested.file_id,
+                    ingested.filename,
+                    case_id,
+                )
+            except ValueError as ve:
+                import_errors.append({"name": item.name, "detail": str(ve)})
+                logger.warning(
+                    "Google Drive import skipped file %s (%s): %s",
+                    item.id,
+                    item.name,
+                    ve,
+                )
+            except Exception as exc:
+                import_errors.append(
+                    {"name": item.name, "detail": f"Ошибка скачивания: {str(exc)[:500]}"}
+                )
+                logger.error(
+                    "Google Drive import failed file %s (%s): %s",
+                    item.id,
+                    item.name,
+                    exc,
+                    exc_info=True,
+                )
+            finally:
+                try:
+                    if os.path.isfile(temp_path):
+                        os.remove(temp_path)
+                except OSError:
+                    pass
+
+        if not new_file_ids:
+            db.rollback()
+            cleanup_absolute_paths(saved_paths)
+            detail = import_errors[0]["detail"] if import_errors else "Не удалось импортировать файлы"
+            raise HTTPException(status_code=400, detail=detail)
+
+        refresh_case_file_metadata(db, case, case_id)
+        db.commit()
+
+        schedule_case_files_processing(case_id, new_file_ids)
+
+        new_file_objs = db.query(FileModel).filter(FileModel.id.in_(new_file_ids)).all()
+        all_files = db.query(FileModel).filter(FileModel.case_id == case_id).all()
+        return {
+            "files": [
+                {
+                    "id": f.id,
+                    "filename": f.filename,
+                    "file_type": f.file_type,
+                    "processing_status": f.processing_status,
+                    "created_at": f.created_at.isoformat() if f.created_at else None,
+                }
+                for f in new_file_objs
+            ],
+            "total": len(all_files),
+            "added": len(new_file_ids),
+            "new_file_ids": new_file_ids,
+            "status": "processing",
+            "errors": import_errors,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        cleanup_absolute_paths(saved_paths)
+        logger.error("Google Drive import failed for case %s: %s", case_id, e, exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ошибка импорта из Google Drive: {str(e)[:800]}",
+        )
+    finally:
+        try:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        except Exception:
+            pass
 
 
 @router.get("/{case_id}/processing-status")
@@ -922,6 +1122,14 @@ async def get_processing_status(
 
     all_done = all(s["status"] in ("ready", "error", "cancelled") for s in file_statuses)
     any_processing = any(s["status"] in ("pending", "processing") for s in file_statuses)
+
+    if all_done and not any_processing:
+        try:
+            from app.services.bm25_case_prewarm import schedule_bm25_prewarm
+
+            schedule_bm25_prewarm(case_id, force_rebuild=False)
+        except Exception:
+            pass
 
     return {
         "case_id": case_id,
@@ -1570,122 +1778,13 @@ async def get_file_content(
     
     if not file:
         raise HTTPException(status_code=404, detail="Файл не найден")
-    
-    # Определяем content type по расширению файла
-    import mimetypes
-    content_type, _ = mimetypes.guess_type(file.filename)
-    if not content_type:
-        # Fallback для известных типов
-        file_ext = file.file_type or (file.filename.split('.')[-1].lower() if '.' in file.filename else '')
-        content_type_map = {
-            "pdf": "application/pdf",
-            "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "doc": "application/msword",
-            "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "xls": "application/vnd.ms-excel",
-            "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-            "ppt": "application/vnd.ms-powerpoint",
-            "txt": "text/plain",
-            "rtf": "application/rtf",
-            "odt": "application/vnd.oasis.opendocument.text",
-            "ods": "application/vnd.oasis.opendocument.spreadsheet",
-            "jpg": "image/jpeg",
-            "jpeg": "image/jpeg",
-            "png": "image/png",
-            "gif": "image/gif",
-            "bmp": "image/bmp",
-            "webp": "image/webp",
-            "zip": "application/zip",
-            "rar": "application/x-rar-compressed",
-            "7z": "application/x-7z-compressed",
-        }
-        content_type = content_type_map.get(file_ext, "application/octet-stream")
-    
-    # Приоритет 1: Читаем файл из БД (новый способ хранения)
-    if file.file_content:
-        from urllib.parse import quote
-        # Кодируем имя файла для поддержки кириллицы (RFC 5987)
-        encoded_filename = quote(file.filename, safe='')
-        content_disposition = f"inline; filename*=UTF-8''{encoded_filename}"
-        
-        return Response(
-            content=file.file_content,
-            media_type=content_type,
-            headers={
-                "Content-Disposition": content_disposition
-            }
-        )
-    
-    # Приоритет 2: Fallback на файловую систему (для старых файлов, обратная совместимость)
-    if file.file_path:
-        import os
-        from app.config import config
-        
-        # Проверяем, является ли file_path абсолютным путем
-        if os.path.isabs(file.file_path):
-            file_full_path = file.file_path
-        else:
-            file_full_path = os.path.join(config.UPLOAD_DIR, file.file_path)
-        
-        
-        if os.path.exists(file_full_path):
-            try:
-                with open(file_full_path, 'rb') as f:
-                    file_content = f.read()
-                
-                from urllib.parse import quote
-                # Кодируем имя файла для поддержки кириллицы (RFC 5987)
-                encoded_filename = quote(file.filename, safe='')
-                content_disposition = f"inline; filename*=UTF-8''{encoded_filename}"
-                
-                return Response(
-                    content=file_content,
-                    media_type=content_type,
-                    headers={
-                        "Content-Disposition": content_disposition
-                    }
-                )
-            except Exception as e:
-                logger.error(f"Error reading original file {file_full_path}: {e}")
-                # Для PDF файлов не возвращаем текст при ошибке чтения
-                if file.file_type == "pdf":
-                    logger.error(f"Failed to read PDF file {file_full_path}: {e}")
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Ошибка при чтении PDF файла: {str(e)}"
-                    )
-                # Fallback to text if file read fails (для не-PDF файлов)
-    
-    # Fallback: return text content if original file not available
-    
-    # Для PDF файлов не возвращаем текст - это вызовет ошибку "Invalid PDF structure"
-    # Вместо этого возвращаем ошибку 404 или пустой ответ
-    if file.file_type == "pdf":
-        logger.warning(f"PDF file {file_id} not found on disk, but file_type is pdf. Cannot return text as PDF.")
-        raise HTTPException(
-            status_code=404,
-            detail=f"Оригинальный PDF файл не найден на сервере. Файл: {file.filename}"
-        )
-    
-    # Для других типов файлов возвращаем текст как fallback
-    if not file.original_text:
-        raise HTTPException(
-            status_code=404,
-            detail="Содержимое файла недоступно"
-        )
-    
-    from urllib.parse import quote
-    # Кодируем имя файла для поддержки кириллицы (RFC 5987)
-    encoded_filename = quote(file.filename, safe='')
-    content_disposition = f"inline; filename*=UTF-8''{encoded_filename}"
-    
-    return Response(
-        content=file.original_text.encode('utf-8'),
-        media_type="text/plain",  # Always return as text/plain for text fallback
-        headers={
-            "Content-Disposition": content_disposition
-        }
-    )
+
+    try:
+        return case_file_bytes_response(file, inline=True)
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+        return case_file_text_fallback_response(file, inline=True)
 
 
 @router.put("/{case_id}/files/{file_id}/text")
@@ -1918,104 +2017,11 @@ async def download_file(
     
     if not file:
         raise HTTPException(status_code=404, detail="Файл не найден")
-    
-    # Определяем content type по расширению файла
-    import mimetypes
-    content_type, _ = mimetypes.guess_type(file.filename)
-    if not content_type:
-        # Fallback для известных типов
-        file_ext = file.file_type or (file.filename.split('.')[-1].lower() if '.' in file.filename else '')
-        content_type_map = {
-            "pdf": "application/pdf",
-            "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "doc": "application/msword",
-            "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "xls": "application/vnd.ms-excel",
-            "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-            "ppt": "application/vnd.ms-powerpoint",
-            "txt": "text/plain",
-            "rtf": "application/rtf",
-            "odt": "application/vnd.oasis.opendocument.text",
-            "ods": "application/vnd.oasis.opendocument.spreadsheet",
-            "jpg": "image/jpeg",
-            "jpeg": "image/jpeg",
-            "png": "image/png",
-            "gif": "image/gif",
-            "bmp": "image/bmp",
-            "webp": "image/webp",
-            "zip": "application/zip",
-            "rar": "application/x-rar-compressed",
-            "7z": "application/x-7z-compressed",
-        }
-        content_type = content_type_map.get(file_ext, "application/octet-stream")
-    
-    # Приоритет 1: Читаем файл из БД (новый способ хранения)
-    if file.file_content:
-        from urllib.parse import quote
-        # Кодируем имя файла для поддержки кириллицы (RFC 5987)
-        encoded_filename = quote(file.filename, safe='')
-        content_disposition = f"attachment; filename*=UTF-8''{encoded_filename}"
-        
-        return Response(
-            content=file.file_content,
-            media_type=content_type,
-            headers={
-                "Content-Disposition": content_disposition
-            }
-        )
-    
-    # Приоритет 2: Fallback на файловую систему (для старых файлов, обратная совместимость)
-    if file.file_path:
-        import os
-        from app.config import config
-        
-        # Проверяем, является ли file_path абсолютным путем
-        if os.path.isabs(file.file_path):
-            file_full_path = file.file_path
-        else:
-            file_full_path = os.path.join(config.UPLOAD_DIR, file.file_path)
-        
-        if os.path.exists(file_full_path):
-            try:
-                with open(file_full_path, 'rb') as f:
-                    file_content = f.read()
-                
-                from urllib.parse import quote
-                # Кодируем имя файла для поддержки кириллицы (RFC 5987)
-                encoded_filename = quote(file.filename, safe='')
-                content_disposition = f"attachment; filename*=UTF-8''{encoded_filename}"
-                
-                return Response(
-                    content=file_content,
-                    media_type=content_type,
-                    headers={
-                        "Content-Disposition": content_disposition
-                    }
-                )
-            except Exception as e:
-                logger.error(f"Error reading file {file_full_path}: {e}")
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Ошибка при чтении файла: {str(e)}"
-                )
-    
-    # Fallback: return text content if original file not available
-    if not file.original_text:
-        raise HTTPException(
-            status_code=404,
-            detail="Содержимое файла недоступно"
-        )
-    
-    from urllib.parse import quote
-    # Кодируем имя файла для поддержки кириллицы (RFC 5987)
-    encoded_filename = quote(file.filename, safe='')
-    content_disposition = f"attachment; filename*=UTF-8''{encoded_filename}"
-    
-    return Response(
-        content=file.original_text.encode('utf-8'),
-        media_type=content_type,
-        headers={
-            "Content-Disposition": content_disposition
-        }
-    )
+
+    try:
+        return case_file_bytes_response(file, inline=False)
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+        return case_file_text_fallback_response(file, inline=False)
 

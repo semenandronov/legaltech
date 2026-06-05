@@ -42,6 +42,7 @@ import { fetchHistory, sendMessage, SourceInfo, HistoryMessage } from '../servic
 import { useWebSocketChat } from '../hooks/useWebSocketChat'
 import ConfidenceBadge from './Common/ConfidenceBadge'
 import MessageContent from './Chat/MessageContent'
+import { caseAssistantLegacyCitationsEnabled } from '../utils/caseAssistantCitations'
 import Autocomplete from './Chat/Autocomplete'
 import StatisticsChart from './Chat/StatisticsChart'
 import SourceSelector, { DEFAULT_SOURCES } from './Chat/SourceSelector'
@@ -760,6 +761,7 @@ const ChatWindow = ({ caseId, onDocumentClick }: ChatWindowProps) => {
                         <MessageContent
                           content={displayContent}
                           sources={displaySources}
+                          preferLegacyCitations={caseAssistantLegacyCitationsEnabled()}
                           onCitationClick={handleCitationClick}
                           isStreaming={isStreamingMessage}
                         />

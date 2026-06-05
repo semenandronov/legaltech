@@ -18,8 +18,9 @@ logger = logging.getLogger(__name__)
 _DIR = Path(__file__).resolve().parent.parent / "templates" / "bankruptcy"
 _MANIFEST = _DIR / "manifest.json"
 
-# Максимальная длина текста шаблона, отдаваемого в LLM (символы)
-MAX_TEMPLATE_CHARS = 32000
+# Жёсткий лимит длины шаблона снят: HTML-шаблоны передаются и сохраняются целиком,
+# чтобы не ломать верстку. Константа оставлена для обратной совместимости.
+MAX_TEMPLATE_CHARS = 0  # 0 = без ограничения
 
 
 @lru_cache(maxsize=1)
@@ -163,8 +164,6 @@ def load_system_template_body(template_id: str) -> Tuple[Optional[str], Optional
             text = conv.convert_to_html(raw, fname)
         else:
             text = path.read_text(encoding="utf-8")
-        if len(text) > MAX_TEMPLATE_CHARS:
-            text = text[:MAX_TEMPLATE_CHARS]
         return text, meta.get("title")
     except Exception as e:
         logger.error("[bankruptcy_templates] read failed %s: %s", path, e)

@@ -329,15 +329,6 @@ CHAT_GRAPH_BREAKPOINTS = create_breakpoint_config(
     }
 )
 
-# Конфигурация breakpoints для TabularGraph
-TABULAR_GRAPH_BREAKPOINTS = create_breakpoint_config(
-    interrupt_before=[],
-    interrupt_after=["check_confidence"],  # Прерываем после проверки уверенности
-    conditions={
-        "clarification_needed": clarification_needed_condition(),
-    }
-)
-
 # Конфигурация breakpoints для WorkflowGraph
 WORKFLOW_GRAPH_BREAKPOINTS = create_breakpoint_config(
     interrupt_before=[],
@@ -354,14 +345,13 @@ def get_breakpoint_config_for_graph(graph_name: str) -> BreakpointConfig:
     Получить конфигурацию breakpoints для графа.
     
     Args:
-        graph_name: Имя графа ("chat", "tabular", "workflow")
+        graph_name: Имя графа ("chat", "workflow")
     
     Returns:
         BreakpointConfig
     """
     configs = {
         "chat": CHAT_GRAPH_BREAKPOINTS,
-        "tabular": TABULAR_GRAPH_BREAKPOINTS,
         "workflow": WORKFLOW_GRAPH_BREAKPOINTS,
     }
     return configs.get(graph_name, create_breakpoint_config())

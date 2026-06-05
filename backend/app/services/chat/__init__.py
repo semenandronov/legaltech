@@ -42,8 +42,23 @@ from app.services.chat.metrics import ChatMetrics, get_metrics, MetricTimer, Tim
 from app.services.chat.conversation_policy_service import ConversationPolicyService, RunContext
 from app.services.chat.legal_quality_gates import LegalQualityGates, GateResult
 
-# Orchestrator surface (used by assistant_chat_v2 routes)
-from app.services.chat.orchestrator import ChatOrchestrator, ChatRequest, get_chat_orchestrator
+# Orchestrator импортируется лениво: иначе цикл chat_graph → citation_payload → chat → orchestrator → chat_graph_service → chat_graph.
+
+
+def __getattr__(name: str):
+    if name in ("ChatOrchestrator", "ChatRequest", "get_chat_orchestrator"):
+        from app.services.chat.orchestrator import (
+            ChatOrchestrator,
+            ChatRequest,
+            get_chat_orchestrator,
+        )
+        return {
+            "ChatOrchestrator": ChatOrchestrator,
+            "ChatRequest": ChatRequest,
+            "get_chat_orchestrator": get_chat_orchestrator,
+        }[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # Legacy imports removed: keep module surface minimal and production-only.
 

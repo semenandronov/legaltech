@@ -37,7 +37,7 @@ class TabularColumn(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     tabular_review_id = Column(String, ForeignKey("tabular_reviews.id", ondelete="CASCADE"), nullable=False, index=True)
     column_label = Column(String(255), nullable=False)  # "Loan Type", "Key Terms", etc.
-    column_type = Column(String(50), nullable=False)  # text, number, currency, yes_no, date, tag, verbatim, manual_input
+    column_type = Column(String(50), nullable=False)  # text, number, currency, yes_no, date, tag, verbatim, manual_input, document_type
     prompt = Column(Text, nullable=False)  # вопрос/prompt для AI
     column_config = Column(JSON, nullable=True)  # Конфигурация для типа tag: {options: [{label, color}], allow_custom: bool}
     order_index = Column(Integer, nullable=False)

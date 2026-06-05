@@ -38,7 +38,7 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
           
           const response = await fetch(url, {
             headers: {
-              'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+              'X-Access-Token': localStorage.getItem('access_token') || ''
             }
           })
           

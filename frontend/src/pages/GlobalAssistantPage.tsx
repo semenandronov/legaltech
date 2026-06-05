@@ -5,7 +5,7 @@ import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import {
   FolderOpen, MessageSquare, FileText, X, Plus,
   AlignJustify, SlidersHorizontal, Sparkles, Search, ChevronDown, Loader2, Download, Clock,
-  ChevronRight, Check, Mic, MicOff, BookOpen, Trash2, Workflow,
+  ChevronRight, Check, Mic, MicOff,   BookOpen, Trash2, Workflow, Gavel,
 } from 'lucide-react'
 import {
   getApiUrl,
@@ -33,7 +33,13 @@ import ThinkingBlock, {
 } from '../components/Chat/ThinkingBlock'
 import DocumentPreviewSheet from '../components/Chat/DocumentPreviewSheet'
 import { WorkflowArtifactCards } from '../components/Workflow/WorkflowArtifactCards'
+import {
+  canSelectDraftMode,
+  canEnableLegalResearch,
+  canEnableCourtPractice,
+} from '../lib/chatInstrumentPolicy'
 import { useWorkflowLiveExecution } from '../workflow/useWorkflowLiveExecution'
+import { useChatInstrumentSettings } from '../hooks/useChatInstrumentSettings'
 import { countWorkflowArtifacts, type WorkflowArtifactsPayload } from '../workflow/workflowLiveHelpers'
 
 function inlineFmt(text: string): string {
@@ -421,10 +427,10 @@ interface HarveyInputProps {
   onRemoveCaseFile: (id: string) => void
   onOpenCasePicker: () => void
   placeholder?: string
-  /** Общий правовой справочник */
-  legalCorpusHasData: boolean
   useLegalCorpus: boolean
   onUseLegalCorpusChange: (v: boolean) => void
+  useCourtPractice: boolean
+  onUseCourtPracticeChange: (v: boolean) => void
   isLegalCorpusUploader: boolean
   corpusFiles: LegalCorpusFileRow[]
   corpusUploading: boolean
@@ -438,9 +444,10 @@ function HarveyInput({
   isStreaming, isDraftMode, onSetDraftMode,
   selectedCaseFiles, onRemoveCaseFile, onOpenCasePicker,
   placeholder = 'Спросите что угодно...',
-  legalCorpusHasData,
   useLegalCorpus,
   onUseLegalCorpusChange,
+  useCourtPractice,
+  onUseCourtPracticeChange,
   isLegalCorpusUploader,
   corpusFiles,
   corpusUploading,
@@ -701,20 +708,20 @@ function HarveyInput({
           )}
         </div>
 
-        {/* Settings dropdown — outside overflow-hidden so the popup is not clipped */}
+        {/* Settings: справочник + Draft */}
         <div ref={settingsRef} className="relative flex-shrink-0">
           <button
             type="button"
             onClick={() => setSettingsOpen((o) => !o)}
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm transition-colors whitespace-nowrap"
             style={{
-              color: isDraftMode ? '#4F46E5' : '#6B7280',
+              color: isDraftMode || useLegalCorpus || useCourtPractice ? '#4F46E5' : '#6B7280',
               backgroundColor: settingsOpen ? '#F3F4F6' : undefined,
             }}
           >
             <SlidersHorizontal className="w-3.5 h-3.5" />
             Настройки
-            {isDraftMode && (
+            {(isDraftMode || useLegalCorpus || useCourtPractice) && (
               <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 ml-0.5 flex-shrink-0" />
             )}
           </button>
@@ -724,25 +731,40 @@ function HarveyInput({
               className="absolute bottom-full mb-1.5 left-0 bg-white rounded-lg border border-gray-200 overflow-hidden z-50"
               style={{ minWidth: '240px', maxWidth: 'min(92vw, 320px)', boxShadow: '0 4px 16px rgba(0,0,0,0.10)' }}
             >
-              {legalCorpusHasData && (
-                <>
-                  <div className="px-2.5 py-1.5 text-xs font-medium border-b border-gray-100" style={{ color: '#9CA3AF' }}>
-                    Справочник
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => onUseLegalCorpusChange(!useLegalCorpus)}
-                    className="w-full flex items-center gap-2 px-2.5 py-2 text-sm text-left transition-colors hover:bg-gray-50"
-                    style={{ color: useLegalCorpus ? '#0F766E' : '#374151' }}
-                  >
-                    <BookOpen className="w-4 h-4 flex-shrink-0" style={{ color: useLegalCorpus ? '#0D9488' : '#9CA3AF' }} />
-                    <span className="flex-1 min-w-0">Законы и обзоры (RAG)</span>
-                    <span
-                      className="w-2 h-2 rounded-full flex-shrink-0"
-                      style={{ backgroundColor: useLegalCorpus ? '#14B8A6' : '#D1D5DB' }}
-                    />
-                  </button>
-                </>
+              {!isDraftMode && (
+              <>
+                <div className="px-2.5 py-1.5 text-xs font-medium border-b border-gray-100" style={{ color: '#9CA3AF' }}>
+                  Справочник
+                </div>
+                <button
+                  type="button"
+                  disabled={!canEnableLegalResearch(isDraftMode) || useCourtPractice}
+                  onClick={() => onUseLegalCorpusChange(!useLegalCorpus)}
+                  className="w-full flex items-center gap-2 px-2.5 py-2 text-sm text-left transition-colors hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{ color: useLegalCorpus ? '#0F766E' : '#374151' }}
+                >
+                  <BookOpen className="w-4 h-4 flex-shrink-0" style={{ color: useLegalCorpus ? '#0D9488' : '#9CA3AF' }} />
+                  <span className="flex-1 min-w-0">Справочник</span>
+                  <span
+                    className="w-2 h-2 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: useLegalCorpus ? '#14B8A6' : '#D1D5DB' }}
+                  />
+                </button>
+                <button
+                  type="button"
+                  disabled={!canEnableCourtPractice(isDraftMode) || useLegalCorpus}
+                  onClick={() => onUseCourtPracticeChange(!useCourtPractice)}
+                  className="w-full flex items-center gap-2 px-2.5 py-2 text-sm text-left transition-colors hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{ color: useCourtPractice ? '#0F766E' : '#374151' }}
+                >
+                  <Gavel className="w-4 h-4 flex-shrink-0" style={{ color: useCourtPractice ? '#0D9488' : '#9CA3AF' }} />
+                  <span className="flex-1 min-w-0">Суд. практика</span>
+                  <span
+                    className="w-2 h-2 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: useCourtPractice ? '#14B8A6' : '#D1D5DB' }}
+                  />
+                </button>
+              </>
               )}
 
               {isLegalCorpusUploader && (
@@ -807,41 +829,49 @@ function HarveyInput({
                 </>
               )}
 
-              <div className="px-2.5 py-1.5 text-xs font-medium border-b border-gray-100" style={{ color: '#9CA3AF' }}>
-                Режим
-              </div>
-              <button
-                type="button"
-                onClick={() => { onSetDraftMode(false); setSettingsOpen(false) }}
-                className="w-full flex items-center gap-2 px-2.5 py-2 text-sm transition-colors"
-                style={{
-                  color: !isDraftMode ? '#111827' : '#6B7280',
-                  backgroundColor: !isDraftMode ? '#F9FAFB' : 'transparent',
-                  fontWeight: !isDraftMode ? 500 : 400,
-                }}
-              >
-                <span
-                  className="w-2 h-2 rounded-full flex-shrink-0"
-                  style={{ backgroundColor: !isDraftMode ? '#111827' : '#D1D5DB' }}
-                />
-                Ask
-              </button>
-              <button
-                type="button"
-                onClick={() => { onSetDraftMode(true); setSettingsOpen(false) }}
-                className="w-full flex items-center gap-2 px-2.5 py-2 text-sm transition-colors"
-                style={{
-                  color: isDraftMode ? '#4F46E5' : '#6B7280',
-                  backgroundColor: isDraftMode ? '#EEF2FF' : 'transparent',
-                  fontWeight: isDraftMode ? 500 : 400,
-                }}
-              >
-                <span
-                  className="w-2 h-2 rounded-full flex-shrink-0"
-                  style={{ backgroundColor: isDraftMode ? '#4F46E5' : '#D1D5DB' }}
-                />
-                Draft
-              </button>
+              <>
+                  <div className="px-2.5 py-1.5 text-xs font-medium border-b border-gray-100" style={{ color: '#9CA3AF' }}>
+                    Режим
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { onSetDraftMode(false); setSettingsOpen(false) }}
+                    className="w-full flex items-center gap-2 px-2.5 py-2 text-sm transition-colors"
+                    style={{
+                      color: !isDraftMode ? '#111827' : '#6B7280',
+                      backgroundColor: !isDraftMode ? '#F9FAFB' : 'transparent',
+                      fontWeight: !isDraftMode ? 500 : 400,
+                    }}
+                  >
+                    <span
+                      className="w-2 h-2 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: !isDraftMode ? '#111827' : '#D1D5DB' }}
+                    />
+                    Ask
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!canSelectDraftMode(useLegalCorpus, useCourtPractice)}
+                    onClick={() => {
+                      if (!canSelectDraftMode(useLegalCorpus, useCourtPractice)) return
+                      onSetDraftMode(true)
+                      setSettingsOpen(false)
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-2 text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    title={useLegalCorpus || useCourtPractice ? 'Недоступно при включённых инструментах' : undefined}
+                    style={{
+                      color: isDraftMode ? '#4F46E5' : '#6B7280',
+                      backgroundColor: isDraftMode ? '#EEF2FF' : 'transparent',
+                      fontWeight: isDraftMode ? 500 : 400,
+                    }}
+                  >
+                    <span
+                      className="w-2 h-2 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: isDraftMode ? '#4F46E5' : '#D1D5DB' }}
+                    />
+                    Draft
+                  </button>
+              </>
             </div>
           )}
         </div>
@@ -903,8 +933,18 @@ const GlobalAssistantPage = () => {
   const [uploadingFiles, setUploadingFiles] = useState<string[]>([])
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [sessionId, setSessionId] = useState<string | null>(null)
+  /** Синхронный id сессии для запросов (до re-render React после SSE session). */
+  const sessionIdRef = useRef<string | null>(null)
   const [isStreaming, setIsStreaming] = useState(false)
-  const [isDraftMode, setIsDraftMode] = useState(false)
+  const {
+    legalResearch: useLegalCorpus,
+    courtPractice: useCourtPractice,
+    draftMode: isDraftMode,
+    setLegalResearch: setUseLegalCorpus,
+    setCourtPractice: setUseCourtPractice,
+    setDraftMode: setIsDraftMode,
+    reset: resetChatInstruments,
+  } = useChatInstrumentSettings()
   const [draftDocument, setDraftDocument] = useState<DraftDocument | null>(null)
   const [showDraftPanel, setShowDraftPanel] = useState(false)
   const [editorContent, setEditorContent] = useState<string | null>(null)
@@ -912,6 +952,22 @@ const GlobalAssistantPage = () => {
   const editorHtmlRef = useRef<string>('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+
+  const applySessionId = useCallback(
+    (id: string) => {
+      if (!id) return
+      sessionIdRef.current = id
+      setSessionId(id)
+      const params = new URLSearchParams(location.search)
+      if (params.get('session') !== id) {
+        params.set('session', id)
+        const q = params.toString()
+        navigate({ pathname: location.pathname, search: q ? `?${q}` : '' }, { replace: true })
+      }
+    },
+    [location.pathname, location.search, navigate],
+  )
+
   const [selectedCaseFiles, setSelectedCaseFiles] = useState<UploadedFile[]>([])
   const [showCasePicker, setShowCasePicker] = useState(false)
   const [citationPreview, setCitationPreview] = useState<SourceInfo | null>(null)
@@ -923,14 +979,6 @@ const GlobalAssistantPage = () => {
   const [legalCorpusStatus, setLegalCorpusStatus] = useState<LegalCorpusStatus | null>(null)
   const [corpusFilesList, setCorpusFilesList] = useState<LegalCorpusFileRow[]>([])
   const [corpusUploading, setCorpusUploading] = useState(false)
-  const [useLegalCorpus, setUseLegalCorpus] = useState(() => {
-    try {
-      return typeof window !== 'undefined' && localStorage.getItem('ga_use_legal_corpus') === '1'
-    } catch {
-      return false
-    }
-  })
-
   const refreshLegalCorpus = useCallback(async () => {
     try {
       const st = await fetchLegalCorpusStatus()
@@ -958,14 +1006,9 @@ const GlobalAssistantPage = () => {
     defaultReturnChatPath: '/assistant',
   })
 
-  const persistUseLegalCorpus = (v: boolean) => {
-    setUseLegalCorpus(v)
-    try {
-      localStorage.setItem('ga_use_legal_corpus', v ? '1' : '0')
-    } catch {
-      /* ignore */
-    }
-  }
+  const handleUseLegalCorpusChange = setUseLegalCorpus
+  const handleUseCourtPracticeChange = setUseCourtPractice
+  const handleSetDraftMode = setIsDraftMode
 
   const resolveConversationMode = (): 'research' | 'case_advice' | 'drafting' | 'review' | 'comparison' | 'clarify' => {
     if (isDraftMode) return 'drafting'
@@ -1017,6 +1060,7 @@ const GlobalAssistantPage = () => {
       .then((data) => {
         const loadedMessages = data.messages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }))
         setMessages(loadedMessages)
+        sessionIdRef.current = sessionParam
         setSessionId(sessionParam)
 
         // Restore draft document: prefer saved draft, else detect from last assistant message
@@ -1053,7 +1097,7 @@ const GlobalAssistantPage = () => {
         formData.append('file', file)
         const res = await fetch(getApiUrl('/api/v2/assistant/upload-file'), {
           method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { 'X-Access-Token': token || '' },
           body: formData,
         })
         if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
@@ -1118,7 +1162,8 @@ const GlobalAssistantPage = () => {
 
     let finalDraftContent = ''
     let finalDraftTitle = 'Документ'
-    let capturedSessionId = sessionId
+    const activeSessionId = sessionIdRef.current ?? sessionId
+    let capturedSessionId = activeSessionId
 
     try {
       const token = localStorage.getItem('access_token')
@@ -1126,17 +1171,18 @@ const GlobalAssistantPage = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+          'X-Access-Token': token || '',
         },
         body: JSON.stringify({
           mode: resolveConversationMode(),
           messages: allMessages.map((m) => ({ role: m.role, content: m.content })),
-          session_id: sessionId,
+          session_id: activeSessionId,
           file_contexts: contextsToSend.map((fc) => ({ file_id: fc.file_id, filename: fc.filename, text: fc.text })),
           attached_file_ids: caseFileIdsToSend.length > 0 ? caseFileIdsToSend : undefined,
           draft_mode: isDraftMode,
           document_context: isDraftMode && currentDraft ? currentDraft.content : undefined,
-          use_legal_corpus: useLegalCorpus,
+          use_legal_corpus: isDraftMode ? false : useLegalCorpus,
+          court_practice: isDraftMode ? false : useCourtPractice,
         }),
         signal: abortRef.current.signal,
       })
@@ -1160,8 +1206,8 @@ const GlobalAssistantPage = () => {
           if (!raw) continue
           try {
             const data = JSON.parse(raw)
-            if (data.session_id && !sessionId) {
-              setSessionId(data.session_id)
+            if (data.session_id) {
+              applySessionId(data.session_id)
               capturedSessionId = data.session_id
             } else if (data.error) {
               assistantContent = `Ошибка: ${data.error}`
@@ -1241,7 +1287,7 @@ const GlobalAssistantPage = () => {
       console.log('[download] content_type:', contentTypeToSend, 'content_len:', contentToSend?.length)
       const res = await fetch(getApiUrl('/api/v2/assistant/download-docx'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json', 'X-Access-Token': token || '' },
         body: JSON.stringify({
           title: draftDocument.title,
           content: contentToSend,
@@ -1274,8 +1320,9 @@ const GlobalAssistantPage = () => {
     setQuestion('')
     setFileContexts([])
     setSelectedCaseFiles([])
+    sessionIdRef.current = null
     setSessionId(null)
-    setIsDraftMode(false)
+    resetChatInstruments()
     setDraftDocument(null)
     setShowDraftPanel(false)
     setEditorContent(null)
@@ -1347,6 +1394,7 @@ const GlobalAssistantPage = () => {
                       const showAssistantTextBody =
                         ((msg.content && msg.content.trim()) || wfArtifactN > 0) &&
                         !hideMainTextForRunningWorkflowDraft
+                      const internalDraftUi = isDraftMode || draftDocument
                       const assistantTextBody =
                         (msg.content && msg.content.trim()) ||
                         (wfArtifactN > 0 ? 'Готово. Откройте нужный результат ниже.' : '')
@@ -1438,7 +1486,7 @@ const GlobalAssistantPage = () => {
                               />
                             )}
                             {/* Draft indicator */}
-                            {(isDraftMode || draftDocument) && idx === messages.length - 1 && (
+                            {internalDraftUi && idx === messages.length - 1 && (
                               isStreaming ? (
                                 <div className="flex flex-col gap-2">
                                   <p className="text-sm" style={{ color: '#374151' }}>
@@ -1490,13 +1538,14 @@ const GlobalAssistantPage = () => {
                       onRemoveContext={handleRemoveContext}
                       isStreaming={isStreaming}
                       isDraftMode={isDraftMode}
-                      onSetDraftMode={setIsDraftMode}
+                      onSetDraftMode={handleSetDraftMode}
                       selectedCaseFiles={selectedCaseFiles}
                       onRemoveCaseFile={handleRemoveCaseFile}
                       onOpenCasePicker={() => setShowCasePicker(true)}
-                      legalCorpusHasData={Boolean(legalCorpusStatus?.has_corpus)}
                       useLegalCorpus={useLegalCorpus}
-                      onUseLegalCorpusChange={persistUseLegalCorpus}
+                      onUseLegalCorpusChange={handleUseLegalCorpusChange}
+                      useCourtPractice={useCourtPractice}
+                      onUseCourtPracticeChange={handleUseCourtPracticeChange}
                       isLegalCorpusUploader={Boolean(legalCorpusStatus?.is_uploader)}
                       corpusFiles={corpusFilesList}
                       corpusUploading={corpusUploading}
@@ -1514,6 +1563,13 @@ const GlobalAssistantPage = () => {
                   onClose={() => setCitationPreview(null)}
                   source={citationPreview}
                   caseId={citationPreview.case_id}
+                />
+              ) : citationPreview && citationPreview.source_type === 'court_practice' ? (
+                <DocumentPreviewSheet
+                  isOpen={!!citationPreview}
+                  onClose={() => setCitationPreview(null)}
+                  source={citationPreview}
+                  caseId=""
                 />
               ) : citationPreview && citationPreview.source_id ? (
                 <DocumentPreviewSheet
@@ -1721,13 +1777,14 @@ const GlobalAssistantPage = () => {
                   onRemoveContext={handleRemoveContext}
                   isStreaming={isStreaming}
                   isDraftMode={isDraftMode}
-                  onSetDraftMode={setIsDraftMode}
+                  onSetDraftMode={handleSetDraftMode}
                   selectedCaseFiles={selectedCaseFiles}
                   onRemoveCaseFile={handleRemoveCaseFile}
                   onOpenCasePicker={() => setShowCasePicker(true)}
-                  legalCorpusHasData={Boolean(legalCorpusStatus?.has_corpus)}
                   useLegalCorpus={useLegalCorpus}
-                  onUseLegalCorpusChange={persistUseLegalCorpus}
+                  onUseLegalCorpusChange={handleUseLegalCorpusChange}
+                  useCourtPractice={useCourtPractice}
+                  onUseCourtPracticeChange={handleUseCourtPracticeChange}
                   isLegalCorpusUploader={Boolean(legalCorpusStatus?.is_uploader)}
                   corpusFiles={corpusFilesList}
                   corpusUploading={corpusUploading}

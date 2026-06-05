@@ -853,21 +853,48 @@ async def restore_version(
         raise HTTPException(status_code=500, detail="Ошибка при восстановлении версии")
 
 
+class SelectionRangeModel(BaseModel):
+    """ProseMirror selection range from the editor."""
+    from_pos: int = Field(..., alias="from")
+    to_pos: int = Field(..., alias="to")
+
+    class Config:
+        populate_by_name = True
+
+
 class DocumentChatRequest(BaseModel):
     """Request model for document chat"""
     question: str = Field(..., min_length=1, description="User question or instruction")
+    trace_id: Optional[str] = Field(None, description="Optional Langfuse trace id (32 hex)")
+    session_id: Optional[str] = Field(
+        None,
+        description="Editor LangGraph session (editor:user:case:doc or with :uuid for new dialog)",
+    )
     deep_think: bool = Field(False, description="Enable deep thinking mode for complex questions")
     legal_research: bool = Field(False, description="Enable legal research mode")
     current_content: Optional[str] = Field(None, description="Current editor content (overrides DB content)")
     mode: str = Field("ask", description="Editor mode: ask | edit | draft")
     selected_text: Optional[str] = Field(None, description="Text selected in the editor")
+    selection_range: Optional[SelectionRangeModel] = Field(None, description="Selection range in ProseMirror doc")
+    attached_file_ids: Optional[List[str]] = Field(None, description="Case file IDs to scope RAG retrieval")
+
+
+class EditorChatWarmupRequest(BaseModel):
+    case_id: str = Field(..., description="Case id for the document")
+    session_id: Optional[str] = Field(None, description="Optional existing editor session to pre-read checkpoint")
+
+
+class EditorNewChatSessionRequest(BaseModel):
+    case_id: str = Field(..., description="Case id for the document")
 
 
 class StructuredEdit(BaseModel):
     """Model for a single structured edit suggestion"""
     id: str
-    original_text: str
     new_text: str
+    original_text: Optional[str] = None
+    node_id: Optional[str] = None
+    selection_range: Optional[SelectionRangeModel] = None
     context_before: str = ""
     context_after: str = ""
     found_in_document: bool = True
@@ -923,25 +950,31 @@ async def chat_over_document(
             # case_id должен быть передан в metadata или через отдельный параметр
             # Для упрощения, если document_id="new", создаем документ через template graph
         
-        # Get AI chat response
-        ai_service = DocumentAIService(db)
-        
-        # Если document_id="new", нужен case_id для создания документа
-        # Для упрощения, если document_id="new" и нет документа, возвращаем ошибку
-        # В реальности case_id должен передаваться через query параметр или в теле запроса
         if document_id == "new" and not case_id:
             raise HTTPException(status_code=400, detail="case_id required for creating new document. Use existing document_id or provide case_id.")
-        
-        result = await ai_service.chat_over_document(
-            document_id=document_id if document_id != "new" else None,
-            document_content=document_content,
-            case_id=case_id or (document.case_id if document else None),
+
+        from app.services.editor_chat_bridge import EditorChatBridge
+
+        selection_range = None
+        if request.selection_range is not None:
+            selection_range = {
+                "from": request.selection_range.from_pos,
+                "to": request.selection_range.to_pos,
+            }
+
+        bridge = EditorChatBridge(db)
+        result = await bridge.run(
+            case_id=case_id or (document.case_id if document else ""),
+            user=current_user,
+            document_id=document_id if document_id != "new" else "",
+            document_content=document_content or "",
             question=request.question,
             mode=request.mode,
             selected_text=request.selected_text,
-            user_id=current_user.id,
+            selection_range=selection_range,
+            attached_file_ids=request.attached_file_ids,
             deep_think=request.deep_think,
-            legal_research=request.legal_research
+            legal_research=request.legal_research,
         )
         
         # Преобразуем structured_edits в модели Pydantic
@@ -967,6 +1000,239 @@ async def chat_over_document(
     except Exception as e:
         logger.error(f"Error in chat over document: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Ошибка при обработке запроса: {str(e)}")
+
+
+@router.post("/{document_id}/chat/warmup")
+async def editor_chat_warmup(
+    document_id: str,
+    request: EditorChatWarmupRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Прогрев графа и checkpoint при открытии редактора (снижает задержку первого сообщения)."""
+    doc_service = DocumentEditorService(db)
+    case_id = request.case_id
+    if document_id != "new":
+        document = doc_service.get_document(document_id, current_user.id)
+        if not document:
+            raise HTTPException(status_code=404, detail="Документ не найден")
+        case_id = document.case_id
+
+    from app.services.langchain_agents.chat_graph_service import get_chat_graph_service
+    from app.services.rag_service import RAGService
+
+    svc = get_chat_graph_service(db, RAGService())
+    result = await svc.warmup_editor_graph(
+        case_id=case_id,
+        document_id=document_id if document_id != "new" else "new",
+        user=current_user,
+        session_id=request.session_id,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail="Дело не найдено")
+    return result
+
+
+@router.post("/{document_id}/chat/new-session")
+async def editor_chat_new_session(
+    document_id: str,
+    request: EditorNewChatSessionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Новый диалог в редакторе — отдельный LangGraph checkpoint без старой истории."""
+    doc_service = DocumentEditorService(db)
+    case_id = request.case_id
+    if document_id != "new":
+        document = doc_service.get_document(document_id, current_user.id)
+        if not document:
+            raise HTTPException(status_code=404, detail="Документ не найден")
+        case_id = document.case_id
+
+    from app.services.chat.editor_session import new_editor_chat_session_id
+
+    session_id = new_editor_chat_session_id(
+        user_id=str(current_user.id),
+        case_id=case_id,
+        document_id=document_id if document_id != "new" else "new",
+    )
+    return {
+        "session_id": session_id,
+        "document_id": document_id,
+        "case_id": case_id,
+    }
+
+
+@router.post("/{document_id}/chat/stream")
+async def chat_over_document_stream(
+    document_id: str,
+    request: DocumentChatRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    SSE stream for document editor chat (LangGraph via EditorHandler).
+
+    Optional path for future UI streaming; sync /chat remains the default.
+    """
+    doc_service = DocumentEditorService(db)
+    document = None
+    case_id = None
+
+    if document_id != "new":
+        document = doc_service.get_document(document_id, current_user.id)
+        if not document:
+            raise HTTPException(status_code=404, detail="Документ не найден")
+        case_id = document.case_id
+        document_content = request.current_content if request.current_content is not None else document.content
+    else:
+        document_content = request.current_content or ""
+        if not case_id:
+            raise HTTPException(status_code=400, detail="case_id required for new document")
+
+    selection_range = None
+    if request.selection_range is not None:
+        selection_range = {
+            "from": request.selection_range.from_pos,
+            "to": request.selection_range.to_pos,
+        }
+
+    from app.config import config
+    from app.services.chat.editor_handler import EditorHandler
+    from app.services.chat.editor_session import resolve_editor_chat_session_id
+    from app.services.chat.events import SSESerializer
+    from app.services.observability.editor_langfuse_tracing import (
+        build_editor_trace_metadata,
+        should_sample_langfuse,
+    )
+    from app.services.observability.langfuse_service import (
+        create_trace_context,
+        end_trace,
+        normalize_observability_metadata,
+        normalize_trace_id,
+        reset_active_trace_context,
+        set_active_trace_context,
+        trace_contract_event,
+    )
+    from app.services.rag_service import RAGService
+
+    handler = EditorHandler(RAGService(), db)
+    mode_hint = request.mode if request.mode in ("ask", "edit", "draft") else "ask"
+    from app.services.chat.chat_instrument_policy import normalize_editor_mode_for_legal_research
+
+    mode_hint = normalize_editor_mode_for_legal_research(
+        mode_hint,
+        legal_research=bool(request.legal_research),
+    )
+    legal_research = bool(request.legal_research)
+    if mode_hint == "draft":
+        legal_research = False
+    elif legal_research:
+        mode_hint = "ask"
+    deep_think = False
+    resolved_case_id = case_id or (document.case_id if document else "")
+    resolved_doc_id = document_id if document_id != "new" else ""
+    session_id = resolve_editor_chat_session_id(
+        user_id=str(current_user.id),
+        case_id=resolved_case_id,
+        document_id=resolved_doc_id or "new",
+        requested_session_id=request.session_id,
+    )
+    trace_id = normalize_trace_id(request.trace_id)
+    sampled = should_sample_langfuse()
+    trace_ctx = None
+    if sampled:
+        trace_ctx = create_trace_context(
+            name="document_editor_chat",
+            trace_id=trace_id,
+            user_id=str(current_user.id),
+            session_id=session_id,
+            metadata=build_editor_trace_metadata(
+                case_id=resolved_case_id,
+                document_id=resolved_doc_id or "new",
+                editor_mode_hint=mode_hint,
+                user_id=str(current_user.id),
+                session_id=session_id,
+                legal_research=legal_research,
+                deep_think=deep_think,
+                has_selection=bool((request.selected_text or "").strip()),
+                attached_files_count=len(request.attached_file_ids or []),
+            ),
+            input_payload={"question": request.question[:3000], "mode": mode_hint},
+            tags=["document_editor", f"editor_{mode_hint}"],
+        )
+
+    async def event_generator():
+        trace_token = set_active_trace_context(trace_ctx) if trace_ctx else None
+        response_chars = 0
+        try:
+            if trace_ctx:
+                yield SSESerializer.trace(trace_id)
+                trace_contract_event(
+                    trace_ctx,
+                    name="request_received",
+                    metadata=normalize_observability_metadata(
+                        {
+                            "assistant_type": "document_editor",
+                            "route": "/api/documents-editor/chat/stream",
+                            "editor_mode_hint": mode_hint,
+                            "case_id": resolved_case_id,
+                            "document_id": resolved_doc_id,
+                            "session_id": session_id,
+                        },
+                        step_name="request_received",
+                        status="success",
+                    ),
+                    input_payload={"question": request.question[:3000], "mode": mode_hint},
+                )
+            async for chunk in handler.handle(
+                case_id=resolved_case_id,
+                question=request.question,
+                current_user=current_user,
+                document_id=resolved_doc_id,
+                document_context=document_content or "",
+                selected_text=request.selected_text,
+                editor_mode_hint=mode_hint,
+                attached_file_ids=request.attached_file_ids,
+                deep_think=deep_think,
+                legal_research=legal_research,
+                session_id=session_id,
+            ):
+                if trace_ctx and "textDelta" in chunk:
+                    response_chars += len(chunk)
+                yield chunk
+            if trace_ctx:
+                trace_contract_event(
+                    trace_ctx,
+                    name="request_completed",
+                    metadata=normalize_observability_metadata(
+                        {
+                            "assistant_type": "document_editor",
+                            "editor_mode_hint": mode_hint,
+                        },
+                        step_name="request_completed",
+                        status="success",
+                    ),
+                    output_payload={"response_chars_estimate": response_chars},
+                )
+                end_trace(
+                    trace_ctx,
+                    status="success",
+                    output_payload={"editor_mode_hint": mode_hint},
+                )
+        except Exception as exc:
+            if trace_ctx:
+                end_trace(trace_ctx, status="error", error=str(exc))
+            raise
+        finally:
+            if trace_token is not None:
+                reset_active_trace_context(trace_token)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 class TemplateUploadResponse(BaseModel):

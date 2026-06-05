@@ -15,11 +15,35 @@ from app.services.document_processor import DocumentProcessor, get_document_proc
 from app.services.langchain_retrievers import AdvancedRetrieverService
 from app.services.langchain_memory import MemoryService
 from app.services.observability.langfuse_service import trace_contract_event, get_active_trace_context
+from app.services.prov_span_utils import (
+    dl_meta_prov_entries,
+    filter_prov_entries_for_char_span,
+    prov_entries_have_char_spans,
+)
 import logging
 
 logger = logging.getLogger(__name__)
 _rag_service_singleton: Optional["RAGService"] = None
 _rag_service_lock = threading.Lock()
+
+
+def _merge_retrieval_metadata_filter(
+    metadata_filter: Optional[Dict[str, Any]],
+    *,
+    file_ids: Optional[List[str]] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Merge case scope (file_id) and funnel extras into pgvector metadata_filter."""
+    out: Dict[str, Any] = dict(metadata_filter or {})
+    if file_ids and "file_id" not in out:
+        ids = [str(x).strip() for x in file_ids if x is not None and str(x).strip()]
+        if ids:
+            out["file_id"] = ids[0] if len(ids) == 1 else ids
+    if extra:
+        for key, value in extra.items():
+            if value is not None:
+                out[key] = value
+    return out or None
 
 # Phase 1.3: Multi-stage RAG configuration
 MULTI_STAGE_RAG_ENABLED = True
@@ -352,53 +376,124 @@ class RAGService:
         return None
 
     @staticmethod
-    def _extract_bbox_regions(metadata: Dict[str, Any]) -> Tuple[List[Dict[str, float]], Optional[Dict[str, float]]]:
-        """
-        STRICT: all provenance bboxes from Docling dl_meta (every doc_item × every prov).
+    def _page_bbox_from_chunk_metadata(metadata: Dict[str, Any]) -> Optional[Dict[str, float]]:
+        for key in ("page_bbox", "page_size", "page_dimensions"):
+            parsed = RAGService._page_bbox_from_any(metadata.get(key))
+            if parsed:
+                return parsed
+        return None
 
-        Returns (regions, page_bbox). page_bbox is set only when at least one region exists
-        (same contract as legacy _extract_bbox_metadata).
+    @staticmethod
+    def _xyxy_region_from_dict(region: Any) -> Optional[Dict[str, float]]:
+        if not isinstance(region, dict):
+            return None
+        keys = ("x0", "y0", "x1", "y1")
+        if any(region.get(k) is None for k in keys):
+            return None
+        try:
+            return {k: float(region[k]) for k in keys}
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _regions_from_prov_entries(
+        prov_entries: List[Dict[str, Any]],
+    ) -> List[Dict[str, float]]:
+        out: List[Dict[str, float]] = []
+        seen: Set[Tuple[float, float, float, float]] = set()
+        for prov in prov_entries:
+            if not isinstance(prov, dict):
+                continue
+            bbox0 = prov.get("bbox")
+            box = RAGService._prov_bbox_to_xyxy(bbox0 if isinstance(bbox0, dict) else {})
+            if not box:
+                continue
+            key = (
+                round(box["x0"], 4),
+                round(box["y0"], 4),
+                round(box["x1"], 4),
+                round(box["y1"], 4),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(box)
+        return out
+
+    @staticmethod
+    def _bbox_regions_from_chunk_metadata(
+        metadata: Dict[str, Any],
+    ) -> Tuple[List[Dict[str, float]], Optional[Dict[str, float]]]:
+        """Yandex OCR / chunk-level bbox_regions when Docling dl_meta is absent."""
+        page_bbox = RAGService._page_bbox_from_chunk_metadata(metadata)
+        out: List[Dict[str, float]] = []
+        seen: Set[Tuple[float, float, float, float]] = set()
+
+        raw_regions = metadata.get("bbox_regions")
+        if isinstance(raw_regions, list):
+            for item in raw_regions:
+                box = RAGService._xyxy_region_from_dict(item)
+                if not box:
+                    continue
+                key = (
+                    round(box["x0"], 4),
+                    round(box["y0"], 4),
+                    round(box["x1"], 4),
+                    round(box["y1"], 4),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(box)
+
+        if not out:
+            return [], None
+        return out, page_bbox
+
+    @staticmethod
+    def _extract_bbox_regions(
+        metadata: Dict[str, Any],
+        *,
+        char_start: Optional[int] = None,
+        char_end: Optional[int] = None,
+    ) -> Tuple[List[Dict[str, float]], Optional[Dict[str, float]]]:
+        """
+        Provenance bboxes for citations.
+
+        1. Docling dl_meta.doc_items[].prov[] (optional filter by citation char span).
+        2. Legacy indexed chunks without prov char spans: at most one bbox when filtered.
+        3. Fallback: top-level bbox_regions / bbox (Yandex OCR scans).
+
+        Returns (regions, page_bbox). page_bbox is set when at least one region exists.
         """
         if not isinstance(metadata, dict):
             return [], None
+
+        span_filter = (
+            char_start is not None
+            and char_end is not None
+            and int(char_end) > int(char_start)
+        )
+
         dl_meta = metadata.get("dl_meta")
-        if not isinstance(dl_meta, dict):
-            return [], None
-        page_bbox_candidate = RAGService._page_bbox_from_dl_meta(dl_meta)
-        out: List[Dict[str, float]] = []
-        seen: Set[Tuple[float, float, float, float]] = set()
-        try:
-            doc_items = dl_meta.get("doc_items")
-            if not isinstance(doc_items, list) or not doc_items:
-                return [], None
-            for item in doc_items:
-                if not isinstance(item, dict):
-                    continue
-                prov_list = item.get("prov")
-                if not isinstance(prov_list, list):
-                    continue
-                for prov in prov_list:
-                    if not isinstance(prov, dict):
-                        continue
-                    bbox0 = prov.get("bbox")
-                    box = RAGService._prov_bbox_to_xyxy(bbox0 if isinstance(bbox0, dict) else {})
-                    if not box:
-                        continue
-                    key = (
-                        round(box["x0"], 4),
-                        round(box["y0"], 4),
-                        round(box["x1"], 4),
-                        round(box["y1"], 4),
+        if isinstance(dl_meta, dict):
+            page_bbox_candidate = RAGService._page_bbox_from_dl_meta(dl_meta)
+            prov_entries = dl_meta_prov_entries(metadata)
+            if prov_entries:
+                has_prov_spans = prov_entries_have_char_spans(metadata)
+                if span_filter and has_prov_spans:
+                    prov_entries = filter_prov_entries_for_char_span(
+                        prov_entries,
+                        int(char_start),
+                        int(char_end),
                     )
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    out.append(box)
-        except Exception:
-            return [], None
-        if not out:
-            return [], None
-        return out, page_bbox_candidate
+                regions = RAGService._regions_from_prov_entries(prov_entries)
+                if span_filter and regions and not has_prov_spans:
+                    regions = regions[:1]
+                if regions:
+                    return regions, page_bbox_candidate
+
+        return RAGService._bbox_regions_from_chunk_metadata(metadata)
 
     @staticmethod
     def _extract_bbox_metadata(metadata: Dict[str, Any]) -> Tuple[Optional[Dict[str, float]], Optional[Dict[str, float]]]:
@@ -461,7 +556,9 @@ class RAGService:
         use_iterative: bool = False,
         use_hybrid: bool = False,
         doc_types: Optional[List[str]] = None,
-        file_ids: Optional[List[str]] = None
+        file_ids: Optional[List[str]] = None,
+        metadata_filter: Optional[Dict[str, Any]] = None,
+        pipeline_micro_only: bool = False,
     ) -> List[Document]:
         """
         Retrieve relevant context for a query using Yandex Index
@@ -476,6 +573,8 @@ class RAGService:
             use_hybrid: Use hybrid search
             doc_types: Optional list of document types to filter by (e.g., ['statement_of_claim', 'contract'])
             file_ids: Optional list of file IDs to filter by (only search in these specific files)
+            metadata_filter: Optional pgvector JSONB filter (file_id, doc_type, instrument_id, …)
+            pipeline_micro_only: Case-assistant/tabular path: skip macro recall, search micro+docling only
             
         Returns:
             List of relevant Document objects
@@ -531,6 +630,8 @@ class RAGService:
                     alpha=0.7,
                     db=db,
                     file_ids=file_ids,
+                    metadata_filter=metadata_filter,
+                    pipeline_micro_only=pipeline_micro_only,
                 )
                 # Filter out None or invalid documents
                 valid_docs = [doc for doc in docs if doc is not None and hasattr(doc, 'page_content')]
@@ -652,9 +753,12 @@ class RAGService:
         alpha: float,
         db: Optional[Session],
         file_ids: Optional[List[str]] = None,
+        metadata_filter: Optional[Dict[str, Any]] = None,
+        pipeline_micro_only: bool = False,
     ) -> List[Document]:
         funnel = {
             "strategy": "hybrid_macro_micro",
+            "pipeline_micro_only": bool(pipeline_micro_only),
             "initial_macro": 0,
             "initial_micro": 0,
             "scoped_micro": 0,
@@ -662,9 +766,9 @@ class RAGService:
             "docling_exact_added": 0,
             "final": 0,
         }
+        base_filter = _merge_retrieval_metadata_filter(metadata_filter, file_ids=file_ids)
+
         # "Anchor/address" queries must have deterministic recall on docling chunks.
-        # If the exact anchor exists (e.g. "6.8"), we must surface those docling chunks,
-        # even when macro/micro retrieval returns something else.
         is_anchor_query = False
         try:
             import re as _re
@@ -672,71 +776,90 @@ class RAGService:
         except Exception:
             is_anchor_query = False
 
-        macro_docs = self.document_processor.hybrid_search(
-            case_id=case_id,
-            query=query,
-            k=max(k, 4),
-            alpha=alpha,
-            db=db,
-            chunk_levels=["macro"],
-        )
-        micro_docs = self.document_processor.hybrid_search(
-            case_id=case_id,
-            query=query,
-            k=max(k * 2, 8),
-            alpha=alpha,
-            db=db,
-            chunk_levels=["micro"],
-        )
-        macro_ids = [str((d.metadata or {}).get("macro_id") or (d.metadata or {}).get("chunk_id") or "") for d in macro_docs]
-        macro_ids = [m for m in macro_ids if m]
+        macro_docs: List[Document] = []
+        micro_docs: List[Document] = []
         scoped_micro_docs: List[Document] = []
-        if macro_ids:
-            scoped_micro_docs = self.document_processor.hybrid_search(
+        macro_ids: List[str] = []
+
+        if pipeline_micro_only:
+            micro_docs = self.document_processor.hybrid_search(
                 case_id=case_id,
                 query=query,
                 k=max(k * 2, 8),
                 alpha=alpha,
                 db=db,
                 chunk_levels=["micro"],
-                metadata_filter={"parent_macro_id": macro_ids},
+                metadata_filter=base_filter,
             )
-        funnel["initial_macro"] = len(macro_docs)
-        funnel["initial_micro"] = len(micro_docs)
-        funnel["scoped_micro"] = len(scoped_micro_docs)
-        min_scoped = max(1, int(getattr(config, "LEGAL_CHUNKING_SCOPED_MICRO_MIN_DOCS", 2) or 2))
-        allow_global = bool(getattr(config, "LEGAL_CHUNKING_GLOBAL_MICRO_FALLBACK_ENABLED", False))
-        global_cap = max(0, int(getattr(config, "LEGAL_CHUNKING_GLOBAL_MICRO_MAX_DOCS", 2) or 2))
-
-        if len(scoped_micro_docs) >= min_scoped:
-            merged_micro = scoped_micro_docs
-        elif not scoped_micro_docs and not macro_docs:
-            # No macro context found: allow global recall path.
-            merged_micro = micro_docs[: max(k, min_scoped)]
-            funnel["fallback_global_micro_used"] = 1 if merged_micro else 0
-        elif allow_global and scoped_micro_docs:
-            # Soft-gated expansion: keep scoped as primary, add bounded global tail.
-            tail = [d for d in micro_docs if (d.metadata or {}).get("parent_macro_id") not in set(macro_ids)]
-            merged_micro = scoped_micro_docs + tail[:global_cap]
-            funnel["fallback_global_micro_used"] = 1 if tail[:global_cap] else 0
-        elif allow_global and not scoped_micro_docs and macro_docs:
-            # Explicit opt-in fallback when scoped misses despite macro hits.
-            merged_micro = micro_docs[:global_cap]
-            funnel["fallback_global_micro_used"] = 1 if merged_micro else 0
+            merged_micro = list(micro_docs)
+            funnel["initial_micro"] = len(micro_docs)
         else:
-            # Strict mode: prefer precision over recall (no global micro fallback).
-            merged_micro = scoped_micro_docs
+            macro_docs = self.document_processor.hybrid_search(
+                case_id=case_id,
+                query=query,
+                k=max(k, 4),
+                alpha=alpha,
+                db=db,
+                chunk_levels=["macro"],
+                metadata_filter=base_filter,
+            )
+            micro_docs = self.document_processor.hybrid_search(
+                case_id=case_id,
+                query=query,
+                k=max(k * 2, 8),
+                alpha=alpha,
+                db=db,
+                chunk_levels=["micro"],
+                metadata_filter=base_filter,
+            )
+            macro_ids = [
+                str((d.metadata or {}).get("macro_id") or (d.metadata or {}).get("chunk_id") or "")
+                for d in macro_docs
+            ]
+            macro_ids = [m for m in macro_ids if m]
+            if macro_ids:
+                scoped_filter = _merge_retrieval_metadata_filter(
+                    metadata_filter,
+                    file_ids=file_ids,
+                    extra={"parent_macro_id": macro_ids},
+                )
+                scoped_micro_docs = self.document_processor.hybrid_search(
+                    case_id=case_id,
+                    query=query,
+                    k=max(k * 2, 8),
+                    alpha=alpha,
+                    db=db,
+                    chunk_levels=["micro"],
+                    metadata_filter=scoped_filter,
+                )
+            funnel["initial_macro"] = len(macro_docs)
+            funnel["initial_micro"] = len(micro_docs)
+            funnel["scoped_micro"] = len(scoped_micro_docs)
+            min_scoped = max(1, int(getattr(config, "LEGAL_CHUNKING_SCOPED_MICRO_MIN_DOCS", 2) or 2))
+            allow_global = bool(getattr(config, "LEGAL_CHUNKING_GLOBAL_MICRO_FALLBACK_ENABLED", False))
+            global_cap = max(0, int(getattr(config, "LEGAL_CHUNKING_GLOBAL_MICRO_MAX_DOCS", 2) or 2))
 
-        # Always run a deterministic exact pass over docling chunks for anchor queries.
-        # This uses Postgres FTS + anchor_substring_search (inside hybrid_search) constrained to docling level.
+            if len(scoped_micro_docs) >= min_scoped:
+                merged_micro = scoped_micro_docs
+            elif not scoped_micro_docs and not macro_docs:
+                merged_micro = micro_docs[: max(k, min_scoped)]
+                funnel["fallback_global_micro_used"] = 1 if merged_micro else 0
+            elif allow_global and scoped_micro_docs:
+                tail = [
+                    d for d in micro_docs
+                    if (d.metadata or {}).get("parent_macro_id") not in set(macro_ids)
+                ]
+                merged_micro = scoped_micro_docs + tail[:global_cap]
+                funnel["fallback_global_micro_used"] = 1 if tail[:global_cap] else 0
+            elif allow_global and not scoped_micro_docs and macro_docs:
+                merged_micro = micro_docs[:global_cap]
+                funnel["fallback_global_micro_used"] = 1 if merged_micro else 0
+            else:
+                merged_micro = scoped_micro_docs
+
         docling_exact_docs: List[Document] = []
         if is_anchor_query:
             try:
-                filter_payload = None
-                if file_ids:
-                    file_id_set = [str(x) for x in file_ids if x is not None and str(x).strip()]
-                    if file_id_set:
-                        filter_payload = {"file_id": file_id_set}
                 docling_exact_docs = self.document_processor.hybrid_search(
                     case_id=case_id,
                     query=query,
@@ -744,28 +867,19 @@ class RAGService:
                     alpha=alpha,
                     db=db,
                     chunk_levels=["docling"],
-                    metadata_filter=filter_payload,
+                    metadata_filter=base_filter,
                 )
             except Exception:
                 docling_exact_docs = []
 
         dedup: Dict[str, Document] = {}
-        # Priority: docling exact anchors first, then micro, then macro.
         for doc in (docling_exact_docs + merged_micro + macro_docs):
             key = f"{doc.metadata.get('doc_id')}:{doc.metadata.get('chunk_id')}:{doc.metadata.get('chunk_level')}"
             dedup[key] = doc
         combined = list(dedup.values())[:k]
 
-        # If macro/micro levels are not present (common in docling-direct ingestion),
-        # fall back to hybrid over the default chunk level.
         if not combined:
             try:
-                filter_payload = None
-                if file_ids:
-                    # Strict scope by file_id when requested (workflow selection).
-                    file_id_set = [str(x) for x in file_ids if x is not None and str(x).strip()]
-                    if file_id_set:
-                        filter_payload = {"file_id": file_id_set}
                 combined = self.document_processor.hybrid_search(
                     case_id=case_id,
                     query=query,
@@ -773,10 +887,9 @@ class RAGService:
                     alpha=alpha,
                     db=db,
                     chunk_levels=["docling"],
-                    metadata_filter=filter_payload,
+                    metadata_filter=base_filter,
                 )
             except Exception:
-                # If anything goes wrong, keep empty and let callers handle.
                 combined = []
 
         funnel["docling_exact_added"] = len(docling_exact_docs) if isinstance(docling_exact_docs, list) else 0
@@ -1891,7 +2004,9 @@ class RAGService:
         self,
         query: str,
         documents: List[Document],
-        history: Optional[List[Dict]] = None
+        history: Optional[List[Dict]] = None,
+        *,
+        system_prompt: Optional[str] = None,
     ) -> "AnswerWithCitations":
         """
         Генерирует ответ со структурированными цитатами (Harvey/Lexis+ style).
@@ -1905,6 +2020,7 @@ class RAGService:
             query: Запрос пользователя
             documents: Список Document объектов с метаданными (включая chunk_id)
             history: Опциональная история чата
+            system_prompt: Опциональный system prompt (иначе встроенный для chunk citations)
             
         Returns:
             AnswerWithCitations объект с ответом и списком EnhancedCitation
@@ -2003,11 +2119,15 @@ class RAGService:
         # Utility LLM call: force non-streaming for stability across providers.
         llm = create_llm(temperature=0.1, use_rate_limiting=False, streaming=False)
         try:
+            default_system = (
+                "Ты эксперт-юрист. Отвечай связным текстом; каждый [CHUNK:xxx] сразу после "
+                "соответствующего смыслового фрагмента (не в конце абзаца пачкой). "
+                "Точные chunk_id из контекста."
+            )
+            sys_content = (system_prompt or "").strip() or default_system
             messages = [
-                SystemMessage(
-                    content="Ты эксперт-юрист. Отвечай связным текстом; каждый [CHUNK:xxx] сразу после соответствующего смыслового фрагмента (не в конце абзаца пачкой). Точные chunk_id из контекста."
-                ),
-                HumanMessage(content=prompt)
+                SystemMessage(content=sys_content),
+                HumanMessage(content=prompt),
             ]
             
             response = llm.invoke(messages)

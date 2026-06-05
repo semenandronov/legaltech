@@ -92,3 +92,50 @@ def test_retrieve_hybrid_macro_micro_strict_mode_no_global_fallback(monkeypatch)
     )
     assert any((d.metadata or {}).get("chunk_id") == "m1" for d in docs)
     assert not any((d.metadata or {}).get("chunk_id") == "x1" for d in docs)
+
+
+def test_retrieve_hybrid_macro_micro_merges_instrument_metadata_filter(monkeypatch):
+    service = RAGService.__new__(RAGService)
+    macro_doc = SimpleNamespace(
+        page_content="macro",
+        metadata={"doc_id": "d1", "chunk_id": "m1", "macro_id": "m1", "chunk_level": "macro"},
+    )
+    micro_doc_scoped = SimpleNamespace(
+        page_content="micro-scoped",
+        metadata={"doc_id": "d1", "chunk_id": "s1", "chunk_level": "micro", "parent_macro_id": "m1"},
+    )
+
+    calls = []
+
+    def _hybrid_search(**kwargs):
+        calls.append(kwargs)
+        levels = kwargs.get("chunk_levels") or []
+        metadata_filter = kwargs.get("metadata_filter") or {}
+        if levels == ["macro"]:
+            assert metadata_filter.get("instrument_id") == ["fz-127"]
+            return [macro_doc]
+        if levels == ["micro"] and metadata_filter.get("parent_macro_id"):
+            assert metadata_filter.get("instrument_id") == ["fz-127"]
+            assert metadata_filter.get("parent_macro_id") == ["m1"]
+            return [micro_doc_scoped]
+        if levels == ["micro"]:
+            assert metadata_filter.get("instrument_id") == ["fz-127"]
+            return []
+        return []
+
+    service.document_processor = SimpleNamespace(hybrid_search=_hybrid_search)
+    monkeypatch.setattr("app.services.rag_service.trace_contract_event", lambda *a, **k: None)
+    monkeypatch.setattr("app.services.rag_service.get_active_trace_context", lambda: None)
+
+    service._retrieve_hybrid_macro_micro(
+        case_id="case-1",
+        query="тест",
+        k=3,
+        alpha=0.7,
+        db=None,
+        metadata_filter={"instrument_id": ["fz-127"]},
+    )
+    macro_calls = [c for c in calls if c.get("chunk_levels") == ["macro"]]
+    assert len(macro_calls) == 1
+    scoped = [c for c in calls if c.get("chunk_levels") == ["micro"] and (c.get("metadata_filter") or {}).get("parent_macro_id")]
+    assert len(scoped) == 1

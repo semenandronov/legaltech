@@ -8,6 +8,10 @@ import { getCase, getApiUrl, SourceInfo, getCaseFiles, improveAssistantPrompt, e
 import { ChatHistoryPanel } from '../components/Chat/ChatHistoryPanel'
 import { loadChatHistory, mapAssistantHistoryMessage, citationRecordToSourceInfo } from '../services/chatHistoryService'
 import MessageContent from '../components/Chat/MessageContent'
+import {
+  caseAssistantLegacyCitationsEnabled,
+  resolveCaseCitationSource,
+} from '../utils/caseAssistantCitations'
 import { AnswerBlocks, sourceInfosToAnswerBlockCitations } from '../components/Chat/AnswerBlocks'
 import {
   ThinkingBlock,
@@ -26,6 +30,12 @@ import { toast } from 'sonner'
 import { useWorkflowLiveExecution } from '../workflow/useWorkflowLiveExecution'
 import { countWorkflowArtifacts, type WorkflowArtifactsPayload } from '../workflow/workflowLiveHelpers'
 import { WorkflowArtifactCards } from '../components/Workflow/WorkflowArtifactCards'
+import {
+  canSelectDraftMode,
+  canEnableLegalResearch,
+  canEnableCourtPractice,
+} from '../lib/chatInstrumentPolicy'
+import { useChatInstrumentSettings } from '../hooks/useChatInstrumentSettings'
 
 // ─────────────────────────────────────────────────────────
 // Types
@@ -535,8 +545,8 @@ interface HarveyInputProps {
   onSetDraftMode: (draft: boolean) => void
   isLegalResearch: boolean
   onSetLegalResearch: (v: boolean) => void
-  isDeepThink: boolean
-  onSetDeepThink: (v: boolean) => void
+  isCourtPractice: boolean
+  onSetCourtPractice: (v: boolean) => void
   isImprovingPrompt?: boolean
   onImprovePrompt?: () => void
   placeholder?: string
@@ -548,7 +558,7 @@ function HarveyInput({
   selectedCaseFiles, onOpenCaseFilePicker, onRemoveCaseFile,
   isStreaming, isDraftMode, onSetDraftMode,
   isLegalResearch, onSetLegalResearch,
-  isDeepThink, onSetDeepThink,
+  isCourtPractice, onSetCourtPractice,
   isImprovingPrompt = false,
   onImprovePrompt,
   placeholder = 'Спросите что угодно о деле...',
@@ -631,7 +641,7 @@ function HarveyInput({
   }
 
   const hasFiles = fileContexts.length > 0 || uploadingFiles.length > 0 || selectedCaseFiles.length > 0
-  const hasActiveSettings = isDraftMode || isLegalResearch || isDeepThink
+  const hasActiveSettings = isDraftMode || isLegalResearch || isCourtPractice
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white" style={{ boxShadow: '0 1px 6px rgba(0,0,0,0.06)' }}>
@@ -869,8 +879,14 @@ function HarveyInput({
               </button>
               <button
                 type="button"
-                onClick={() => { onSetDraftMode(true); setSettingsOpen(false) }}
-                className="w-full flex items-center gap-2 px-2.5 py-2 text-sm transition-colors"
+                disabled={!canSelectDraftMode(isLegalResearch, isCourtPractice)}
+                onClick={() => {
+                  if (!canSelectDraftMode(isLegalResearch, isCourtPractice)) return
+                  onSetDraftMode(true)
+                  setSettingsOpen(false)
+                }}
+                className="w-full flex items-center gap-2 px-2.5 py-2 text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                title={isLegalResearch || isCourtPractice ? 'Недоступно при включённых инструментах' : undefined}
                 style={{
                   color: isDraftMode ? 'var(--color-accent)' : 'var(--color-text-muted)',
                   backgroundColor: isDraftMode ? 'var(--color-bg-hover)' : 'transparent',
@@ -881,14 +897,18 @@ function HarveyInput({
                 Draft
               </button>
 
-              {/* Tools section */}
+              {/* Инструменты — только в режиме Ask */}
+              {!isDraftMode && (
+              <>
               <div className="px-2.5 py-1.5 text-xs font-medium border-t border-b border-gray-100" style={{ color: 'var(--color-text-disabled)' }}>
                 Инструменты
               </div>
               <button
                 type="button"
+                disabled={!canEnableLegalResearch(isDraftMode) || isCourtPractice}
                 onClick={() => onSetLegalResearch(!isLegalResearch)}
-                className="w-full flex items-center gap-2 px-2.5 py-2 text-sm transition-colors"
+                className="w-full flex items-center gap-2 px-2.5 py-2 text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                title={isDraftMode ? 'Недоступно в режиме Draft' : undefined}
                 style={{
                   color: isLegalResearch ? 'var(--color-success)' : 'var(--color-text-muted)',
                   backgroundColor: isLegalResearch ? 'var(--color-success-bg)' : 'transparent',
@@ -903,28 +923,32 @@ function HarveyInput({
                 >
                   {isLegalResearch && <span className="text-white" style={{ fontSize: '9px' }}>✓</span>}
                 </span>
-                Pravo.gov.ru
+                Справочник
               </button>
               <button
                 type="button"
-                onClick={() => onSetDeepThink(!isDeepThink)}
-                className="w-full flex items-center gap-2 px-2.5 py-2 text-sm transition-colors"
+                disabled={!canEnableCourtPractice(isDraftMode) || isLegalResearch}
+                onClick={() => onSetCourtPractice(!isCourtPractice)}
+                className="w-full flex items-center gap-2 px-2.5 py-2 text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                title={isDraftMode ? 'Недоступно в режиме Draft' : undefined}
                 style={{
-                  color: isDeepThink ? 'var(--color-info)' : 'var(--color-text-muted)',
-                  backgroundColor: isDeepThink ? 'var(--color-info-bg)' : 'transparent',
+                  color: isCourtPractice ? '#0F766E' : 'var(--color-text-muted)',
+                  backgroundColor: isCourtPractice ? 'var(--color-success-bg)' : 'transparent',
                 }}
               >
                 <span
                   className="w-3.5 h-3.5 rounded border flex items-center justify-center flex-shrink-0"
                   style={{
-                    borderColor: isDeepThink ? 'var(--color-info)' : 'var(--color-border-strong)',
-                    backgroundColor: isDeepThink ? 'var(--color-info)' : 'transparent',
+                    borderColor: isCourtPractice ? '#0F766E' : 'var(--color-border-strong)',
+                    backgroundColor: isCourtPractice ? '#0F766E' : 'transparent',
                   }}
                 >
-                  {isDeepThink && <span className="text-white" style={{ fontSize: '9px' }}>✓</span>}
+                  {isCourtPractice && <span className="text-white" style={{ fontSize: '9px' }}>✓</span>}
                 </span>
-                Deep Think
+                Суд. практика
               </button>
+              </>
+              )}
             </div>
           )}
         </div>
@@ -981,10 +1005,17 @@ const AssistantChatPage = () => {
   const [uploadingFiles, setUploadingFiles] = useState<string[]>([])
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [sessionId, setSessionId] = useState<string | null>(null)
+  const sessionIdRef = useRef<string | null>(null)
   const [isStreaming, setIsStreaming] = useState(false)
-  const [isDraftMode, setIsDraftMode] = useState(false)
-  const [isLegalResearch, setIsLegalResearch] = useState(false)
-  const [isDeepThink, setIsDeepThink] = useState(false)
+  const {
+    legalResearch: isLegalResearch,
+    courtPractice: isCourtPractice,
+    draftMode: isDraftMode,
+    setLegalResearch: setIsLegalResearch,
+    setCourtPractice: setIsCourtPractice,
+    setDraftMode: setIsDraftMode,
+    reset: resetChatInstruments,
+  } = useChatInstrumentSettings()
   const [isImprovingPrompt, setIsImprovingPrompt] = useState(false)
   const [draftDocument, setDraftDocument] = useState<DraftDocument | null>(null)
   const [draftDocId, setDraftDocId] = useState<string | null>(null)
@@ -1018,6 +1049,11 @@ const AssistantChatPage = () => {
     onReturnPath: onWorkflowReturnPath,
     defaultReturnChatPath: caseChatPath,
   })
+
+  // Сброс тумблеров при входе в чат другого дела (или повторном открытии маршрута).
+  useEffect(() => {
+    resetChatInstruments()
+  }, [caseId, resetChatInstruments])
 
   // Load case info
   useEffect(() => {
@@ -1068,6 +1104,17 @@ const AssistantChatPage = () => {
     }
   }, [])
 
+  // Client-owned session: mint UUID before first API call so backend never attaches to stale case session.
+  useEffect(() => {
+    if (!caseId) return
+    const params = new URLSearchParams(location.search)
+    if (params.get('session')) return
+    if (sessionIdRef.current) return
+    const newSid = crypto.randomUUID()
+    sessionIdRef.current = newSid
+    setSessionId(newSid)
+  }, [caseId, location.search])
+
   // Auto-load session from ?session= URL param (e.g. from recent actions on case overview)
   useEffect(() => {
     if (!caseId) return
@@ -1078,6 +1125,7 @@ const AssistantChatPage = () => {
       loadChatHistory(caseId, sessionParam)
         .then((history) => {
           setMessages(history.map((m) => mapAssistantHistoryMessage(m)))
+          sessionIdRef.current = sessionParam
           setSessionId(sessionParam)
         })
         .catch(() => {})
@@ -1103,7 +1151,7 @@ const AssistantChatPage = () => {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
+            'X-Access-Token': token,
           },
           body: JSON.stringify({
             case_id: caseId,
@@ -1113,7 +1161,8 @@ const AssistantChatPage = () => {
         if (cancelled || !res.ok) return
         const data = (await res.json()) as { session_id?: string }
         // Не перетираем session_id после «Новый чат» (уже задан в state)
-        if (data.session_id && !sessionFromUrl && !sessionId) {
+        if (data.session_id && !sessionFromUrl && !sessionIdRef.current) {
+          sessionIdRef.current = data.session_id
           setSessionId((prev) => prev ?? data.session_id!)
         }
       } catch {
@@ -1137,7 +1186,7 @@ const AssistantChatPage = () => {
         formData.append('file', file)
         const res = await fetch(getApiUrl('/api/v2/assistant/upload-file'), {
           method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { 'X-Access-Token': token || '' },
           body: formData,
         })
         if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
@@ -1198,7 +1247,6 @@ const AssistantChatPage = () => {
   const resolveConversationMode = (): 'research' | 'case_advice' | 'drafting' | 'review' | 'comparison' | 'clarify' => {
     if (isDraftMode) return 'drafting'
     if (isLegalResearch) return 'research'
-    if (isDeepThink) return 'case_advice'
     return 'case_advice'
   }
 
@@ -1236,23 +1284,27 @@ const AssistantChatPage = () => {
       setDraftDocId(null)
     }
 
+    let assistantContent = ''
+    let draftDocIdThisRequest: string | null = null
+
     try {
       const token = localStorage.getItem('access_token')
       const response = await fetch(getApiUrl('/api/v2/assistant/chat'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+          'X-Access-Token': token || '',
         },
         body: JSON.stringify({
           case_id: caseId,
           mode: resolveConversationMode(),
           messages: allMessages.map((m) => ({ role: m.role, content: m.content })),
-          session_id: sessionId,
+          session_id: sessionIdRef.current ?? sessionId,
           file_contexts: contextsToSend.map((fc) => ({ filename: fc.filename, text: fc.text })),
           web_search: false,
-          legal_research: isLegalResearch,
-          deep_think: isDeepThink,
+          legal_research: isDraftMode ? false : isLegalResearch,
+          use_legal_corpus: isDraftMode ? false : isLegalResearch,
+          court_practice: isDraftMode ? false : isCourtPractice,
           draft_mode: isDraftMode,
           ...(options?.draftAction ? { draft_action: options.draftAction } : {}),
           document_context: isDraftMode && currentDraft ? currentDraft.content : undefined,
@@ -1265,7 +1317,6 @@ const AssistantChatPage = () => {
 
       const reader = response.body!.getReader()
       const decoder = new TextDecoder()
-      let assistantContent = ''
       let buffer = ''
 
       const processSSELine = (line: string) => {
@@ -1274,8 +1325,9 @@ const AssistantChatPage = () => {
         if (!raw) return
         try {
           const data = JSON.parse(raw)
-          if (data.session_id && !sessionId) {
-            setSessionId(data.session_id)
+          if (data.session_id) {
+            sessionIdRef.current = data.session_id
+            setSessionId((prev) => prev || data.session_id)
           } else if (data.type === 'citations' && Array.isArray(data.citations)) {
             const sources: SourceInfo[] = data.citations.map((c: unknown) =>
               citationRecordToSourceInfo(c as Record<string, unknown>)
@@ -1387,12 +1439,18 @@ const AssistantChatPage = () => {
             const doc = data.document || data.data
             const docId = doc.id
             const docTitle = doc.title || 'Черновик'
+            draftDocIdThisRequest = docId
             setDraftDocId(docId)
             setDraftDocument({ title: docTitle, content: '' })
           } else if (data.type === 'content_sync' && typeof data.content === 'string') {
             // Финальный текст узла графа после sanitize — подменяем накопленный стрим (убирает утечки/дубли).
             assistantContent = data.content
-            if (!isDraftMode) {
+            const draftShowContent =
+              isDraftMode &&
+              (assistantContent.includes('❌') ||
+                assistantContent.includes('Ошибка') ||
+                assistantContent.includes('✅'))
+            if (!isDraftMode || draftShowContent) {
               setMessages((prev) => {
                 const last = prev[prev.length - 1]
                 return [...prev.slice(0, -1), { ...last, role: 'assistant', content: assistantContent }]
@@ -1400,7 +1458,12 @@ const AssistantChatPage = () => {
             }
           } else if (data.textDelta) {
             assistantContent += data.textDelta
-            if (!isDraftMode) {
+            const draftShowDelta =
+              isDraftMode &&
+              (data.textDelta.includes('❌') ||
+                assistantContent.includes('Ошибка') ||
+                assistantContent.includes('✅'))
+            if (!isDraftMode || draftShowDelta) {
               // Preserve sources if already set (citations can arrive before last textDelta in some edge cases)
               setMessages((prev) => {
                 const last = prev[prev.length - 1]
@@ -1434,6 +1497,19 @@ const AssistantChatPage = () => {
       }
     } finally {
       setIsStreaming(false)
+      if (isDraftMode && assistantContent.trim()) {
+        const draftFailed =
+          !draftDocIdThisRequest &&
+          (assistantContent.includes('❌') || assistantContent.includes('Ошибка создания'))
+        setMessages((prev) => {
+          const last = prev[prev.length - 1]
+          if (last?.role !== 'assistant') return prev
+          return [...prev.slice(0, -1), { ...last, role: 'assistant', content: assistantContent }]
+        })
+        if (draftFailed) {
+          toast.error('Не удалось сохранить документ в редактор. Нажмите «Одобрить план» ещё раз.')
+        }
+      }
     }
   }
 
@@ -1458,16 +1534,12 @@ const AssistantChatPage = () => {
       }
       return
     }
-    // Some payloads may miss source_id; try to recover it from case file list by filename.
-    // Without source_id, the viewer may open the "default" document, which looks like a wrong first link.
-    if (!source.source_id && source.file && availableCaseFiles.length > 0) {
-      const match = availableCaseFiles.find((f) => f.filename === source.file)
-      if (match?.id) {
-        setViewerSource({ ...source, source_id: match.id, case_id: source.case_id ?? caseId ?? undefined })
-        return
-      }
-    }
-    setViewerSource(source)
+    const resolved = resolveCaseCitationSource(
+      source,
+      availableCaseFiles,
+      caseId ?? undefined,
+    )
+    setViewerSource(resolved)
   }
 
   // ── New chat ──
@@ -1478,8 +1550,10 @@ const AssistantChatPage = () => {
     setFileContexts([])
     setSelectedCaseFileIds([])
     // Новый UUID = новый LangGraph thread; иначе бэкенд цепляется к последней сессии дела (<30 мин)
-    setSessionId(crypto.randomUUID())
-    setIsDraftMode(false)
+    const newSid = crypto.randomUUID()
+    sessionIdRef.current = newSid
+    setSessionId(newSid)
+    resetChatInstruments()
     setDraftDocument(null)
     setDraftDocId(null)
     if (caseId) {
@@ -1491,10 +1565,14 @@ const AssistantChatPage = () => {
   // ── Load history session ──
   const handleLoadHistory = async (histSessionId?: string) => {
     if (!caseId) return
+    resetChatInstruments()
     try {
       const history = await loadChatHistory(caseId, histSessionId)
       setMessages(history.map((m) => mapAssistantHistoryMessage(m)))
-      if (histSessionId) setSessionId(histSessionId)
+      if (histSessionId) {
+        sessionIdRef.current = histSessionId
+        setSessionId(histSessionId)
+      }
     } catch {
       toast.error('Не удалось загрузить историю')
     }
@@ -1564,19 +1642,19 @@ const AssistantChatPage = () => {
                     border: '1px solid color-mix(in srgb, var(--color-success) 35%, var(--color-border))',
                   }}
                 >
-                  Pravo.gov.ru
+                  Справочник
                 </span>
               )}
-              {isDeepThink && (
+              {isCourtPractice && (
                 <span
                   className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium"
                   style={{
-                    backgroundColor: 'var(--color-info-bg)',
-                    color: 'var(--color-info)',
-                    border: '1px solid color-mix(in srgb, var(--color-info) 22%, var(--color-border))',
+                    backgroundColor: 'var(--color-success-bg)',
+                    color: '#0F766E',
+                    border: '1px solid color-mix(in srgb, #0F766E 35%, var(--color-border))',
                   }}
                 >
-                  Deep Think
+                  Суд. практика
                 </span>
               )}
             </div>
@@ -1692,6 +1770,7 @@ const AssistantChatPage = () => {
                               content={assistantTextBody}
                               sources={msg.sources || []}
                               answerBlocks={msg.answerBlocks}
+                              preferLegacyCitations={caseAssistantLegacyCitationsEnabled()}
                               onCitationClick={handleCitationClick}
                               isStreaming={isStreaming && idx === messages.length - 1}
                             />
@@ -1769,8 +1848,8 @@ const AssistantChatPage = () => {
                     onSetDraftMode={setIsDraftMode}
                     isLegalResearch={isLegalResearch}
                     onSetLegalResearch={setIsLegalResearch}
-                    isDeepThink={isDeepThink}
-                    onSetDeepThink={setIsDeepThink}
+                    isCourtPractice={isCourtPractice}
+                    onSetCourtPractice={setIsCourtPractice}
                     isImprovingPrompt={isImprovingPrompt}
                     onImprovePrompt={handleImprovePrompt}
                   />
@@ -1905,8 +1984,8 @@ const AssistantChatPage = () => {
                 onSetDraftMode={setIsDraftMode}
                 isLegalResearch={isLegalResearch}
                 onSetLegalResearch={setIsLegalResearch}
-                isDeepThink={isDeepThink}
-                onSetDeepThink={setIsDeepThink}
+                isCourtPractice={isCourtPractice}
+                onSetCourtPractice={setIsCourtPractice}
                 isImprovingPrompt={isImprovingPrompt}
                 onImprovePrompt={handleImprovePrompt}
               />

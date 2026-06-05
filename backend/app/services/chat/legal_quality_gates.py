@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from app.services.chat.conversation_policy_service import RunContext
+from app.services.chat.court_practice_answer_contract import (
+    CourtPracticeAnswerValidation,
+    validate_court_practice_answer,
+)
 
 
 @dataclass
@@ -119,4 +123,44 @@ class LegalQualityGates:
                 metadata={"budget_type": "llm_calls", "actual": llm_calls, "limit": max_llm},
             )
         return GateResult(allowed=True, status="budget_ok")
+
+    @staticmethod
+    def court_practice_answer_gate(
+        run_ctx: RunContext,
+        *,
+        answer_text: str,
+        citations: List[Dict[str, Any]],
+        enabled: bool,
+        strict_mode: bool = True,
+        available_case_numbers: Optional[List[str]] = None,
+    ) -> GateResult:
+        """
+        Enforce "precedent-finder" behavior for court_practice mode:
+        - case cards grounded in citations
+        - no advice/recommendations
+        """
+        if not enabled:
+            return GateResult(allowed=True, status="court_practice_gate_skipped")
+        # In non-strict mode, we still compute metadata but do not block.
+        v: CourtPracticeAnswerValidation = validate_court_practice_answer(
+            answer_text=answer_text or "",
+            citations=citations or [],
+            available_case_numbers=available_case_numbers,
+            min_cases=2,
+        )
+        if v.ok:
+            return GateResult(allowed=True, status="court_practice_contract_ok", metadata=v.metrics)
+        if not strict_mode:
+            return GateResult(
+                allowed=True,
+                status="court_practice_contract_violation_best_effort",
+                message="; ".join(v.reasons[:3]),
+                metadata=v.metrics,
+            )
+        return GateResult(
+            allowed=False,
+            status="court_practice_contract_violation",
+            message="; ".join(v.reasons[:3]),
+            metadata=v.metrics,
+        )
 

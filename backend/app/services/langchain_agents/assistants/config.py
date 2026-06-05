@@ -11,7 +11,6 @@ from enum import Enum
 class GraphType(str, Enum):
     """Типы графов."""
     CHAT = "chat"
-    TABULAR = "tabular"
     WORKFLOW = "workflow"
 
 
@@ -130,19 +129,6 @@ ASSISTANT_CONFIGS: Dict[str, AssistantConfig] = {
 2. Используй правильную структуру и реквизиты
 3. Применяй юридическую терминологию
 4. Предложи варианты формулировок"""
-    ),
-    
-    "tabular-extractor": AssistantConfig(
-        id="tabular-extractor",
-        name="Tabular Data Extractor",
-        description="Извлечение структурированных данных из документов в таблицы",
-        graph=GraphType.TABULAR,
-        metadata=AssistantMetadata(
-            confidence_threshold=0.8,
-            enable_hitl=True
-        ),
-        use_send_api=True,
-        interrupt_before=["clarify_interrupt"]
     ),
     
     "workflow-orchestrator": AssistantConfig(

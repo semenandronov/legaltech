@@ -1,24 +1,19 @@
-"""Reranker Service - Phase 1.3 Implementation
+"""Reranker Service - cross-encoder reranking for RAG recall pools."""
+from __future__ import annotations
 
-This module provides cross-encoder reranking for RAG results
-to improve relevance scoring beyond vector similarity.
-
-Features:
-- Cross-encoder reranking using sentence-transformers
-- Cohere reranker integration (optional)
-- Local lightweight cross-encoder fallback
-- Score normalization
-"""
-from typing import List, Dict, Any, Optional, Tuple
-from langchain_core.documents import Document
-from app.config import config
 import logging
+from typing import Any, List, Optional, Tuple
+
+from langchain_core.documents import Document
+
+from app.config import config
+from app.services.chat.rag_passage_utils import passage_for_rerank
 
 logger = logging.getLogger(__name__)
 
-# Try to import cross-encoder
 try:
     from sentence_transformers import CrossEncoder
+
     CROSS_ENCODER_AVAILABLE = True
 except ImportError:
     CROSS_ENCODER_AVAILABLE = False
@@ -26,238 +21,235 @@ except ImportError:
 
 
 class RerankerService:
-    """
-    Cross-encoder reranking service for improving RAG relevance.
-    
-    Reranks retrieved documents by computing a relevance score
-    for each query-document pair using a cross-encoder model.
-    """
-    
+    """Cross-encoder reranking for query–passage relevance."""
+
     def __init__(
         self,
-        model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+        model_name: str = "BAAI/bge-reranker-v2-m3",
         use_cohere: bool = False,
-        cohere_api_key: Optional[str] = None
+        cohere_api_key: Optional[str] = None,
+        batch_size: int = 32,
+        passage_max_chars: int = 2400,
     ):
-        """
-        Initialize the reranker service.
-        
-        Args:
-            model_name: Name of the cross-encoder model to use
-            use_cohere: Whether to use Cohere reranker (requires API key)
-            cohere_api_key: Cohere API key for reranking
-        """
         self.model_name = model_name
         self.use_cohere = use_cohere
         self.cohere_api_key = cohere_api_key
-        
+        self.batch_size = max(1, int(batch_size))
+        self.passage_max_chars = max(256, int(passage_max_chars))
+
         self._cross_encoder = None
         self._cohere_client = None
-        
-        # Initialize Cohere if requested
+
         if use_cohere and cohere_api_key:
             try:
                 import cohere
+
                 self._cohere_client = cohere.Client(cohere_api_key)
-                logger.info("✅ Cohere reranker initialized")
+                logger.info("Cohere reranker initialized (model=rerank-multilingual-v3.0)")
             except ImportError:
                 logger.warning("Cohere not installed. Falling back to local cross-encoder.")
                 self.use_cohere = False
-        
-        # Initialize cross-encoder as fallback or primary
+
         if CROSS_ENCODER_AVAILABLE and not self.use_cohere:
             try:
                 self._cross_encoder = CrossEncoder(model_name)
-                logger.info(f"✅ Cross-encoder reranker initialized: {model_name}")
+                logger.info("Cross-encoder reranker initialized: %s", model_name)
             except Exception as e:
-                logger.warning(f"Failed to load cross-encoder: {e}")
-    
+                logger.warning("Failed to load cross-encoder %s: %s", model_name, e)
+
     def rerank(
         self,
         query: str,
         documents: List[Document],
         top_k: int = 10,
-        score_threshold: Optional[float] = None
+        score_threshold: Optional[float] = None,
+        *,
+        passage_max_chars: Optional[int] = None,
     ) -> List[Tuple[Document, float]]:
-        """
-        Rerank documents by relevance to query.
-        
-        Args:
-            query: The search query
-            documents: List of documents to rerank
-            top_k: Number of top documents to return
-            score_threshold: Minimum score threshold (optional)
-            
-        Returns:
-            List of (document, score) tuples sorted by relevance
-        """
         if not documents:
             return []
-        
+
         if self.use_cohere and self._cohere_client:
-            return self._rerank_with_cohere(query, documents, top_k, score_threshold)
-        elif self._cross_encoder:
-            return self._rerank_with_cross_encoder(query, documents, top_k, score_threshold)
-        else:
-            # Fallback: return original documents with default scores
-            logger.warning("No reranker available, returning documents with default scores")
-            return self._fallback_rerank(query, documents, top_k)
-    
+            return self._rerank_with_cohere(query, documents, top_k, score_threshold, passage_max_chars)
+        if self._cross_encoder:
+            return self._rerank_with_cross_encoder(
+                query, documents, top_k, score_threshold, passage_max_chars
+            )
+        logger.warning("No reranker available, using fallback keyword scores")
+        return self._fallback_rerank(query, documents, top_k)
+
+    def _passage_text(self, doc: Document, passage_max_chars: Optional[int]) -> str:
+        cap = passage_max_chars if passage_max_chars is not None else self.passage_max_chars
+        return passage_for_rerank(doc, cap)
+
     def _rerank_with_cross_encoder(
         self,
         query: str,
         documents: List[Document],
         top_k: int,
-        score_threshold: Optional[float]
+        score_threshold: Optional[float],
+        passage_max_chars: Optional[int],
     ) -> List[Tuple[Document, float]]:
-        """Rerank using local cross-encoder model."""
         try:
-            # Prepare pairs for cross-encoder
-            pairs = [[query, doc.page_content] for doc in documents]
-            
-            # Get scores
-            scores = self._cross_encoder.predict(pairs)
-            
-            # Combine documents with scores
+            pairs = [
+                [query, self._passage_text(doc, passage_max_chars)] for doc in documents
+            ]
+            scores = self._predict_batched(pairs)
             doc_scores = list(zip(documents, scores))
-            
-            # Sort by score (descending)
-            doc_scores.sort(key=lambda x: x[1], reverse=True)
-            
-            # Apply threshold if specified
+            doc_scores.sort(key=lambda x: float(x[1]), reverse=True)
             if score_threshold is not None:
-                doc_scores = [(doc, score) for doc, score in doc_scores if score >= score_threshold]
-            
-            # Return top_k
-            result = doc_scores[:top_k]
-            
-            logger.debug(f"Reranked {len(documents)} docs → {len(result)} top results")
+                doc_scores = [
+                    (doc, float(score))
+                    for doc, score in doc_scores
+                    if float(score) >= score_threshold
+                ]
+            result = [(doc, float(score)) for doc, score in doc_scores[:top_k]]
+            logger.debug(
+                "Cross-encoder reranked %s docs → %s (model=%s)",
+                len(documents),
+                len(result),
+                self.model_name,
+            )
             return result
-            
         except Exception as e:
-            logger.error(f"Cross-encoder reranking error: {e}")
+            logger.error("Cross-encoder reranking error: %s", e, exc_info=True)
             return self._fallback_rerank(query, documents, top_k)
-    
+
+    def _predict_batched(self, pairs: List[List[str]]) -> List[float]:
+        if not self._cross_encoder:
+            return [0.0] * len(pairs)
+        bs = self.batch_size
+        all_scores: List[float] = []
+        for i in range(0, len(pairs), bs):
+            chunk = pairs[i : i + bs]
+            raw = self._cross_encoder.predict(chunk)
+            all_scores.extend(float(x) for x in raw)
+        return all_scores
+
     def _rerank_with_cohere(
         self,
         query: str,
         documents: List[Document],
         top_k: int,
-        score_threshold: Optional[float]
+        score_threshold: Optional[float],
+        passage_max_chars: Optional[int],
     ) -> List[Tuple[Document, float]]:
-        """Rerank using Cohere API."""
         try:
-            # Extract document texts
-            doc_texts = [doc.page_content for doc in documents]
-            
-            # Call Cohere rerank API
+            doc_texts = [self._passage_text(doc, passage_max_chars) for doc in documents]
             response = self._cohere_client.rerank(
                 query=query,
                 documents=doc_texts,
-                top_n=top_k,
-                model="rerank-multilingual-v3.0"  # Use multilingual for Russian support
+                top_n=min(top_k, len(documents)),
+                model="rerank-multilingual-v3.0",
             )
-            
-            # Build result list
             result = []
             for item in response.results:
                 doc = documents[item.index]
-                score = item.relevance_score
-                
+                score = float(item.relevance_score)
                 if score_threshold is None or score >= score_threshold:
                     result.append((doc, score))
-            
-            logger.debug(f"Cohere reranked {len(documents)} docs → {len(result)} top results")
             return result
-            
         except Exception as e:
-            logger.error(f"Cohere reranking error: {e}")
+            logger.error("Cohere reranking error: %s", e)
             return self._fallback_rerank(query, documents, top_k)
-    
+
     def _fallback_rerank(
         self,
         query: str,
         documents: List[Document],
-        top_k: int
+        top_k: int,
     ) -> List[Tuple[Document, float]]:
-        """
-        Fallback reranking using simple text similarity.
-        
-        Uses keyword overlap and length normalization.
-        """
         query_words = set(query.lower().split())
-        
-        doc_scores = []
+        doc_scores: List[Tuple[Document, float]] = []
         for doc in documents:
-            content_words = set(doc.page_content.lower().split())
-            
-            # Calculate Jaccard similarity
+            content_words = set((doc.page_content or "").lower().split())
             intersection = len(query_words & content_words)
             union = len(query_words | content_words)
-            jaccard = intersection / union if union > 0 else 0
-            
-            # Consider existing similarity score
-            existing_score = doc.metadata.get("similarity_score", 0)
-            if existing_score:
-                combined_score = (jaccard + existing_score) / 2
-            else:
-                combined_score = jaccard
-            
-            doc_scores.append((doc, combined_score))
-        
-        # Sort by score
+            jaccard = intersection / union if union > 0 else 0.0
+            existing = doc.metadata.get("similarity_score", 0) if doc.metadata else 0
+            try:
+                existing_f = float(existing) if existing else 0.0
+            except (TypeError, ValueError):
+                existing_f = 0.0
+            combined = (jaccard + existing_f) / 2 if existing_f else jaccard
+            doc_scores.append((doc, combined))
         doc_scores.sort(key=lambda x: x[1], reverse=True)
-        
         return doc_scores[:top_k]
-    
+
     def rerank_to_documents(
         self,
         query: str,
         documents: List[Document],
         top_k: int = 10,
-        score_threshold: Optional[float] = None
+        score_threshold: Optional[float] = None,
+        **kwargs: Any,
     ) -> List[Document]:
-        """
-        Rerank and return only documents (without scores).
-        
-        Args:
-            query: The search query
-            documents: List of documents to rerank
-            top_k: Number of top documents to return
-            score_threshold: Minimum score threshold (optional)
-            
-        Returns:
-            List of documents sorted by relevance
-        """
-        ranked = self.rerank(query, documents, top_k, score_threshold)
-        
-        # Add rerank score to metadata and return documents
+        ranked = self.rerank(query, documents, top_k, score_threshold, **kwargs)
         result = []
         for doc, score in ranked:
-            doc.metadata["rerank_score"] = float(score)
+            md = dict(doc.metadata or {})
+            md["rerank_score"] = float(score)
+            doc.metadata = md
             result.append(doc)
-        
         return result
 
 
-# Global reranker instance
 _reranker: Optional[RerankerService] = None
+_light_reranker: Optional[RerankerService] = None
+
+
+def get_heavy_reranker_service() -> RerankerService:
+    """Full cross-encoder (BGE / Cohere) for deep retrieval tiers."""
+    global _reranker
+    if _reranker is None:
+        cohere_key = getattr(config, "COHERE_API_KEY", "") or ""
+        use_cohere = bool(
+            getattr(config, "CASE_ASSISTANT_RERANK_USE_COHERE", False)
+            and cohere_key
+        )
+        model_name = getattr(config, "RERANKER_MODEL_NAME", "") or "BAAI/bge-reranker-v2-m3"
+        batch_size = int(
+            getattr(config, "CASE_ASSISTANT_RERANK_BATCH_SIZE", None)
+            or getattr(config, "RERANKER_BATCH_SIZE", 32)
+            or 32
+        )
+        max_chars = int(getattr(config, "CASE_ASSISTANT_RERANK_MAX_CHARS", 2400) or 2400)
+        _reranker = RerankerService(
+            model_name=model_name,
+            use_cohere=use_cohere,
+            cohere_api_key=cohere_key or None,
+            batch_size=batch_size,
+            passage_max_chars=max_chars,
+        )
+    return _reranker
+
+
+def get_light_reranker_service() -> RerankerService:
+    """Fast cross-encoder for instant/standard tiers."""
+    global _light_reranker
+    if _light_reranker is None:
+        model_name = (
+            getattr(config, "CASE_ASSISTANT_RERANK_LIGHT_MODEL", "")
+            or "cross-encoder/ms-marco-MiniLM-L-6-v2"
+        )
+        batch_size = int(getattr(config, "CASE_ASSISTANT_RERANK_LIGHT_BATCH_SIZE", 64) or 64)
+        max_chars = int(getattr(config, "CASE_ASSISTANT_RERANK_LIGHT_MAX_CHARS", 900) or 900)
+        _light_reranker = RerankerService(
+            model_name=model_name,
+            use_cohere=False,
+            batch_size=batch_size,
+            passage_max_chars=max_chars,
+        )
+    return _light_reranker
+
+
+def get_reranker_for_tier(rerank_tier: str) -> RerankerService:
+    tier = (rerank_tier or "light").strip().lower()
+    if tier == "heavy":
+        return get_heavy_reranker_service()
+    return get_light_reranker_service()
 
 
 def get_reranker_service() -> RerankerService:
-    """Get or create the global reranker service instance."""
-    global _reranker
-    
-    if _reranker is None:
-        # Check for Cohere API key
-        cohere_key = getattr(config, 'COHERE_API_KEY', None)
-        model_name = getattr(config, "RERANKER_MODEL_NAME", "") or "cross-encoder/ms-marco-MiniLM-L-6-v2"
-        
-        _reranker = RerankerService(
-            model_name=model_name,
-            use_cohere=bool(cohere_key),
-            cohere_api_key=cohere_key
-        )
-    
-    return _reranker
-
+    """Backward-compatible default — heavy reranker."""
+    return get_heavy_reranker_service()

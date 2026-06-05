@@ -81,7 +81,7 @@ def test_resolve_draft_auto_template_from_question(monkeypatch):
         def query(self, *a):
             return _Q()
 
-    text, label = resolve_draft_template_context(
+    text, label, _tkey = resolve_draft_template_context(
         _Db(),
         template_system_id=None,
         template_file_content=None,
@@ -110,7 +110,7 @@ def test_resolve_priority_system_over_file_content():
         def query(self, *a):
             return _Q()
 
-    text, label = resolve_draft_template_context(
+    text, label, _tkey = resolve_draft_template_context(
         _Db(),
         template_system_id="rtk_claim_st71",
         template_file_content="<p>USER FILE</p>",

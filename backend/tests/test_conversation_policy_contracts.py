@@ -9,6 +9,18 @@ def test_task_family_mapping():
     assert ConversationPolicyService.map_task_family("drafting") == "drafting"
 
 
+def test_case_card_metadata_routes_to_fact_lookup():
+    task_type, depth_tier, clarify, reason, conf = ConversationPolicyService.infer_task_and_depth(
+        question="сколько лкументов загружено в дело",
+        attached_files_count=4,
+    )
+    assert task_type == "fact_lookup"
+    assert depth_tier == "fast"
+    assert clarify is False
+    assert reason == "case_card_metadata"
+    assert conf >= 0.9
+
+
 def test_timeline_query_routes_to_deep():
     task_type, depth_tier, clarify, reason, conf = ConversationPolicyService.infer_task_and_depth(
         question="Построй хронологию дела по всем документам",
@@ -21,15 +33,26 @@ def test_timeline_query_routes_to_deep():
     assert conf > 0
 
 
-def test_ambiguous_short_query_routes_to_clarification():
+def test_short_fact_query_routes_to_case_rag_not_clarify():
+    """Короткие факт-вопросы идут в RAG по материалам дела, без эвристики длины."""
+    task_type, depth_tier, clarify, reason, conf = ConversationPolicyService.infer_task_and_depth(
+        question="какой инн у ооо нв-строй",
+        attached_files_count=0,
+    )
+    assert task_type in {"single_doc_extraction", "fact_lookup"}
+    assert depth_tier == "fast"
+    assert clarify is False
+    assert reason in {"narrow_fact_semantics", "standard_case_qa_short", "short_single_doc_query"}
+    assert conf > 0
+
+
+def test_vague_short_query_still_uses_rag():
     task_type, depth_tier, clarify, reason, conf = ConversationPolicyService.infer_task_and_depth(
         question="что это?",
         attached_files_count=0,
     )
-    assert task_type == "clarification"
-    assert depth_tier == "fast"
-    assert clarify is True
-    assert reason in {"ambiguous_short_query", "clarification_markers"}
+    assert task_type == "single_doc_extraction"
+    assert clarify is False
     assert conf > 0
 
 
@@ -41,8 +64,33 @@ def test_clarification_marker_routes_to_clarification():
     assert task_type == "clarification"
     assert depth_tier == "fast"
     assert clarify is True
-    assert reason == "clarification_markers"
+    assert reason == "clarification_request"
     assert conf >= 0.8
+
+
+def test_plural_documents_overview_routes_to_multi_doc_synthesis():
+    """«о чем документы» + несколько файлов — обзор, не single_doc_extraction."""
+    task_type, depth_tier, clarify, reason, conf = ConversationPolicyService.infer_task_and_depth(
+        question="о чем документы",
+        attached_files_count=4,
+    )
+    assert task_type == "multi_doc_synthesis"
+    assert depth_tier == "fast"
+    assert clarify is False
+    assert reason == "case_corpus_overview"
+    assert conf >= 0.85
+
+
+def test_multi_doc_overview_fast_execution_tier():
+    from app.services.chat.execution_tier import infer_execution_tier_heuristic
+
+    tier, reason = infer_execution_tier_heuristic(
+        question="о чем документы",
+        task_type="multi_doc_synthesis",
+        depth_tier="fast",
+    )
+    assert tier == "standard"
+    assert reason == "multi_doc_overview_fast"
 
 
 def test_user_toggles_priority_draft_over_codex():

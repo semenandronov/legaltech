@@ -1,6 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
 import './Upload.css'
 import { addFilesToCase, deleteFileFromCase, getCaseFiles, UploadedFile } from '../../services/api'
+import {
+  GoogleDriveImportButton,
+  mergeUploadedFiles,
+} from '../Documents/GoogleDriveImportButton'
 
 interface DocumentsUploadStepProps {
   caseId: string
@@ -227,6 +231,17 @@ const DocumentsUploadStep = ({ caseId, onContinue, onCancel }: DocumentsUploadSt
         <div className="upload-icon">📄 📄 📄</div>
         <p className="upload-text">Перетащите документы сюда</p>
         <p className="upload-subtext">или нажмите для выбора файлов</p>
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '24px' }}>
+        <GoogleDriveImportButton
+          caseId={caseId}
+          disabled={isUploading}
+          onImportComplete={(response) => {
+            setUploadedFiles((prev) => mergeUploadedFiles(prev, response))
+            loadFiles()
+          }}
+        />
       </div>
 
       {/* Per-file upload progress */}

@@ -61,7 +61,7 @@ def process_files_background(file_ids: List[str], case_id: str) -> None:
     Blocking function — run via asyncio.to_thread from the route handler.
 
     For each file_id:
-      1. Load raw bytes from DB (file_content)
+      1. Load raw bytes (UPLOAD_DIR + file_path, else file_content in DB)
       2. OCR / parse via DocumentLoaderService
       3. Classify
       4. Update original_text in DB
@@ -134,16 +134,27 @@ def _process_one_file(
         return []
 
     filename = file_model.filename
-    content: bytes | None = file_model.file_content
 
-    if not content:
-        logger.error(f"File {file_id} ({filename}) has no binary content stored")
-        _set_error(db, file_id, "Нет содержимого файла в базе данных")
-        return []
-
-    # Check if cancelled before starting
     if file_model.processing_status == "cancelled":
         logger.info(f"File {file_id} ({filename}) was cancelled, skipping")
+        return []
+
+    from app.services.case_file_bytes import load_case_file_bytes
+
+    content = load_case_file_bytes(file_model)
+    if not content:
+        logger.error(
+            "File %s (%s): bytes unavailable (file_path=%r, db_blob=%s)",
+            file_id,
+            filename,
+            file_model.file_path,
+            bool(file_model.file_content),
+        )
+        _set_error(
+            db,
+            file_id,
+            "Не удалось прочитать файл: проверьте UPLOAD_DIR и наличие файла на диске",
+        )
         return []
 
     # Mark as processing
@@ -302,6 +313,7 @@ def _process_one_file(
             metadata=metadata,
             file_id=file_id,
             langchain_docs=langchain_docs,
+            content_bytes=content,
         )
 
         if not file_documents:

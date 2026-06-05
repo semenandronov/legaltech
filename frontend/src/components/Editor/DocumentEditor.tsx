@@ -1,30 +1,21 @@
 import { useEditor, EditorContent } from '@tiptap/react'
-import { useEffect, useImperativeHandle, forwardRef, useState, useCallback, useRef } from 'react'
+import { useEffect, useImperativeHandle, forwardRef, useState, useCallback, useRef, useMemo } from 'react'
 import { useDebouncedCallback } from 'use-debounce'
-import StarterKit from '@tiptap/starter-kit'
-import Placeholder from '@tiptap/extension-placeholder'
-import Link from '@tiptap/extension-link'
-import Table from '@tiptap/extension-table'
-import TableRow from '@tiptap/extension-table-row'
-import TableCell from '@tiptap/extension-table-cell'
-import TableHeader from '@tiptap/extension-table-header'
-import Typography from '@tiptap/extension-typography'
-import Highlight from '@tiptap/extension-highlight'
-import TextAlign from '@tiptap/extension-text-align'
-import TextStyle from '@tiptap/extension-text-style'
-import { FontFamily } from './extensions/FontFamily'
-import { FontSize } from './extensions/FontSize'
-import { EditorToolbar } from './EditorToolbar'
-import { SlashCommands } from './SlashCommands'
-import { TrackChanges } from './extensions/TrackChanges'
-import { Comment } from './extensions/Comment'
 import type { CommentItem } from './extensions/Comment'
-import { RiskHighlight } from './extensions/RiskHighlight'
-import { AIKeyboardShortcuts } from './extensions/AIKeyboardShortcuts'
-import { SelectionHighlight } from './extensions/SelectionHighlight'
+import { EditorToolbar } from './EditorToolbar'
+import { createEditorExtensions } from './createEditorExtensions'
 import { FindReplace } from './FindReplace'
+import { SelectionMenu } from './SelectionMenu'
 import { ClauseLibrary } from './ClauseLibrary'
 import './Editor.css'
+import { buildEditorContextForChat } from '@/utils/editorContextWindow'
+import { fuzzyFindInPlainText } from '@/utils/applyHybridEdit'
+import {
+  textSpanToPmRange,
+  replaceTextSpanPreservingMarks,
+  resolveTextOccurrenceInDoc,
+} from '@/utils/docTextPosition'
+import { capturePmRange, type PmTextRange } from './editorSelection'
 
 interface DocumentEditorProps {
   content: string
@@ -56,6 +47,9 @@ export interface DocumentEditorRef {
   replaceText: (originalText: string, newText: string) => boolean
   replaceAllText: (originalText: string, newText: string) => number
   replaceRange: (from: number, to: number, text: string) => void
+  replaceNodeById: (nodeId: string, newText: string) => boolean
+  replaceTextFuzzy: (originalText: string, newText: string) => boolean
+  getChatContextHtml: () => string
   replaceMultipleTexts: (replacements: Array<{ original: string; replacement: string }>) => number
   setSelectionHighlight: (from: number, to: number) => void
   clearSelectionHighlight: () => void
@@ -78,8 +72,19 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
   const [showFindReplace, setShowFindReplace] = useState(false)
   const [showClauseLibrary, setShowClauseLibrary] = useState(false)
   const editorContentRef = useRef<HTMLDivElement>(null)
+  /** Preserved while toolbar/select steals focus — formatting applies here, not first line. */
+  const savedSelectionRef = useRef<PmTextRange | null>(null)
 
-  // Memoized callbacks for keyboard shortcuts
+  // Stable refs — parent re-renders on every selection must NOT recreate the editor.
+  const onChangeRef = useRef(onChange)
+  const onSelectionChangeRef = useRef(onSelectionChange)
+  const onSelectionRangeChangeRef = useRef(onSelectionRangeChange)
+  const onInsertTextRef = useRef(onInsertText)
+  onChangeRef.current = onChange
+  onSelectionChangeRef.current = onSelectionChange
+  onSelectionRangeChangeRef.current = onSelectionRangeChange
+  onInsertTextRef.current = onInsertText
+
   const handleOpenFindReplace = useCallback(() => {
     setShowFindReplace(true)
   }, [])
@@ -89,117 +94,66 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
   }, [])
 
   const handleInsertClause = useCallback((clauseContent: string) => {
-    if (onInsertText) {
-      onInsertText(clauseContent)
-    }
-  }, [onInsertText])
-  
-  // Track the last HTML that came FROM the editor (to avoid syncing it back via useEffect)
+    onInsertTextRef.current?.(clauseContent)
+  }, [])
+
   const lastEditorContentRef = useRef<string>('')
   const lastUserScrollAtRef = useRef<number>(0)
 
-  // Debounced onChange to prevent excessive re-renders during typing
-  const debouncedOnChange = useDebouncedCallback(
-    (html: string) => {
-      lastEditorContentRef.current = html
-      onChange(html)
-    },
-    300 // 300ms debounce
-  )
-  
-  const editor = useEditor({
-    extensions: [
-      StarterKit.configure({
-        heading: {
-          levels: [1, 2, 3, 4, 5, 6],
-        },
-      }),
-      // Typography controls (font family/size) rely on textStyle mark attributes.
-      TextStyle,
-      FontFamily,
-      FontSize,
-      Placeholder.configure({
-        placeholder: 'Начните писать или введите / для команд...',
-      }),
-      Link.configure({
-        openOnClick: false,
-        HTMLAttributes: {
-          class: 'editor-link',
-        },
-      }),
-      Table.configure({
-        resizable: true,
-        HTMLAttributes: {
-          class: 'editor-table',
-        },
-      }),
-      TableRow,
-      TableHeader,
-      TableCell,
-      Typography,
-      Highlight.configure({
-        multicolor: true,
-      }),
-      TextAlign.configure({
-        types: ['heading', 'paragraph'],
-        defaultAlignment: 'left',
-      }),
-      SlashCommands.configure({ 
-        caseId, 
+  const debouncedOnChange = useDebouncedCallback((html: string) => {
+    lastEditorContentRef.current = html
+    onChangeRef.current(html)
+  }, 300)
+
+  const editorInstanceRef = useRef<ReturnType<typeof useEditor>>(null)
+
+  const extensions = useMemo(
+    () =>
+      createEditorExtensions({
+        caseId,
         documentId,
-        onInsertText,
-        onSetRisks: (risks) => {
-          setHasRisks(risks.length > 0)
-        }
-      }),
-      TrackChanges.configure({
-        enabled: false,
-        pendingChanges: [],
-      }),
-      Comment.configure({
-        comments: [],
-      }),
-      RiskHighlight.configure({
-        risks: [],
-      }),
-      AIKeyboardShortcuts.configure({
-        documentId,
+        onInsertText: (text) => onInsertTextRef.current?.(text),
+        onSetRisks: (risks) => setHasRisks(risks.length > 0),
         onImproveText: () => {
-          onChange(editor?.getHTML() || '')
-        },
-        onSetRisks: (risks) => {
-          setHasRisks(risks.length > 0)
+          const ed = editorInstanceRef.current
+          if (ed) onChangeRef.current(ed.getHTML())
         },
         onOpenFindReplace: handleOpenFindReplace,
         onOpenClauseLibrary: handleOpenClauseLibrary,
       }),
-      SelectionHighlight,
-    ],
-    content,
-    editorProps: {
-      attributes: {
-        class: 'prose prose-lg max-w-none focus:outline-none editor-content',
+    [caseId, documentId, handleOpenFindReplace, handleOpenClauseLibrary],
+  )
+
+  const editor = useEditor(
+    {
+      extensions,
+      content,
+      editable: true,
+      immediatelyRender: false,
+      editorProps: {
+        attributes: {
+          class: 'editor-surface focus:outline-none',
+          spellcheck: 'true',
+        },
+        handleScrollToSelection: () => true,
       },
-      handleScrollToSelection: () => {
-        // Do not auto-snap the document to the cursor/selection.
-        // This was causing the top of the sheet to stick to the toolbar after long edits.
-        return true
+      onUpdate: ({ editor: ed }) => {
+        debouncedOnChange(ed.getHTML())
+      },
+      onSelectionUpdate: ({ editor: ed }) => {
+        const { from, to } = ed.state.selection
+        onSelectionChangeRef.current(ed.state.doc.textBetween(from, to))
+        const captured = capturePmRange(ed)
+        if (captured) {
+          savedSelectionRef.current = captured
+        }
+        onSelectionRangeChangeRef.current?.(from !== to ? { from, to } : null)
       },
     },
-    onUpdate: ({ editor }) => {
-      const html = editor.getHTML()
-      debouncedOnChange(html)
-    },
-    onSelectionUpdate: ({ editor }) => {
-      const { from, to } = editor.state.selection
-      const text = editor.state.doc.textBetween(from, to)
-      onSelectionChange(text)
-      // Always report position — cursor (from===to) or selection (from!==to)
-      if (onSelectionRangeChange) {
-        onSelectionRangeChange({ from, to })
-      }
-    },
-  })
+    [caseId, documentId],
+  )
+
+  editorInstanceRef.current = editor
 
   // Update editor content when prop changes externally (e.g., loading a document, restoring a version).
   // Skip if the new content is what the editor itself just produced — avoids re-setting on undo/redo.
@@ -342,81 +296,25 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
     scrollToText: (text: string, nthOccurrence: number = 0) => {
       if (!editor || !text) return false
 
-      const docText = editor.state.doc.textContent
-      const searchText = text.trim()
-      const docLower = docText.toLowerCase()
-      const searchLower = searchText.toLowerCase()
+      const doc = editor.state.doc
+      const occurrence = resolveTextOccurrenceInDoc(doc.textContent, text, nthOccurrence)
+      if (!occurrence) return false
 
-      // Find the nth occurrence (case-insensitive)
-      let charIndex = -1
-      let matchText = searchText
-      let found = 0
-      let searchFrom = 0
-      while (true) {
-        const idx = docLower.indexOf(searchLower, searchFrom)
-        if (idx === -1) break
-        if (found === nthOccurrence) { charIndex = idx; break }
-        found++
-        searchFrom = idx + 1
-      }
-      if (charIndex !== -1) {
-        matchText = docText.slice(charIndex, charIndex + searchText.length)
-      }
+      const pmRange = textSpanToPmRange(doc, occurrence.charStart, occurrence.charEnd)
+      if (!pmRange) return false
 
-      // Fallback: try shorter prefixes (in case phrase has minor differences vs editor)
-      // Respects nthOccurrence so the correct (2nd, 3rd…) occurrence is found.
-      if (charIndex === -1) {
-        const tries = [searchText.slice(0, 100), searchText.slice(0, 50), searchText.split(/\s+/).slice(0, 5).join(' ')]
-        for (const t of tries) {
-          if (!t) continue
-          const tLower = t.toLowerCase()
-          let f = 0, sf = 0
-          while (true) {
-            const idx = docLower.indexOf(tLower, sf)
-            if (idx === -1) break
-            if (f === nthOccurrence) { charIndex = idx; matchText = docText.slice(idx, idx + t.length); break }
-            f++; sf = idx + 1
-          }
-          if (charIndex !== -1) break
-        }
-      }
-      if (charIndex === -1) return false
-
-      // Convert docText char offset → ProseMirror position by walking nodes
-      // (text may span multiple nodes due to marks/formatting, so per-node indexOf fails)
-      let charCount = 0
-      let foundPos = -1
-      editor.state.doc.descendants((node, pos) => {
-        if (foundPos !== -1) return false
-        if (node.isText && node.text) {
-          const nodeLen = node.text.length
-          if (charCount + nodeLen > charIndex) {
-            foundPos = pos + (charIndex - charCount)
-            return false
-          }
-          charCount += nodeLen
-        }
-        return true
-      })
-
-      if (foundPos === -1) return false
-
-      const endPos = Math.min(foundPos + matchText.length, editor.state.doc.content.size)
-
-      editor.chain()
-        .focus()
-        .setTextSelection({ from: foundPos, to: endPos })
-        .run()
+      editor.chain().focus().setTextSelection(pmRange).run()
 
       const { view } = editor
-      const coords = view.coordsAtPos(foundPos)
+      const coords = view.coordsAtPos(pmRange.from)
       const editorElement = view.dom.closest('.document-canvas')
       if (editorElement && coords) {
         const containerRect = editorElement.getBoundingClientRect()
-        const scrollTop = editorElement.scrollTop + (coords.top - containerRect.top) - containerRect.height / 3
+        const scrollTop =
+          editorElement.scrollTop + (coords.top - containerRect.top) - containerRect.height / 3
         editorElement.scrollTo({
           top: Math.max(0, scrollTop),
-          behavior: 'smooth'
+          behavior: 'smooth',
         })
       }
 
@@ -424,111 +322,44 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
     },
     replaceText: (originalText: string, newText: string) => {
       if (!editor || !originalText) return false
-
-      const docText = editor.state.doc.textContent
-
-      // Find the FIRST occurrence only — playbook fixes target a specific clause,
-      // replacing all occurrences would corrupt other parts of the document.
-      let searchText = originalText
-      let charIndex = docText.indexOf(searchText)
-
-      // If exact match not found, try progressively shorter prefixes (same as scrollToText)
-      if (charIndex === -1) {
-        searchText = originalText.slice(0, 200)
-        charIndex = docText.indexOf(searchText)
-      }
-      if (charIndex === -1) {
-        searchText = originalText.slice(0, 100)
-        charIndex = docText.indexOf(searchText)
-      }
-      if (charIndex === -1) {
-        searchText = originalText.slice(0, 50)
-        charIndex = docText.indexOf(searchText)
-      }
-      // Fallback: case-insensitive search (handles ALL-CAPS documents)
-      if (charIndex === -1) {
-        const docLower = docText.toLowerCase()
-        let ciIdx = docLower.indexOf(originalText.toLowerCase())
-        if (ciIdx === -1) ciIdx = docLower.indexOf(originalText.slice(0, 50).toLowerCase())
-        if (ciIdx !== -1) {
-          charIndex = ciIdx
-          // Use actual document text at that position so replacement span is correct
-          searchText = docText.slice(ciIdx, ciIdx + originalText.length)
-        }
-      }
-      if (charIndex === -1) return false
-
-      // Convert docText char offset → ProseMirror position
-      const charToPmPos = (ci: number): number => {
-        let charCount = 0
-        let foundPos = -1
-        editor.state.doc.descendants((node, pos) => {
-          if (foundPos !== -1) return false
-          if (node.isText && node.text) {
-            const nodeLen = node.text.length
-            if (charCount + nodeLen > ci) {
-              foundPos = pos + (ci - charCount)
-              return false
-            }
-            charCount += nodeLen
-          }
-          return true
-        })
-        return foundPos
-      }
-
-      const from = charToPmPos(charIndex)
-      const to = charToPmPos(charIndex + searchText.length)
-      if (from === -1 || to === -1) return false
-
-      // Preserve marks (bold, italic, etc.) from the original text position
-      const $from = editor.state.doc.resolve(from)
-      const marksAtPos = $from.marks()
-      const newNode = marksAtPos.length > 0
-        ? editor.state.schema.text(newText, marksAtPos)
-        : editor.state.schema.text(newText)
-
-      const tr = editor.state.tr.replaceWith(from, to, newNode)
-      editor.view.dispatch(tr)
-      editor.commands.focus()
-      // Don't call onChange directly — onUpdate fires automatically and calls debouncedOnChange.
-      // A direct onChange call triggers a parent re-render that recreates the editor (toolbar disappears).
-      return true
+      const occurrence = resolveTextOccurrenceInDoc(editor.state.doc.textContent, originalText, 0)
+      if (!occurrence) return false
+      return replaceTextSpanPreservingMarks(
+        editor,
+        occurrence.charStart,
+        occurrence.charEnd,
+        newText,
+      )
     },
     replaceAllText: (originalText: string, newText: string) => {
       if (!editor || !originalText) return 0
-      // Reuse replaceMultipleTexts logic inline (same handle object, can't self-reference)
-      const docText = editor.state.doc.textContent
-      const charToPmPos = (ci: number): number => {
-        let charCount = 0; let foundPos = -1
-        editor.state.doc.descendants((node, pos) => {
-          if (foundPos !== -1) return false
-          if (node.isText && node.text) {
-            if (charCount + node.text.length > ci) { foundPos = pos + (ci - charCount); return false }
-            charCount += node.text.length
-          }
-          return true
-        })
-        return foundPos
-      }
+      const doc = editor.state.doc
+      const docText = doc.textContent
       const ops: { from: number; to: number }[] = []
       let searchFrom = 0
+
       while (true) {
         const idx = docText.indexOf(originalText, searchFrom)
         if (idx === -1) break
-        const from = charToPmPos(idx); const to = charToPmPos(idx + originalText.length)
-        if (from !== -1 && to !== -1) ops.push({ from, to })
+        const range = textSpanToPmRange(doc, idx, idx + originalText.length)
+        if (range) ops.push(range)
         searchFrom = idx + originalText.length
       }
+
       if (ops.length === 0) return 0
+
       ops.sort((a, b) => b.from - a.from)
       let tr = editor.state.tr
       for (const { from, to } of ops) {
-        const marks = editor.state.doc.resolve(from).marks()
-        const node = marks.length > 0 ? editor.state.schema.text(newText, marks) : editor.state.schema.text(newText)
+        const marks = tr.doc.resolve(from).marks()
+        const node =
+          marks.length > 0
+            ? editor.state.schema.text(newText, marks)
+            : editor.state.schema.text(newText)
         tr = tr.replaceWith(from, to, node)
       }
-      editor.view.dispatch(tr); editor.commands.focus()
+      editor.view.dispatch(tr)
+      editor.commands.focus()
       return ops.length
     },
     replaceRange: (from: number, to: number, text: string) => {
@@ -536,29 +367,67 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
       editor.chain().focus().deleteRange({ from, to }).insertContent(text).run()
       // onUpdate fires automatically
     },
+    replaceTextFuzzy: (originalText: string, newText: string) => {
+      if (!editor || !originalText) return false
+      const docText = editor.state.doc.textContent
+      const match = fuzzyFindInPlainText(docText, originalText)
+      if (!match) return false
+
+      let charStart = docText.indexOf(match)
+      if (charStart === -1) {
+        charStart = docText.toLowerCase().indexOf(match.toLowerCase())
+      }
+      if (charStart === -1) return false
+
+      return replaceTextSpanPreservingMarks(editor, charStart, charStart + match.length, newText)
+    },
+    getChatContextHtml: () => {
+      if (!editor) return ''
+      const full = editor.getHTML()
+      const { from, to } = editor.state.selection
+      const selected = from !== to ? editor.state.doc.textBetween(from, to) : ''
+      return buildEditorContextForChat(full, {
+        selectedText: selected || undefined,
+      }).html
+    },
+    replaceNodeById: (nodeId: string, newText: string) => {
+      if (!editor || !nodeId?.trim()) return false
+
+      const { state, view } = editor
+      let blockPos = -1
+      let blockNode = state.doc.nodeAt(0)
+
+      state.doc.descendants((node, pos) => {
+        if (node.attrs?.id === nodeId && node.isBlock) {
+          blockPos = pos
+          blockNode = node
+          return false
+        }
+        return true
+      })
+
+      if (blockPos === -1 || !blockNode?.isBlock) return false
+
+      const innerFrom = blockPos + 1
+      const innerTo = blockPos + blockNode.nodeSize - 1
+      const tr = state.tr
+
+      if (innerTo > innerFrom) {
+        tr.replaceWith(innerFrom, innerTo, state.schema.text(newText))
+      } else {
+        tr.insert(innerFrom, state.schema.text(newText))
+      }
+
+      view.dispatch(tr)
+      editor.commands.focus()
+      onChange(editor.getHTML())
+      return true
+    },
     replaceMultipleTexts: (replacements: Array<{ original: string; replacement: string }>) => {
       if (!editor) return 0
 
-      const charToPmPos = (_docText: string, charIndex: number): number => {
-        let charCount = 0
-        let foundPos = -1
-        editor.state.doc.descendants((node, pos) => {
-          if (foundPos !== -1) return false
-          if (node.isText && node.text) {
-            const nodeLen = node.text.length
-            if (charCount + nodeLen > charIndex) {
-              foundPos = pos + (charIndex - charCount)
-              return false
-            }
-            charCount += nodeLen
-          }
-          return true
-        })
-        return foundPos
-      }
-
-      // Collect all (from, to, replacement) pairs from original doc, then apply last→first
-      const docText = editor.state.doc.textContent
+      const doc = editor.state.doc
+      const docText = doc.textContent
       const ops: { from: number; to: number; text: string }[] = []
 
       for (const { original, replacement } of replacements) {
@@ -566,40 +435,34 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
         while (true) {
           const idx = docText.indexOf(original, searchFrom)
           if (idx === -1) break
-          const from = charToPmPos(docText, idx)
-          const to = charToPmPos(docText, idx + original.length)
-          if (from !== -1 && to !== -1) ops.push({ from, to, text: replacement })
+          const range = textSpanToPmRange(doc, idx, idx + original.length)
+          if (range) ops.push({ ...range, text: replacement })
           searchFrom = idx + original.length
         }
       }
 
       if (ops.length === 0) return 0
 
-      // Sort descending by position so replacements don't shift earlier positions
       ops.sort((a, b) => b.from - a.from)
 
       let tr = editor.state.tr
       for (const { from, to, text } of ops) {
-        // Preserve marks (bold, italic, etc.) at each replacement position
-        const $from = editor.state.doc.resolve(from)
-        const marksAtPos = $from.marks()
-        const newNode = marksAtPos.length > 0
-          ? editor.state.schema.text(text, marksAtPos)
-          : editor.state.schema.text(text)
+        const marks = tr.doc.resolve(from).marks()
+        const newNode =
+          marks.length > 0
+            ? editor.state.schema.text(text, marks)
+            : editor.state.schema.text(text)
         tr = tr.replaceWith(from, to, newNode)
       }
 
       editor.view.dispatch(tr)
       editor.commands.focus()
-      // onUpdate fires automatically
       return ops.length
     },
-    setSelectionHighlight: (from: number, to: number) => {
-      editor?.commands.setSelectionHighlight(from, to)
+    setSelectionHighlight: () => {
+      /* native ProseMirror selection only — highlight plugin removed (broke drag-select) */
     },
-    clearSelectionHighlight: () => {
-      editor?.commands.clearSelectionHighlight()
-    },
+    clearSelectionHighlight: () => {},
   }), [editor, onChange])
 
   if (!editor) {
@@ -631,8 +494,9 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      <EditorToolbar 
+      <EditorToolbar
         editor={editor}
+        getSavedSelection={() => savedSelectionRef.current}
         hasRisks={hasRisks}
         onClearRisks={handleClearRisks}
         onCommentsChanged={(next) => onCommentsChange?.(next as CommentItem[])}
@@ -658,7 +522,14 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
               padding: `${scaledMargin}px`,
             }}
           >
-            <EditorContent editor={editor} />
+            <div className="relative">
+              <EditorContent editor={editor} />
+            </div>
+            <SelectionMenu
+              editor={editor}
+              documentId={documentId}
+              onReplaceSelection={() => onChange(editor.getHTML())}
+            />
             <FindReplace
               editor={editor}
               isOpen={showFindReplace}

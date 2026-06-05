@@ -13,6 +13,7 @@ from app.models.user import User
 from app.config import config
 import uuid
 from app.services.langchain_loaders import DocumentLoaderService
+from app.services.case_file_bytes import case_file_content_for_db
 
 logger = logging.getLogger(__name__)
 
@@ -255,6 +256,7 @@ async def upload_files(
 
         file_names.append(filename)
         relative_file_path = os.path.join(case_id, filename)
+
         files_to_create.append(
             {
                 "case_id": case_id,
@@ -262,7 +264,7 @@ async def upload_files(
                 "file_type": ext.lower()[:50],
                 "original_text": "",           # filled by background task
                 "file_path": relative_file_path,
-                "file_content": content,
+                "file_content": case_file_content_for_db(content),
                 "processing_status": "pending",
             }
         )
@@ -335,7 +337,6 @@ async def upload_files(
         db.commit()
         logger.info(f"Committed case {case_id} with {len(new_file_ids)} pending files")
 
-        # Launch background processing
         import asyncio as _asyncio
         from app.services.file_processor_bg import process_files_background
 
@@ -343,7 +344,10 @@ async def upload_files(
             try:
                 await _asyncio.to_thread(process_files_background, new_file_ids, case_id)
             except Exception as _e:
-                logger.error(f"Background processing error for case {case_id}: {_e}", exc_info=True)
+                logger.error(
+                    f"Background processing error for case {case_id}: {_e}",
+                    exc_info=True,
+                )
 
         _asyncio.create_task(_bg())
         logger.info(f"Background processing started for case {case_id}")

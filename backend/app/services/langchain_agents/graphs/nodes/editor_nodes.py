@@ -15,7 +15,7 @@ Editor Nodes - Узлы для режима редактора документ�
 """
 from typing import Dict, Any, Optional, List, Literal
 from sqlalchemy.orm import Session
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 import logging
 import uuid
 import json
@@ -27,12 +27,55 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 
+def editor_document_context_for_prompt(document_context: str) -> str:
+    """Trust frontend windowing; safety cap only (default 80k chars)."""
+    from app.config import config
+
+    cap = max(1000, int(getattr(config, "EDITOR_DOCUMENT_CONTEXT_MAX_CHARS", 80_000) or 80_000))
+    ctx = (document_context or "").strip()
+    return ctx if len(ctx) <= cap else ctx[:cap]
+
+
+def _editor_memory_section(state: ChatGraphState) -> str:
+    from app.services.langchain_agents.graphs.editor_transcript import editor_memory_block_for_prompt
+
+    return editor_memory_block_for_prompt(state)
+
+
+def _append_editor_turn_message(state: ChatGraphState, content: str) -> List[Any]:
+    """Запись ответа узла редактора в checkpoint (add_messages)."""
+    text = (content or "").strip()
+    if not text:
+        return []
+    return [AIMessage(content=text[:4000])]
+
+
 # ============== Pydantic Models for Structured Outputs ==============
+
+EDIT_GENERATION_SYSTEM_PROMPT = """Ты — юридический редактор. Тебе передан HTML юридического документа.
+Каждый значимый блок (абзац, заголовок, пункт списка, ячейка таблицы) имеет атрибут id="UUID" на открывающем теге.
+
+Твоя задача — вернуть JSON со списком правок (схема EditsResponse).
+
+Для КАЖДОЙ правки:
+1. Если переписываешь блок ЦЕЛИКОМ — укажи node_id (скопируй UUID из OUTLINE БЕЗ ИЗМЕНЕНИЯ СИМВОЛОВ) и new_text.
+   Поле original_text ОБЯЗАТЕЛЬНО: точная копия текущего текста блока (plain text, как в OUTLINE), для fallback на клиенте.
+2. Если меняешь фразу ВНУТРИ блока — укажи original_text (точный фрагмент из HTML) и new_text; node_id не указывай.
+3. Категорически запрещено выдумывать id, которых нет в OUTLINE или HTML.
+4. Не меняй id, не добавляй новые теги с id — только текстовые правки.
+5. Учитывай историю диалога: местоимения («его», «это») и отсылки к прошлым ответам ассистента — подставляй факты из истории (ИНН, адреса, суммы)."""
 
 class StructuredEditSchema(BaseModel):
     """Схема для одного структурированного изменения"""
-    original_text: str = Field(..., description="Точный текст из документа для замены")
     new_text: str = Field(..., description="Новый текст для замены")
+    node_id: Optional[str] = Field(
+        None,
+        description="id блока из HTML/outline (замена целого абзаца/заголовка)",
+    )
+    original_text: Optional[str] = Field(
+        None,
+        description="Точный текст из документа (обязателен при node_id; для фразы внутри блока — без node_id)",
+    )
     context_before: Optional[str] = Field(None, description="Контекст до текста (50 символов)")
     context_after: Optional[str] = Field(None, description="Контекст после текста (50 символов)")
 
@@ -98,6 +141,88 @@ def summarize_document(text: str, max_length: int = 5000) -> str:
     except Exception as e:
         logger.warning(f"[ContextEngineering] Summarization failed: {e}, using truncation")
         return text[:max_length] + "\n[... документ обрезан ...]"
+
+
+def build_document_outline(html: str, max_blocks: int = 200, preview_len: int = 200) -> List[Dict[str, Any]]:
+    """
+    Build compact outline of blocks with data-id / id attributes for LLM targeting.
+    """
+    import re as _re
+    import html as _html
+
+    if not html:
+        return []
+
+    outline: List[Dict[str, Any]] = []
+    pattern = _re.compile(
+        r"<(p|h[1-6]|li|td|th)([^>]*\sid=[\"']([^\"']+)[\"'][^>]*)>([\s\S]*?)</\1>",
+        _re.IGNORECASE,
+    )
+    for match in pattern.finditer(html):
+        tag = match.group(1).lower()
+        node_id = match.group(3)
+        inner = _re.sub(r"<[^>]+>", "", match.group(4) or "")
+        inner = _html.unescape(_re.sub(r"\s+", " ", inner)).strip()
+        outline.append(
+            {
+                "node_id": node_id,
+                "type": tag,
+                "text": inner[:preview_len] + ("…" if len(inner) > preview_len else ""),
+            }
+        )
+        if len(outline) >= max_blocks:
+            break
+    return outline
+
+
+def _node_id_in_document(node_id: str, document_html: str) -> bool:
+    if not node_id or not document_html:
+        return False
+    needle = f'id="{node_id}"'
+    if needle in document_html:
+        return True
+    return f"id='{node_id}'" in document_html
+
+
+def _extract_block_text_by_node_id(document_html: str, node_id: str) -> Optional[str]:
+    """Plain-text content of a block with id=node_id (for fallback / server-side enrichment)."""
+    import re as _re
+    import html as _html
+
+    if not node_id or not document_html:
+        return None
+    pattern = _re.compile(
+        rf'<(p|h[1-6]|li|td|th)([^>]*\sid=["\']{_re.escape(node_id)}["\'][^>]*)>([\s\S]*?)</\1>',
+        _re.IGNORECASE,
+    )
+    match = pattern.search(document_html)
+    if not match:
+        return None
+    inner = _re.sub(r"<[^>]+>", "", match.group(3) or "")
+    return _html.unescape(_re.sub(r"\s+", " ", inner)).strip() or None
+
+
+def _enrich_block_edit(
+    *,
+    node_id: str,
+    original_text: Optional[str],
+    new_text: str,
+    document_context: str,
+) -> Dict[str, Any]:
+    """Ensure block-level edits carry original_text and found_in_document flags."""
+    resolved_original = (original_text or "").strip()
+    if not resolved_original:
+        resolved_original = _extract_block_text_by_node_id(document_context, node_id) or ""
+    found_id = _node_id_in_document(node_id, document_context)
+    return {
+        "id": f"edit-{uuid.uuid4().hex[:8]}",
+        "node_id": node_id,
+        "original_text": resolved_original or None,
+        "new_text": new_text,
+        "context_before": "",
+        "context_after": "",
+        "found_in_document": found_id,
+    }
 
 
 def extract_context(document: str, text: str, context_size: int = 50) -> tuple[str, str]:
@@ -422,6 +547,240 @@ def improve_text_node(
     return new_state
 
 
+def editor_enrich_case_context_node(
+    state: ChatGraphState,
+    config: Dict[str, Any] = None,
+    db: Session = None,
+    rag_service=None,
+) -> ChatGraphState:
+    """
+    Prefetch case RAG for editor subgraph (ask / edit / draft in document editor).
+    Использует тот же pipeline, что и внутренний ассистент: router → hybrid → rerank.
+    """
+    from app.services.observability.editor_langfuse_tracing import editor_node_trace
+
+    with editor_node_trace(state, "editor_enrich_context") as tr:
+        case_id = state.get("case_id")
+        question = (state.get("question") or "").strip()
+        if not case_id or not question:
+            out: Dict[str, Any] = {}
+            if tr:
+                tr.set_output(out)
+            return out
+
+        rag = rag_service
+        if rag is None and config:
+            rag = (config or {}).get("rag_service")
+        if rag is None:
+            from app.services.rag_service import RAGService
+            rag = RAGService()
+
+        try:
+            from app.config import config as app_config
+
+            attached = state.get("attached_file_ids") or []
+            attached_ctx = (state.get("attached_case_files_context") or "").strip()
+            if (
+                attached
+                and attached_ctx
+                and getattr(app_config, "EDITOR_ATTACH_FULL_TEXT_ENABLED", True)
+            ):
+                logger.info(
+                    "[EditorEnrich] case_id=%s skip RAG — %s attached file(s) use full structured_text",
+                    case_id,
+                    len(attached),
+                )
+                out = {"attached_case_files_context": attached_ctx}
+                if tr:
+                    tr.set_output({"skipped_rag": True, "attached_count": len(attached)})
+                return out
+
+            from app.services.chat.case_context_pipeline import run_case_context_pipeline
+
+            budget_profile = state.get("budget_profile")
+            pipeline_out = run_case_context_pipeline(
+                rag_service=rag,
+                case_id=str(case_id),
+                question=question,
+                db=db,
+                attached_file_ids=attached,
+                document_id=state.get("document_id"),
+                corpus_size=int(state.get("corpus_size") or 0),
+                budget_profile=budget_profile if isinstance(budget_profile, dict) else None,
+                retrieval_task=state.get("retrieval_task")
+                if isinstance(state.get("retrieval_task"), dict)
+                else None,
+                editor_case_files_only=True,
+            )
+            if not pipeline_out:
+                logger.info("[EditorEnrich] case_id=%s no case context", case_id)
+                out = {}
+                if tr:
+                    tr.set_output(out)
+                return out
+
+            meta = pipeline_out.get("context_pipeline_meta") or {}
+            logger.info(
+                "[EditorEnrich] case_id=%s pipeline=%s recall=%s rerank=%s scope=%s files=%s",
+                case_id,
+                meta.get("pipeline"),
+                meta.get("recall_docs"),
+                meta.get("rerank_docs"),
+                meta.get("scope_mode"),
+                meta.get("scoped_files_count"),
+            )
+            out = {
+                k: pipeline_out[k]
+                for k in (
+                    "rag_context",
+                    "rag_documents",
+                    "citations",
+                    "context_pipeline_meta",
+                    "retrieval_task",
+                    "scoped_file_ids",
+                    "scoped_doc_type",
+                )
+                if k in pipeline_out
+            }
+            if tr:
+                tr.set_output(out)
+            return out
+        except Exception as e:
+            logger.warning("[EditorEnrich] RAG failed: %s", e, exc_info=True)
+            out = {}
+            if tr:
+                tr.set_output(out)
+            return out
+
+
+def generate_editor_snippet_node(
+    state: ChatGraphState,
+    config: Dict[str, Any] = None,
+    db: Session = None,
+) -> ChatGraphState:
+    """
+    Draft mode for in-editor cursor insert: return plain-text snippet only (not full document).
+    Distinct from global draft_mode / generate_draft_plan HITL flow.
+    """
+    question = state.get("question", "")
+    document_context = state.get("document_context", "") or ""
+    rag_context = state.get("rag_context", "") or ""
+
+    logger.info("[GenerateEditorSnippet] question=%r", (question or "")[:80])
+
+    from app.services.observability.editor_langfuse_tracing import editor_node_trace
+
+    with editor_node_trace(state, "generate_editor_snippet") as tr:
+        try:
+            llm = create_legal_llm(use_rate_limiting=False)
+            memory_section = _editor_memory_section(state)
+            system_prompt = (
+                "Ты — AI-ассистент для юридических документов. Сейчас ты работаешь в режиме Draft.\n"
+                "Пользователь поставил курсор в нужное место документа и просит создать текст для вставки.\n\n"
+                "ПРАВИЛА:\n"
+                "- Верни ТОЛЬКО текст нового фрагмента — без вступлений, без пояснений, без markdown.\n"
+                "- Пиши профессионально, в стиле юридического документа на русском языке.\n"
+                "- Не добавляй HTML-теги, если только пользователь явно не просит форматирование.\n"
+                "- Не начинай ответ со слов «Конечно», «Вот», «Я напишу» и т.п.\n"
+                "- Первое слово ответа — уже текст для вставки.\n"
+                "- Учитывай историю диалога: «его/это/как выше» — факты из прошлых ответов ассистента."
+            )
+            doc_section = (
+                f"\n\n=== КОНТЕКСТ ДОКУМЕНТА ===\n"
+                f"{editor_document_context_for_prompt(document_context)}\n=== КОНЕЦ ==="
+                if document_context
+                else ""
+            )
+            case_section = (
+                f"\n\n=== КОНТЕКСТ ИЗ ДРУГИХ ДОКУМЕНТОВ ДЕЛА ===\n{rag_context}\n=== КОНЕЦ ==="
+                if rag_context
+                else ""
+            )
+            memory_block = f"\n\n{memory_section}\n" if memory_section else ""
+            user_prompt = f"ЗАПРОС: {question}{memory_block}{doc_section}{case_section}\n\nСгенерируй текст для вставки."
+
+            response = llm.invoke([HumanMessage(content=system_prompt + "\n\n" + user_prompt)])
+            snippet = response.content if hasattr(response, "content") else str(response)
+            import re as _re
+            snippet = _re.sub(r"```[\s\S]*?```", "", snippet, flags=_re.DOTALL).strip()
+
+            out: Dict[str, Any] = {"response": snippet, "structured_edits": []}
+            msgs = _append_editor_turn_message(state, snippet)
+            if msgs:
+                out["messages"] = msgs
+            if tr:
+                tr.set_output(out)
+            return out
+        except Exception as e:
+            logger.error("[GenerateEditorSnippet] Error: %s", e, exc_info=True)
+            out = {
+                "response": "Не удалось сгенерировать текст. Попробуйте переформулировать запрос.",
+                "structured_edits": [],
+                "errors": (state.get("errors") or []) + [f"Editor snippet error: {str(e)}"],
+            }
+            if tr:
+                tr.set_output(out)
+            return out
+
+
+def _generate_selection_edit(
+    state: ChatGraphState,
+    selected_text: str,
+    question: str,
+    document_context: str,
+) -> ChatGraphState:
+    """Fast path: user selected text — return one structured edit with exact original_text."""
+    llm = create_legal_llm(use_rate_limiting=False)
+    memory_section = _editor_memory_section(state)
+    system_prompt = (
+        "Ты — AI-ассистент для точечного редактирования юридических текстов.\n\n"
+        "Пользователь выделил конкретный фрагмент и хочет применить к нему инструкцию.\n\n"
+        "Учитывай историю диалога: «его/это» — подставляй данные из прошлых ответов ассистента.\n\n"
+        "Ответь строго в формате (две строки):\n\n"
+        "ОБЪЯСНЕНИЕ: <одно предложение — что именно ты изменяешь>\n"
+        "ЗАМЕНА: <улучшенный вариант выделенного текста>\n\n"
+        "После слова ЗАМЕНА: — только новый текст, без кавычек."
+    )
+    memory_block = f"\n\n{memory_section}\n" if memory_section else ""
+    user_prompt = (
+        f"ИНСТРУКЦИЯ: {question}{memory_block}\n\n"
+        f"ВЫДЕЛЕННЫЙ ТЕКСТ (работай только с ним):\n{selected_text}\n"
+    )
+    response = llm.invoke([HumanMessage(content=system_prompt + "\n\n" + user_prompt)])
+    answer = response.content if hasattr(response, "content") else str(response)
+
+    import re as _re
+    explanation_match = _re.search(r"ОБЪЯСНЕНИЕ:\s*(.+?)(?=\nЗАМЕНА:|$)", answer, _re.DOTALL)
+    replacement_match = _re.search(r"ЗАМЕНА:\s*([\s\S]+)", answer)
+    explanation = explanation_match.group(1).strip() if explanation_match else ""
+    new_text = replacement_match.group(1).strip() if replacement_match else None
+
+    if not new_text:
+        clean = _re.sub(r"```[\s\S]*?```", "", answer, flags=_re.DOTALL).strip()
+        return {"response": clean or "Не удалось подготовить правку.", "structured_edits": []}
+
+    edit = {
+        "id": f"edit-{uuid.uuid4().hex[:8]}",
+        "original_text": selected_text,
+        "new_text": new_text,
+        "context_before": "",
+        "context_after": "",
+        "found_in_document": True,
+    }
+    resp_text = explanation or "Правка подготовлена."
+    out: Dict[str, Any] = {
+        "response": resp_text,
+        "structured_edits": [edit],
+    }
+    msgs = _append_editor_turn_message(
+        state,
+        f"{resp_text} Замена: {new_text[:500]}",
+    )
+    if msgs:
+        out["messages"] = msgs
+    return out
+
+
 def generate_edits_node(
     state: ChatGraphState,
     config: Dict[str, Any] = None,
@@ -441,111 +800,146 @@ def generate_edits_node(
     """
     question = state.get("question", "")
     document_context = state.get("document_context", "")
-    
+    selected_text = (state.get("selected_text") or "").strip()
+    editor_mode_hint = state.get("editor_mode_hint")
+
+    from app.services.observability.editor_langfuse_tracing import editor_node_trace
+
+    if selected_text and editor_mode_hint == "edit":
+        with editor_node_trace(state, "generate_selection_edit") as tr:
+            out = _generate_selection_edit(state, selected_text, question, document_context)
+            if tr:
+                tr.set_output(out)
+            return out
+
     if not document_context:
         logger.warning("[GenerateEdits] No document_context in state")
         return {"structured_edits": []}
-    
+
     logger.info(f"[GenerateEdits] Generating edits for: {question[:100]}...")
-    
+
     new_state = dict(state)
-    
-    try:
-        # Context engineering: summarization для больших документов
-        if len(document_context) > 5000:
-            summary = summarize_document(document_context, max_length=5000)
-            doc_text = f"SUMMARY:\n{summary}\n\nFULL_DOCUMENT_LENGTH: {len(document_context)} chars\n\nFULL_DOCUMENT:\n{document_context}"
-        else:
+
+    with editor_node_trace(state, "generate_edits") as tr:
+        try:
+            # Контекст приходит с фронта (context windowing); не суммаризируем — иначе теряются id.
             doc_text = document_context
-        
-        # Structured output для гарантированного формата
-        llm = create_legal_llm(use_rate_limiting=False)
-        
-        edits_prompt = f"""На основе запроса пользователя сгенерируй структурированные правки для документа.
 
-ЗАПРОС ПОЛЬЗОВАТЕЛЯ:
+            llm = create_legal_llm(use_rate_limiting=False)
+
+            outline = build_document_outline(document_context)
+            outline_json = json.dumps(outline, ensure_ascii=False, indent=2) if outline else "[]"
+            memory_section = _editor_memory_section(state)
+            memory_block = f"\n{memory_section}\n" if memory_section else ""
+
+            edits_user_prompt = f"""ЗАПРОС ПОЛЬЗОВАТЕЛЯ:
 {question}
+{memory_block}
+OUTLINE (блоки с node_id — единственный источник допустимых id):
+{outline_json}
 
-ДОКУМЕНТ:
+ДОКУМЕНТ (HTML, атрибут id на блоках):
 {doc_text}
 
-ВАЖНО:
-1. В original_text указывай ТОЧНЫЙ текст из документа (минимально необходимый фрагмент для однозначной идентификации)
-2. В new_text указывай новый текст для замены
-3. Если одно и то же изменение нужно внести в нескольких местах — создай ОТДЕЛЬНУЮ правку для каждого места
-4. Проверь, что original_text действительно есть в документе
+Дополнительно:
+- Замена целого блока: node_id + original_text (копия из OUTLINE) + new_text.
+- Замена фразы внутри блока: original_text + new_text, без node_id.
+- Несколько одинаковых мест — отдельная правка на каждое.
+- Если в запросе «вставь его/это» — возьми значение из истории диалога (например ИНН из ответа ассистента)."""
 
-Ответь в формате JSON согласно схеме EditsResponse."""
+            try:
+                structured_llm = llm.with_structured_output(EditsResponse)
+                edits_response = structured_llm.invoke([
+                    SystemMessage(content=EDIT_GENERATION_SYSTEM_PROMPT),
+                    HumanMessage(content=edits_user_prompt),
+                ])
+            except (AttributeError, Exception) as e:
+                logger.warning(f"[GenerateEdits] Structured output failed: {e}, using fallback")
+                response = llm.invoke([
+                    SystemMessage(content=EDIT_GENERATION_SYSTEM_PROMPT),
+                    HumanMessage(content=edits_user_prompt),
+                ])
+                response_text = response.content if hasattr(response, 'content') else str(response)
+                edits_response = EditsResponse(edits=[], reasoning=response_text[:200])
 
-        try:
-            structured_llm = llm.with_structured_output(EditsResponse)
-            edits_response = structured_llm.invoke([HumanMessage(content=edits_prompt)])
-        except (AttributeError, Exception) as e:
-            logger.warning(f"[GenerateEdits] Structured output failed: {e}, using fallback")
-            # Fallback: обычный вызов
-            response = llm.invoke([HumanMessage(content=edits_prompt)])
-            response_text = response.content if hasattr(response, 'content') else str(response)
+            raw_edits = []
+            edits_list = edits_response.edits if hasattr(edits_response, 'edits') else []
 
-            # Простой fallback - возвращаем пустой список
-            edits_response = EditsResponse(edits=[], reasoning=response_text[:200])
+            for edit in edits_list:
+                original_text = edit.original_text if hasattr(edit, 'original_text') else edit.get('original_text', '')
+                node_id = edit.node_id if hasattr(edit, 'node_id') else edit.get('node_id')
+                new_text = edit.new_text if hasattr(edit, 'new_text') else edit.get('new_text', '')
 
-        # Проверяем наличие текста в документе и извлекаем контекст.
-        # Дополнительно: раскрываем каждую правку на ВСЕ вхождения (одна карточка на каждое вхождение).
-        raw_edits = []
-        edits_list = edits_response.edits if hasattr(edits_response, 'edits') else []
+                if not original_text and not node_id:
+                    continue
 
-        for edit in edits_list:
-            original_text = edit.original_text if hasattr(edit, 'original_text') else edit.get('original_text', '')
-            new_text = edit.new_text if hasattr(edit, 'new_text') else edit.get('new_text', '')
+                if node_id:
+                    enriched = _enrich_block_edit(
+                        node_id=node_id,
+                        original_text=original_text,
+                        new_text=new_text,
+                        document_context=document_context,
+                    )
+                    if not enriched["found_in_document"]:
+                        logger.warning("[GenerateEdits] node_id not found: %s", node_id)
+                    raw_edits.append(enriched)
+                    continue
 
-            if not original_text:
-                continue
+                occurrences = []
+                search_from = 0
+                while original_text:
+                    idx = document_context.find(original_text, search_from)
+                    if idx == -1:
+                        break
+                    occurrences.append(idx)
+                    search_from = idx + len(original_text)
 
-            # Найти ВСЕ вхождения original_text в документе
-            occurrences = []
-            search_from = 0
-            while True:
-                idx = document_context.find(original_text, search_from)
-                if idx == -1:
-                    break
-                occurrences.append(idx)
-                search_from = idx + len(original_text)
-
-            if not occurrences:
-                # Текст не найден — добавляем одну правку с found_in_document=False
-                raw_edits.append({
-                    "id": f"edit-{uuid.uuid4().hex[:8]}",
-                    "original_text": original_text,
-                    "new_text": new_text,
-                    "context_before": "",
-                    "context_after": "",
-                    "found_in_document": False
-                })
-                logger.warning(f"[GenerateEdits] Edit text not found: '{original_text[:100]}…'")
-            else:
-                # Одна карточка на каждое вхождение
-                for pos in occurrences:
-                    ctx_before = document_context[max(0, pos - 50):pos]
-                    ctx_after = document_context[pos + len(original_text):pos + len(original_text) + 50]
+                if not occurrences:
                     raw_edits.append({
                         "id": f"edit-{uuid.uuid4().hex[:8]}",
                         "original_text": original_text,
+                        "node_id": node_id,
                         "new_text": new_text,
-                        "context_before": ctx_before,
-                        "context_after": ctx_after,
-                        "found_in_document": True
+                        "context_before": "",
+                        "context_after": "",
+                        "found_in_document": False,
                     })
-                logger.info(f"[GenerateEdits] '{original_text[:50]}…' → '{new_text[:50]}…' ({len(occurrences)} вхождений)")
+                    logger.warning(f"[GenerateEdits] Edit text not found: '{(original_text or '')[:100]}…'")
+                else:
+                    for pos in occurrences:
+                        ctx_before = document_context[max(0, pos - 50):pos]
+                        ctx_after = document_context[pos + len(original_text):pos + len(original_text) + 50]
+                        raw_edits.append({
+                            "id": f"edit-{uuid.uuid4().hex[:8]}",
+                            "original_text": original_text,
+                            "node_id": node_id,
+                            "new_text": new_text,
+                            "context_before": ctx_before,
+                            "context_after": ctx_after,
+                            "found_in_document": True,
+                        })
+                    logger.info(f"[GenerateEdits] '{original_text[:50]}…' → '{new_text[:50]}…' ({len(occurrences)} вхождений)")
 
-        new_state["structured_edits"] = raw_edits
-        logger.info(f"[GenerateEdits] Generated {len(raw_edits)} edits (from {len(edits_list)} LLM edits)")
-        
-    except Exception as e:
-        logger.error(f"[GenerateEdits] Error: {e}", exc_info=True)
-        new_state["errors"] = (new_state.get("errors") or []) + [f"Generate edits error: {str(e)}"]
-        new_state["structured_edits"] = []
-    
-    return new_state
+            new_state["structured_edits"] = raw_edits
+            logger.info(f"[GenerateEdits] Generated {len(raw_edits)} edits (from {len(edits_list)} LLM edits)")
+            summary = f"Подготовлено правок: {len(raw_edits)}."
+            if raw_edits:
+                preview = (raw_edits[0].get("new_text") or "")[:200]
+                if preview:
+                    summary += f" Пример замены: {preview}"
+            turn_msgs = _append_editor_turn_message(state, summary)
+            if turn_msgs:
+                new_state["messages"] = turn_msgs
+            if tr:
+                tr.set_output(new_state)
+            return new_state
+        except Exception as e:
+            logger.error(f"[GenerateEdits] Error: {e}", exc_info=True)
+            new_state["errors"] = (new_state.get("errors") or []) + [f"Generate edits error: {str(e)}"]
+            new_state["structured_edits"] = []
+            if tr:
+                tr.set_output(new_state)
+            return new_state
 
 
 class ValidationResultSchema(BaseModel):
@@ -574,42 +968,74 @@ def validate_edits_node(
     
     Устанавливает state.edits_valid (bool).
     """
-    structured_edits = state.get("structured_edits", [])
-    document_context = state.get("document_context", "")
-    
-    if not structured_edits:
-        logger.warning("[ValidateEdits] No structured_edits to validate")
-        return {"edits_valid": True}
-    
-    # Hard limit для предотвращения бесконечных циклов
-    MAX_VALIDATION_ITERATIONS = 3
-    iteration = state.get("edit_validation_iteration", 0)
-    
-    if iteration >= MAX_VALIDATION_ITERATIONS:
-        logger.warning(f"[ValidateEdits] Max iterations ({MAX_VALIDATION_ITERATIONS}) reached, forcing valid")
-        return {"edits_valid": True}
-    
-    logger.info(f"[ValidateEdits] Validating {len(structured_edits)} edits (iteration {iteration + 1}/{MAX_VALIDATION_ITERATIONS})")
-    
-    new_state = dict(state)
-    
-    try:
-        # Используем think tool для рефлексии перед валидацией
-        if iteration > 0:
-            reflection = f"Валидация {iteration + 1}. Предыдущая валидация нашла ошибки. Нужно проверить более тщательно."
-            think_tool(reflection, state)
-        
-        # Context engineering: summarization для больших документов
-        if len(document_context) > 5000:
-            summary = summarize_document(document_context, max_length=5000)
-            doc_text = f"SUMMARY:\n{summary}\n\nFULL_DOCUMENT_LENGTH: {len(document_context)} chars\n\nFULL_DOCUMENT:\n{document_context}"
-        else:
-            doc_text = document_context
-        
-        # Structured output для валидации
-        llm = create_legal_llm(use_rate_limiting=False)
-        
-        validation_prompt = f"""Проверь следующие структурированные правки для документа на корректность.
+    from app.services.observability.editor_langfuse_tracing import editor_node_trace
+
+    with editor_node_trace(state, "validate_edits") as tr:
+        structured_edits = state.get("structured_edits", [])
+        document_context = state.get("document_context", "")
+
+        if not structured_edits:
+            logger.warning("[ValidateEdits] No structured_edits to validate")
+            out = {"edits_valid": True}
+            if tr:
+                tr.set_output(out)
+            return out
+
+        MAX_VALIDATION_ITERATIONS = 3
+        iteration = state.get("edit_validation_iteration", 0)
+
+        if iteration >= MAX_VALIDATION_ITERATIONS:
+            logger.warning(
+                "[ValidateEdits] Max iterations (%s) reached, forcing valid",
+                MAX_VALIDATION_ITERATIONS,
+            )
+            out = {"edits_valid": True}
+            if tr:
+                tr.set_output(out)
+            return out
+
+        logger.info(
+            "[ValidateEdits] Validating %s edits (iteration %s/%s)",
+            len(structured_edits),
+            iteration + 1,
+            MAX_VALIDATION_ITERATIONS,
+        )
+
+        new_state = dict(state)
+
+        for edit in structured_edits:
+            if not isinstance(edit, dict):
+                continue
+            node_id = edit.get("node_id")
+            original_text = edit.get("original_text") or ""
+            if node_id:
+                if not (edit.get("original_text") or "").strip():
+                    edit["original_text"] = _extract_block_text_by_node_id(
+                        document_context, node_id
+                    )
+                edit["found_in_document"] = _node_id_in_document(node_id, document_context)
+            elif original_text and "found_in_document" not in edit:
+                edit["found_in_document"] = original_text in document_context
+
+        try:
+            if iteration > 0:
+                reflection = (
+                    f"Валидация {iteration + 1}. Предыдущая валидация нашла ошибки. "
+                    "Нужно проверить более тщательно."
+                )
+                think_tool(reflection, state)
+
+            if len(document_context) > 5000:
+                summary = summarize_document(document_context, max_length=5000)
+                doc_text = (
+                    f"SUMMARY:\n{summary}\n\nFULL_DOCUMENT_LENGTH: {len(document_context)} chars\n\n"
+                    f"FULL_DOCUMENT:\n{document_context}"
+                )
+            else:
+                doc_text = document_context
+
+            llm = create_legal_llm(use_rate_limiting=False)
+            validation_prompt = f"""Проверь следующие структурированные правки для документа на корректность.
 
 ДОКУМЕНТ:
 {doc_text}
@@ -618,42 +1044,43 @@ def validate_edits_node(
 {json.dumps(structured_edits, ensure_ascii=False, indent=2)}
 
 Проверь:
-1. Наличие original_text в документе
-2. Корректность контекста (context_before, context_after)
+1. Для правок с node_id — id должен существовать в HTML документа (атрибут id=...)
+2. Для правок с original_text — фрагмент должен быть в документе
 3. Логичность замены (new_text соответствует запросу)
 4. Отсутствие конфликтов между правками
 
 Ответь в формате JSON согласно схеме ValidationResultSchema."""
-        
-        try:
-            structured_llm = llm.with_structured_output(ValidationResultSchema)
-            validation_result = structured_llm.invoke([HumanMessage(content=validation_prompt)])
-        except (AttributeError, Exception) as e:
-            logger.warning(f"[ValidateEdits] Structured output failed: {e}, using fallback")
-            # Fallback: проверяем наличие текста в документе
-            all_found = all(edit.get("found_in_document", False) for edit in structured_edits)
-            validation_result = ValidationResultSchema(
-                is_valid=all_found,
-                errors=[] if all_found else ["Некоторые правки не найдены в документе"],
-                warnings=[]
-            )
-        
-        is_valid = validation_result.is_valid if hasattr(validation_result, 'is_valid') else True
-        errors = validation_result.errors if hasattr(validation_result, 'errors') else []
-        
-        new_state["edits_valid"] = is_valid
-        new_state["edit_errors"] = errors
-        new_state["edit_validation_iteration"] = iteration + 1
-        
-        logger.info(f"[ValidateEdits] Validation result: valid={is_valid}, errors={len(errors)}")
-        
-    except Exception as e:
-        logger.error(f"[ValidateEdits] Error: {e}", exc_info=True)
-        new_state["errors"] = (new_state.get("errors") or []) + [f"Validation error: {str(e)}"]
-        new_state["edits_valid"] = True  # При ошибке считаем валидными, чтобы не блокировать
-        new_state["edit_errors"] = []
-    
-    return new_state
+
+            try:
+                structured_llm = llm.with_structured_output(ValidationResultSchema)
+                validation_result = structured_llm.invoke([HumanMessage(content=validation_prompt)])
+            except (AttributeError, Exception) as e:
+                logger.warning(f"[ValidateEdits] Structured output failed: {e}, using fallback")
+                all_found = all(edit.get("found_in_document", False) for edit in structured_edits)
+                validation_result = ValidationResultSchema(
+                    is_valid=all_found,
+                    errors=[] if all_found else ["Некоторые правки не найдены в документе"],
+                    warnings=[],
+                )
+
+            is_valid = validation_result.is_valid if hasattr(validation_result, "is_valid") else True
+            errors = validation_result.errors if hasattr(validation_result, "errors") else []
+
+            new_state["edits_valid"] = is_valid
+            new_state["edit_errors"] = errors
+            new_state["edit_validation_iteration"] = iteration + 1
+
+            logger.info(f"[ValidateEdits] Validation result: valid={is_valid}, errors={len(errors)}")
+
+        except Exception as e:
+            logger.error(f"[ValidateEdits] Error: {e}", exc_info=True)
+            new_state["errors"] = (new_state.get("errors") or []) + [f"Validation error: {str(e)}"]
+            new_state["edits_valid"] = True
+            new_state["edit_errors"] = []
+
+        if tr:
+            tr.set_output(new_state)
+        return new_state
 
 
 def apply_edits_node(
@@ -672,78 +1099,82 @@ def apply_edits_node(
     Примечание: Command объекты используются для interrupts/resume,
     не для state updates в узлах. Здесь просто возвращаем обновлённое состояние.
     """
-    structured_edits = state.get("structured_edits", [])
-    document_context = state.get("document_context", "")
-    user_id = state.get("user_id", "")
-    
-    if not structured_edits:
-        logger.warning("[ApplyEdits] No structured_edits to apply")
-        return state
+    from app.services.observability.editor_langfuse_tracing import editor_node_trace
 
-    # Guardrail: массовые правки требуют подтверждения пользователя.
-    # Это снижает риск разрушительных замен.
-    max_auto_apply = 10
-    edits_approved = bool(state.get("edits_approved", False))
-    if len(structured_edits) > max_auto_apply and not edits_approved:
+    with editor_node_trace(state, "apply_edits") as tr:
+        structured_edits = state.get("structured_edits", [])
+        document_context = state.get("document_context", "")
+        user_id = state.get("user_id", "")
+
+        if not structured_edits:
+            logger.warning("[ApplyEdits] No structured_edits to apply")
+            if tr:
+                tr.set_output({"skipped": True})
+            return state
+
+        max_auto_apply = 10
+        edits_approved = bool(state.get("edits_approved", False))
+        if len(structured_edits) > max_auto_apply and not edits_approved:
+            new_state = dict(state)
+            new_state["waiting_for_edits_approval"] = True
+            new_state["response"] = (
+                f"Я подготовил {len(structured_edits)} правок — это много, поэтому перед применением нужно подтверждение.\n\n"
+                "Напишите «одобряю правки», чтобы применить, или «отмена», чтобы отменить."
+            )
+            if tr:
+                tr.set_output(new_state)
+            return new_state
+
+        logger.info(f"[ApplyEdits] Applying {len(structured_edits)} edits")
+
         new_state = dict(state)
-        new_state["waiting_for_edits_approval"] = True
-        new_state["response"] = (
-            f"Я подготовил {len(structured_edits)} правок — это много, поэтому перед применением нужно подтверждение.\n\n"
-            "Напишите «одобряю правки», чтобы применить, или «отмена», чтобы отменить."
-        )
+
+        try:
+            edited_content = document_context
+            changes_applied = 0
+
+            for edit in structured_edits:
+                if edit.get("found_in_document", False):
+                    original_text = edit.get("original_text", "")
+                    new_text = edit.get("new_text", "")
+
+                    if original_text in edited_content:
+                        edited_content = edited_content.replace(original_text, new_text, 1)
+                        changes_applied += 1
+                        logger.debug(
+                            f"[ApplyEdits] Applied edit: '{original_text[:50]}…' → '{new_text[:50]}…'"
+                        )
+
+            store = config.get("store") if config else None
+            if store and user_id:
+                try:
+                    from datetime import datetime
+                    preferences = {
+                        "last_edit_type": "structured_edit",
+                        "edits_count": len(structured_edits),
+                        "changes_applied": changes_applied,
+                        "timestamp": datetime.utcnow().isoformat(),
+                    }
+
+                    if hasattr(store, "put"):
+                        store.put(("editor_preferences", user_id), "preferences", preferences)
+                        logger.debug(f"[ApplyEdits] Updated editor preferences in Store for user {user_id}")
+                except Exception as store_e:
+                    logger.debug(f"[ApplyEdits] Could not update preferences in Store: {store_e}")
+
+            new_state["edited_content"] = edited_content
+            new_state["changes_applied"] = changes_applied
+
+            logger.info(f"[ApplyEdits] Applied {changes_applied} edits, new length: {len(edited_content)}")
+
+        except Exception as e:
+            logger.error(f"[ApplyEdits] Error: {e}", exc_info=True)
+            new_state["errors"] = (new_state.get("errors") or []) + [f"Apply edits error: {str(e)}"]
+            new_state["edited_content"] = document_context
+
+        if tr:
+            tr.set_output(new_state)
         return new_state
-    
-    logger.info(f"[ApplyEdits] Applying {len(structured_edits)} edits")
-    
-    new_state = dict(state)
-    
-    try:
-        # Применяем edits
-        edited_content = document_context
-        changes_applied = 0
-        
-        for edit in structured_edits:
-            if edit.get("found_in_document", False):
-                original_text = edit.get("original_text", "")
-                new_text = edit.get("new_text", "")
-                
-                # Заменяем только первое вхождение
-                if original_text in edited_content:
-                    edited_content = edited_content.replace(original_text, new_text, 1)
-                    changes_applied += 1
-                    logger.debug(f"[ApplyEdits] Applied edit: '{original_text[:50]}…' → '{new_text[:50]}…'")
-        
-        # Обновляем Memory/Store с preferences редактора
-        store = config.get("store") if config else None
-        if store and user_id:
-            try:
-                from datetime import datetime
-                preferences = {
-                    "last_edit_type": "structured_edit",
-                    "edits_count": len(structured_edits),
-                    "changes_applied": changes_applied,
-                    "timestamp": datetime.utcnow().isoformat()
-                }
-                
-                if hasattr(store, 'put'):
-                    # Обновляем preferences в Store
-                    # Namespace: ("editor_preferences", user_id), Key: "preferences"
-                    store.put(("editor_preferences", user_id), "preferences", preferences)
-                    logger.debug(f"[ApplyEdits] Updated editor preferences in Store for user {user_id}")
-            except Exception as store_e:
-                logger.debug(f"[ApplyEdits] Could not update preferences in Store: {store_e}")
-        
-        new_state["edited_content"] = edited_content
-        new_state["changes_applied"] = changes_applied
-        
-        logger.info(f"[ApplyEdits] Applied {changes_applied} edits, new length: {len(edited_content)}")
-        
-    except Exception as e:
-        logger.error(f"[ApplyEdits] Error: {e}", exc_info=True)
-        new_state["errors"] = (new_state.get("errors") or []) + [f"Apply edits error: {str(e)}"]
-        new_state["edited_content"] = document_context  # Fallback: возвращаем оригинал
-    
-    return new_state
 
 
 # ============== Parallel Checks Nodes ==============

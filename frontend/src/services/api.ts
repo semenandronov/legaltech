@@ -95,7 +95,7 @@ apiClient.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('access_token')
     if (token) {
-      config.headers.Authorization = `Bearer ${token}`
+      config.headers['X-Access-Token'] = token
     }
     return config
   },
@@ -132,7 +132,7 @@ apiClient.interceptors.response.use(
         return new Promise((resolve) => {
           subscribeTokenRefresh((newToken: string) => {
             if (originalRequest.headers) {
-              originalRequest.headers.Authorization = `Bearer ${newToken}`
+              originalRequest.headers['X-Access-Token'] = newToken
             }
             resolve(apiClient(originalRequest))
           })
@@ -161,7 +161,7 @@ apiClient.interceptors.response.use(
 
           // Retry original request with new token
           if (originalRequest.headers) {
-            originalRequest.headers.Authorization = `Bearer ${access_token}`
+            originalRequest.headers['X-Access-Token'] = access_token
           }
           return apiClient(originalRequest)
         }
@@ -521,6 +521,20 @@ export interface FilesResponse {
   files: UploadedFile[]
   total: number
   added?: number
+  new_file_ids?: string[]
+  status?: string
+  errors?: Array<{ name: string; detail: string }>
+}
+
+export interface GoogleDriveImportFileItem {
+  id: string
+  name: string
+  mime_type: string
+}
+
+export interface GoogleDriveImportPayload {
+  access_token: string
+  files: GoogleDriveImportFileItem[]
 }
 
 export const addFilesToCase = async (
@@ -549,6 +563,19 @@ export const addFilesToCase = async (
     }
   )
 
+  invalidateCachedGet(`case-files:${caseId}`)
+  invalidateCachedGet(`case-documents:${caseId}`)
+  return response.data
+}
+
+export const importFilesFromGoogleDrive = async (
+  caseId: string,
+  payload: GoogleDriveImportPayload,
+): Promise<FilesResponse> => {
+  const response = await apiClient.post(
+    getApiUrl(`/api/cases/${caseId}/import/google-drive`),
+    payload,
+  )
   invalidateCachedGet(`case-files:${caseId}`)
   invalidateCachedGet(`case-documents:${caseId}`)
   return response.data
@@ -1235,6 +1262,13 @@ export interface LegalCorpusFileRow {
   chunk_count: number
 }
 
+export interface LegalCorpusInstrument {
+  instrument_id: string
+  short_name: string
+  title: string
+  aliases?: string[]
+}
+
 const isTimeoutError = (error: unknown): boolean => {
   return axios.isAxiosError(error) && (error.code === 'ECONNABORTED' || String(error.message || '').toLowerCase().includes('timeout'))
 }
@@ -1275,6 +1309,16 @@ export const fetchLegalCorpusFiles = async (): Promise<{ files: LegalCorpusFileR
       )
       return retry.data
     }
+  })
+}
+
+export const fetchLegalCorpusInstruments = async (): Promise<{ instruments: LegalCorpusInstrument[] }> => {
+  return cachedGet('legal-corpus:instruments', 60_000, async () => {
+    const response = await apiClient.get<{ instruments: LegalCorpusInstrument[] }>(
+      getApiUrl('/api/v2/legal-corpus/instruments'),
+      { timeout: 30000 }
+    )
+    return response.data
   })
 }
 
@@ -1319,9 +1363,13 @@ export interface LegalCorpusJobSnapshot {
   finished_at: number | null
 }
 
-export const startLegalCorpusUploadJob = async (files: File[]): Promise<LegalCorpusJobStartResponse> => {
+export const startLegalCorpusUploadJob = async (
+  files: File[],
+  instrumentId?: string | null
+): Promise<LegalCorpusJobStartResponse> => {
   const formData = new FormData()
   for (const f of files) formData.append('files', f)
+  if (instrumentId) formData.append('instrument_id', instrumentId)
   const response = await apiClient.post<LegalCorpusJobStartResponse>(
     getApiUrl('/api/v2/legal-corpus/upload-job'),
     formData,
@@ -1333,6 +1381,7 @@ export const startLegalCorpusUploadJob = async (files: File[]): Promise<LegalCor
   )
   invalidateCachedGet('legal-corpus:status')
   invalidateCachedGet('legal-corpus:files')
+  invalidateCachedGet('legal-corpus:instruments')
   return response.data
 }
 
@@ -1363,6 +1412,85 @@ export const deleteAllLegalCorpusFiles = async (): Promise<{
   }>(getApiUrl('/api/v2/legal-corpus/files'))
   invalidateCachedGet('legal-corpus:status')
   invalidateCachedGet('legal-corpus:files')
+  return response.data
+}
+
+// ─── Судебная практика (КАД) ───
+
+export interface CourtPracticeStatus {
+  chunk_count: number
+  document_count: number
+  is_uploader: boolean
+  batches: Array<{
+    batch_id: string
+    documents: number
+    chunks: number
+    created_at: string | null
+  }>
+}
+
+export const fetchCourtPracticeStatus = async (): Promise<CourtPracticeStatus> => {
+  return cachedGet('court-practice:status', 10000, async () => {
+    const response = await apiClient.get<CourtPracticeStatus>(
+      getApiUrl('/api/v2/court-practice/status'),
+      { timeout: 30000 }
+    )
+    return response.data
+  })
+}
+
+export interface CourtPracticeJobStartResponse {
+  job_id: string
+  status: string
+}
+
+export const startCourtPracticeUploadJob = async (
+  file: File,
+  maxRows?: number
+): Promise<CourtPracticeJobStartResponse> => {
+  const formData = new FormData()
+  formData.append('file', file)
+  const response = await apiClient.post<CourtPracticeJobStartResponse>(
+    getApiUrl(
+      `/api/v2/court-practice/upload-job${maxRows ? `?max_rows=${encodeURIComponent(String(maxRows))}` : ''}`
+    ),
+    formData,
+    {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 600_000,
+    }
+  )
+  invalidateCachedGet('court-practice:status')
+  return response.data
+}
+
+export function buildCourtPracticeJobSseUrl(jobId: string): string {
+  const token = localStorage.getItem('access_token')
+  const qs = token ? `?token=${encodeURIComponent(token)}` : ''
+  const path = `/api/v2/court-practice/jobs/${encodeURIComponent(jobId)}/events${qs}`
+  if (import.meta.env.DEV) return path
+  const base = (import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '')
+  return base ? `${base}${path}` : path
+}
+
+export const deleteCourtPracticeBatch = async (
+  batchId: string
+): Promise<{ deleted_documents: number; deleted_chunks: number }> => {
+  const response = await apiClient.delete<{ deleted_documents: number; deleted_chunks: number }>(
+    getApiUrl(`/api/v2/court-practice/batch/${encodeURIComponent(batchId)}`)
+  )
+  invalidateCachedGet('court-practice:status')
+  return response.data
+}
+
+export const deleteAllCourtPractice = async (): Promise<{
+  deleted_documents: number
+  deleted_chunks: number
+}> => {
+  const response = await apiClient.delete<{ deleted_documents: number; deleted_chunks: number }>(
+    getApiUrl('/api/v2/court-practice/all')
+  )
+  invalidateCachedGet('court-practice:status')
   return response.data
 }
 

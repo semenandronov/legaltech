@@ -1,17 +1,15 @@
 """Authentication utilities for Legal AI Vault"""
 from datetime import datetime, timedelta
 from typing import Optional
-from jose import JWTError, jwt
+
 import bcrypt
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import Depends, HTTPException, Request, status
+from jose import JWTError, jwt
 from sqlalchemy.orm import Session
+
 from app.config import config
 from app.models.user import User, UserSession
 from app.utils.database import get_db
-
-# HTTP Bearer token
-security = HTTPBearer()
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -101,7 +99,7 @@ def decode_token(token: str) -> Optional[dict]:
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    request: Request,
     db: Session = Depends(get_db)
 ) -> User:
     """Get the current authenticated user"""
@@ -110,8 +108,25 @@ async def get_current_user(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    
-    token = credentials.credentials
+
+    # NOTE: Yandex Serverless Containers blocks requests that include the standard
+    # `Authorization` header (it is interpreted as IAM auth and rejected before
+    # reaching the app). For that runtime we use a custom header instead.
+    #
+    # Prefer X-Access-Token (cloud runtime), but keep Authorization as a local-dev fallback.
+    token = request.headers.get("X-Access-Token") or request.headers.get("x-access-token")
+    if not token:
+        auth = request.headers.get("Authorization") or request.headers.get("authorization")
+        if auth and auth.lower().startswith("bearer "):
+            token = auth.split(" ", 1)[1].strip()
+
+    if not token:
+        raise credentials_exception
+
+    # Accept accidental "Bearer <jwt>" in X-Access-Token too.
+    if token.lower().startswith("bearer "):
+        token = token.split(" ", 1)[1].strip()
+
     payload = decode_token(token)
     
     if payload is None:
@@ -158,15 +173,12 @@ async def get_current_user(
 
 
 async def get_current_user_optional(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
+    request: Request,
     db: Session = Depends(get_db)
 ) -> Optional[User]:
     """Get the current user if authenticated, None otherwise"""
-    if not credentials:
-        return None
-    
     try:
-        return await get_current_user(credentials, db)
+        return await get_current_user(request, db)
     except HTTPException:
         return None
 

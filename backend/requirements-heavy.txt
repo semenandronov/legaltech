@@ -2,4 +2,6 @@
 # Подключаются через requirements.txt; для production обычно не нужны.
 
 docling>=2.10.0
+# Явный OCR для DOCLING_PDF_OCR_ENGINE=easyocr (Docling не всегда тянет как обязательную зависимость)
+easyocr>=1.7.0
 markitdown>=0.0.1a0

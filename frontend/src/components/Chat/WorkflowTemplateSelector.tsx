@@ -55,7 +55,7 @@ export const WorkflowTemplateSelector: React.FC<WorkflowTemplateSelectorProps> =
         getApiUrl(`/api/cases/${caseId}/workflow-templates`),
         {
           headers: {
-            'Authorization': `Bearer ${token}`,
+            'X-Access-Token': token || '',
             'Content-Type': 'application/json'
           }
         }

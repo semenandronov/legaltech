@@ -9,12 +9,14 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import load_only
 from typing import Optional, List, Dict, Any
+from types import SimpleNamespace
 import logging
 import json
 import asyncio
 import re
 import random
 import uuid
+import time
 
 from app.utils.database import get_db
 from app.utils.auth import get_current_user
@@ -28,6 +30,22 @@ from app.services.chat import (
 from app.services.chat.events import SSESerializer
 from app.services.chat.conversation_policy_service import ConversationPolicyService
 from app.services.chat.legal_quality_gates import LegalQualityGates
+from app.services.chat.evidence_bundle import build_evidence_bundle, evidence_citations
+from app.services.chat.session_context_retrieval import (
+    align_budget_profile_with_session,
+    session_context_meta_from_package,
+)
+from app.services.chat.session_context_service import (
+    build_session_context_for_turn,
+    refresh_session_context_after_turn,
+)
+from app.services.chat.assistant_turn_persistence import (
+    GlobalAssistantPersistJob,
+    assistant_async_persist_enabled,
+    persist_global_assistant_sync,
+    schedule_global_assistant_persist,
+    should_sync_persist_before_finish,
+)
 from app.services.langchain_agents.draft_hitl import normalize_draft_action
 from app.services.chat.metrics import get_metrics
 from app.config import config
@@ -37,13 +55,21 @@ from app.services.observability.langfuse_service import (
     end_trace,
     trace_event,
     trace_span,
+    update_trace,
     set_active_trace_context,
     reset_active_trace_context,
+    set_trace_span_parent,
+    reset_trace_span_parent,
     normalize_trace_id,
     build_assistant_trace_metadata,
     trace_contract_event,
     normalize_observability_metadata,
     get_langchain_callbacks,
+)
+from app.services.observability.assistant_pipeline_langfuse_tracing import (
+    assistant_step_span,
+    record_execution_branch,
+    turn_context_trace_fields,
 )
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -73,6 +99,46 @@ def _chunk_for_stream(text: str, max_len: int = 220) -> List[str]:
     return chunks
 
 
+def _chunk_for_stream_preserve_newlines(text: str, max_len: int = 220) -> List[str]:
+    """
+    Split long text into UI-friendly chunks WITHOUT destroying Markdown formatting.
+
+    Unlike `_chunk_for_stream()`, this function preserves `\n` and blank lines so
+    that list/card formatting remains readable in the UI.
+    """
+    src = text or ""
+    if not src:
+        return []
+    if len(src) <= max_len:
+        return [src]
+    chunks: List[str] = []
+    i = 0
+    n = len(src)
+    while i < n:
+        j = min(i + max_len, n)
+        if j >= n:
+            chunks.append(src[i:])
+            break
+        window = src[i:j]
+        # Prefer splitting on paragraph boundary, then newline, then space.
+        cut = window.rfind("\n\n")
+        if cut >= max_len // 3:
+            j = i + cut + 2
+        else:
+            cut = window.rfind("\n")
+            if cut >= max_len // 3:
+                j = i + cut + 1
+            else:
+                cut = window.rfind(" ")
+                if cut >= max_len // 2:
+                    j = i + cut + 1
+        piece = src[i:j]
+        if piece:
+            chunks.append(piece)
+        i = j
+    return chunks
+
+
 def _reasoning_delta_from_chunk(msg_chunk: Any) -> str:
     """Extract reasoning delta from AIMessageChunk if provider sends it."""
     try:
@@ -90,6 +156,52 @@ def _reasoning_delta_from_chunk(msg_chunk: Any) -> str:
         return ""
 
 
+def _text_delta_from_llm_chunk(msg_chunk: Any) -> str:
+    """Текст из чанка ``astream`` (ChatOpenAI / ChatYandexOpenAI): message/content, список блоков."""
+    try:
+        base = getattr(msg_chunk, "message", None)
+        if base is None:
+            base = msg_chunk
+        if isinstance(base, tuple) and base:
+            base = base[0]
+        content = getattr(base, "content", None)
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: List[str] = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    t = item.get("text")
+                    if isinstance(t, str) and t:
+                        parts.append(t)
+            return "".join(parts)
+        if content is not None:
+            s = str(content)
+            if s and s != "None":
+                return s
+    except Exception:
+        pass
+    return ""
+
+
+def _ainvoke_text(message: Any) -> str:
+    """Текст из результата ``ainvoke`` (AIMessage / объект с полем content)."""
+    if message is None:
+        return ""
+    if isinstance(message, str):
+        return message
+    c = getattr(message, "content", None)
+    if isinstance(c, str) and c.strip():
+        return c
+    if isinstance(c, list):
+        return _text_delta_from_llm_chunk(message)
+    if c is not None:
+        s = str(c).strip()
+        return s if s and s != "None" else ""
+    return ""
+
 
 router = APIRouter(tags=["assistant-chat-v2"])
 
@@ -99,6 +211,30 @@ def _normalize_bool(value) -> bool:
     if isinstance(value, str):
         return value.lower() in ("true", "1", "yes")
     return bool(value)
+
+
+def _context_pipeline_trace_extra(chat_request: ChatRequest) -> Dict[str, Any]:
+    """Langfuse metadata for case context pipeline (secretary → recall → rerank)."""
+    from app.config import config as _cfg
+
+    extra: Dict[str, Any] = {
+        "context_pipeline_enabled": bool(
+            getattr(_cfg, "CASE_ASSISTANT_CONTEXT_PIPELINE_ENABLED", True)
+        ),
+        "rerank_model": getattr(_cfg, "RERANKER_MODEL_NAME", "") or "BAAI/bge-reranker-v2-m3",
+    }
+    bp = chat_request.budget_profile if isinstance(chat_request.budget_profile, dict) else {}
+    if bp:
+        if "recall_k" in bp:
+            extra["recall_k"] = bp["recall_k"]
+        if "final_k" in bp:
+            extra["final_k"] = bp["final_k"]
+    rt = chat_request.retrieval_task if isinstance(chat_request.retrieval_task, dict) else None
+    if rt:
+        extra["scope_mode"] = rt.get("scope_mode")
+        extra["scoped_files_count"] = len(rt.get("file_ids") or [])
+        extra["router_confidence"] = rt.get("confidence")
+    return extra
 
 
 def _should_sample_langfuse() -> bool:
@@ -200,7 +336,8 @@ async def assistant_chat_v2(
         - messages: array of {role, content}
         - case_id: ID дела
         - web_search: включить веб-поиск
-        - legal_research: включить поиск НПА на pravo.gov.ru
+        - legal_research: включить справочник (GLOBAL_LEGAL_CORPUS) в ответе по делу — только из тела запроса (тумблер UI).
+        - use_legal_corpus: то же, что legal_research (совместимость с UI глобального ассистента)
         - deep_think: включить глубокое мышление
         - draft_mode: режим создания документа
         - document_context: контекст документа (для редактора)
@@ -224,7 +361,14 @@ async def assistant_chat_v2(
         
         if not case_id:
             raise HTTPException(status_code=400, detail="case_id is required")
-        
+
+        try:
+            from app.services.bm25_case_prewarm import schedule_bm25_prewarm
+
+            schedule_bm25_prewarm(str(case_id))
+        except Exception as bm25_sched_err:
+            logger.debug("BM25 prewarm schedule on chat start skipped: %s", bm25_sched_err)
+
         if not messages:
             raise HTTPException(status_code=400, detail="No messages provided")
         
@@ -235,8 +379,20 @@ async def assistant_chat_v2(
         # Legacy-флаги web_search/deep_think в контуре внутреннего ассистента отключены.
         requested_web_search = _normalize_bool(body.get("web_search", False))
         legal_research = _normalize_bool(body.get("legal_research", False))
+        use_legal_corpus_body = _normalize_bool(body.get("use_legal_corpus", False))
+        # Только тумблер в UI: legal_research и use_legal_corpus из тела запроса (без env-автовключения).
+        legal_research = bool(legal_research or use_legal_corpus_body)
         requested_deep_think = _normalize_bool(body.get("deep_think", False))
         draft_mode = _normalize_bool(body.get("draft_mode", False))
+        from app.services.chat.chat_instrument_policy import normalize_chat_instrument_flags
+
+        court_practice = _normalize_bool(body.get("court_practice", False))
+        draft_mode, legal_research, court_practice = normalize_chat_instrument_flags(
+            draft_mode=draft_mode,
+            legal_research=legal_research,
+            use_legal_corpus=use_legal_corpus_body,
+            court_practice=court_practice,
+        )
         web_search = False
         deep_think = False
         if requested_web_search or requested_deep_think:
@@ -268,6 +424,15 @@ async def assistant_chat_v2(
             raise HTTPException(status_code=400, detail="attached_file_ids must be a list")
         session_id = body.get("session_id") or None
         mode = body.get("mode")
+        corpus_size_hint = 0
+        for _hint_key in ("corpus_size", "num_documents", "case_doc_count"):
+            _raw_hint = body.get(_hint_key)
+            if _raw_hint is None:
+                continue
+            try:
+                corpus_size_hint = max(corpus_size_hint, int(_raw_hint))
+            except (TypeError, ValueError):
+                continue
 
         if attached_file_ids:
             logger.info(f"Attached file IDs: {attached_file_ids}")
@@ -284,35 +449,295 @@ async def assistant_chat_v2(
             document_context=document_context,
             mode_hint=mode,
         )
+        sampled = _should_sample_langfuse()
+        trace_ctx = None
+        http_trace_token = None
+        if sampled:
+            trace_ctx = create_trace_context(
+                name="assistant_chat_v2",
+                trace_id=trace_id,
+                user_id=str(current_user.id),
+                session_id=session_id,
+                metadata=build_assistant_trace_metadata(
+                    feature="case_assistant",
+                    route="/api/v2/assistant/chat",
+                    environment=getattr(config, "ENVIRONMENT", None),
+                    model_provider=getattr(config, "LLM_PROVIDER", None),
+                    case_id=case_id,
+                    draft_mode=bool(draft_mode),
+                    attached_files_count=len(attached_file_ids or []),
+                    web_search=bool(web_search),
+                    legal_research=bool(legal_research),
+                    deep_think=bool(deep_think),
+                    assistant_type="case_assistant",
+                    mode=preview_run_ctx.mode,
+                    execution_path="case_langgraph_v2",
+                    scope_result="scope_pending",
+                    citation_result="citation_pending",
+                    confidence_result="confidence_pending",
+                    tags=["assistant", "case_assistant", "in_case_chat"],
+                    extra={
+                        "mode_hint": editor_mode_hint,
+                        "mode": mode,
+                    },
+                ),
+                input_payload={"question": question[:3000]},
+            )
+            http_trace_token = set_active_trace_context(trace_ctx)
+            trace_contract_event(
+                trace_ctx,
+                name="request_received",
+                metadata=normalize_observability_metadata(
+                    {
+                        "assistant_type": "case_assistant",
+                        "route": "/api/v2/assistant/chat",
+                        "mode": preview_run_ctx.mode or "",
+                        "case_id": case_id,
+                        "session_id": session_id or "",
+                    },
+                    step_name="request_received",
+                    status="success",
+                ),
+                input_payload={"question": question[:3000]},
+            )
+
         orchestrator = get_chat_orchestrator(db)
         case_doc_count = 0
-        try:
-            from app.models.case import Case as _CaseModel
-            case_obj = db.query(_CaseModel).filter(_CaseModel.id == case_id).first()
-            if case_obj is not None:
-                case_doc_count = int(case_obj.num_documents or 0)
-        except Exception as case_meta_err:
-            logger.debug("case doc count probe failed: %s", case_meta_err)
-        # Task/depth inference from the actual question text.
-        # This is the primary knob that decides how deeply we should scan the case.
         semantic_intent = ""
         probe_hits = 0
         probe_covered = False
-        task_type, depth_tier, clarification_needed, task_reason, task_conf = (
-            ConversationPolicyService.infer_task_and_depth(
-                question=question,
-                draft_mode=bool(draft_mode),
-                legal_research=bool(legal_research),
-                deep_think=bool(deep_think),
-                attached_files_count=len(attached_file_ids or []),
-            )
-        )
-        task_family = ConversationPolicyService.map_task_family(task_type)
-        budget_profile = ConversationPolicyService.budget_profile_for_depth(
-            depth_tier,
-            task_type,
-            corpus_size=max(case_doc_count, len(attached_file_ids or [])),
-        )
+        task_type = ""
+        depth_tier = ""
+        clarification_needed = False
+        task_reason = ""
+        task_conf = 0.0
+        task_family = ""
+        structured_tier = None
+        budget_profile: Dict[str, Any] = {}
+        try:
+            with assistant_step_span(
+                "case",
+                "http.request_prep",
+                input_payload={
+                    "question_chars": len(question),
+                    "case_id": case_id,
+                    "session_id": session_id or "",
+                },
+            ) as prep_out:
+                with assistant_step_span("case", "http.case_doc_count") as doc_out:
+                    try:
+                        from app.services.chat.case_doc_count_cache import resolve_case_doc_count
+
+                        case_doc_count = resolve_case_doc_count(
+                            db,
+                            str(case_id),
+                            hint=corpus_size_hint or None,
+                        )
+                        doc_out["case_doc_count_source"] = (
+                            "client_hint" if corpus_size_hint > 0 else "cache_or_db"
+                        )
+                    except Exception as case_meta_err:
+                        logger.debug("case doc count probe failed: %s", case_meta_err)
+                    doc_out["case_doc_count"] = case_doc_count
+
+                with assistant_step_span(
+                    "case",
+                    "http.infer_task_and_depth",
+                    input_payload={"question_chars": len(question)},
+                ) as inf_out:
+                    dialog_history = ""
+                    conversation_summary = ""
+                    anchor_filenames: list = []
+                    anchor_file_ids: list = []
+                    turn_context_dict: Dict[str, Any] | None = None
+                    routing_question = question
+                    if session_id:
+                        try:
+                            from app.services.chat.history_service import ChatHistoryService
+                            from langchain_core.messages import AIMessage, HumanMessage
+
+                            hist_svc = ChatHistoryService(db)
+                            recent = hist_svc.get_session_history(
+                                case_id=str(case_id),
+                                session_id=str(session_id),
+                                limit=16,
+                            )
+                            lc_msgs = []
+                            for msg in recent or []:
+                                if msg.role == "user" and msg.content:
+                                    lc_msgs.append(HumanMessage(content=str(msg.content)))
+                                elif msg.role == "assistant" and msg.content:
+                                    lc_msgs.append(AIMessage(content=str(msg.content)))
+                            from app.services.chat.session_context_retrieval import (
+                                format_dialog_history_for_memory,
+                            )
+
+                            dialog_history = format_dialog_history_for_memory(
+                                lc_msgs,
+                                max_turns=8,
+                                max_chars=4000,
+                            )
+                            for msg in reversed(recent or []):
+                                ev = getattr(msg, "evidence", None) or {}
+                                if isinstance(ev, dict):
+                                    for c in ev.get("citations") or []:
+                                        if isinstance(c, dict):
+                                            fn = c.get("filename") or c.get("file_name")
+                                            if fn and fn not in anchor_filenames:
+                                                anchor_filenames.append(str(fn))
+                                            fid = c.get("source_id") or c.get("file_id")
+                                            if fid and str(fid) not in anchor_file_ids:
+                                                anchor_file_ids.append(str(fid))
+                                refs = getattr(msg, "source_references", None) or []
+                                if isinstance(refs, list):
+                                    for ref in refs:
+                                        if ref and str(ref) not in anchor_filenames:
+                                            anchor_filenames.append(str(ref))
+
+                            from app.services.chat.session_transcript import load_case_session_turns
+                            from app.services.chat.turn_context_resolution import (
+                                load_and_resolve_turn_context,
+                            )
+
+                            case_turns = load_case_session_turns(
+                                db, case_id=str(case_id), session_id=str(session_id)
+                            )
+                            if case_turns and (case_turns[-1].role or "").lower() == "user":
+                                if (case_turns[-1].content or "").strip() == question.strip():
+                                    case_turns = case_turns[:-1]
+                            with assistant_step_span(
+                                "case",
+                                "http.turn_context_resolution",
+                                input_payload={"question_chars": len(question)},
+                            ) as tc_out:
+                                turn_resolution = load_and_resolve_turn_context(
+                                    question=question,
+                                    turns=case_turns,
+                                    dialog_history=dialog_history,
+                                    conversation_summary=conversation_summary,
+                                    anchor_filenames=anchor_filenames,
+                                )
+                                turn_context_dict = turn_resolution.to_dict()
+                                tc_out.update(turn_context_trace_fields(turn_context_dict))
+                                tc_out["standalone_query_chars"] = len(
+                                    turn_resolution.standalone_query or ""
+                                )
+                            if turn_resolution.standalone_query:
+                                routing_question = turn_resolution.standalone_query
+                        except Exception as hist_err:
+                            logger.debug("standalone query history load skipped: %s", hist_err)
+
+                    task_type, depth_tier, clarification_needed, task_reason, task_conf = (
+                        ConversationPolicyService.infer_task_and_depth(
+                            question=routing_question,
+                            draft_mode=bool(draft_mode),
+                            legal_research=bool(legal_research),
+                            deep_think=bool(deep_think),
+                            attached_files_count=len(attached_file_ids or []),
+                            corpus_size=case_doc_count,
+                            dialog_history=dialog_history,
+                            conversation_summary=conversation_summary,
+                            anchor_filenames=anchor_filenames,
+                        )
+                    )
+                    task_family = ConversationPolicyService.map_task_family(task_type)
+                    inf_out["task_type"] = task_type
+                    inf_out["depth_tier"] = depth_tier
+                    inf_out["clarification_needed"] = clarification_needed
+
+                with assistant_step_span("case", "http.tier_classifier_llm") as tier_out:
+                    try:
+                        from app.services.chat.tier_classifier import classify_execution_tier_llm
+
+                        structured_tier = classify_execution_tier_llm(
+                            question=question,
+                            task_type=task_type,
+                            depth_tier=depth_tier,
+                            clarification_needed=clarification_needed,
+                            legal_research=bool(legal_research),
+                            deep_think=bool(deep_think),
+                            draft_mode=bool(draft_mode),
+                            corpus_size=max(case_doc_count, len(attached_file_ids or [])),
+                            attached_files_count=len(attached_file_ids or []),
+                        )
+                        tier_out["execution_tier"] = structured_tier
+                    except Exception as tier_cls_err:
+                        logger.debug("tier LLM classifier skipped: %s", tier_cls_err)
+                        tier_out["skipped"] = True
+
+                with assistant_step_span("case", "http.budget_profile") as budget_out:
+                    budget_profile = ConversationPolicyService.budget_profile_for_depth(
+                        depth_tier,
+                        task_type,
+                        corpus_size=max(case_doc_count, len(attached_file_ids or [])),
+                        question=question,
+                        clarification_needed=clarification_needed,
+                        legal_research=bool(legal_research),
+                        court_practice=bool(court_practice),
+                        deep_think=bool(deep_think),
+                        draft_mode=bool(draft_mode),
+                        structured_execution_tier=structured_tier,
+                        attached_files_count=len(attached_file_ids or []),
+                        dialog_history=dialog_history,
+                        conversation_summary=conversation_summary,
+                        anchor_filenames=anchor_filenames,
+                        turn_context=turn_context_dict,
+                    )
+                    budget_profile["anchor_file_ids"] = list(anchor_file_ids)
+                    budget_profile["anchor_filenames"] = list(anchor_filenames)
+                    if turn_context_dict:
+                        budget_out["referential_kind"] = turn_context_dict.get("referential_kind")
+                    budget_out["profile_name"] = str(budget_profile.get("name") or "")
+                    budget_out["execution_tier"] = budget_profile.get("execution_tier")
+                    prep_out["task_type"] = task_type
+                    prep_out["depth_tier"] = depth_tier
+                    prep_out["execution_tier"] = budget_profile.get("execution_tier")
+                    if turn_context_dict:
+                        prep_out["referential_kind"] = turn_context_dict.get("referential_kind")
+        finally:
+            if http_trace_token is not None:
+                reset_active_trace_context(http_trace_token)
+
+        session_context_prompt: Optional[str] = None
+        session_context_meta: Optional[Dict[str, Any]] = None
+        if session_id:
+            with assistant_step_span(
+                "case",
+                "http.session_context.build",
+                input_payload={"question_chars": len(question)},
+            ) as sc_out:
+                try:
+                    session_pkg = build_session_context_for_turn(
+                        db,
+                        scope="case",
+                        question=question,
+                        session_id=str(session_id),
+                        case_id=str(case_id),
+                        task_type=task_type,
+                        corpus_size=max(case_doc_count, len(attached_file_ids or [])),
+                        draft_mode=bool(draft_mode),
+                        turn_context=turn_context_dict,
+                    )
+                    session_context_prompt = (session_pkg.prompt_block or "").strip() or None
+                    session_context_meta = session_context_meta_from_package(
+                        session_pkg,
+                        turn_context=turn_context_dict,
+                    )
+                    budget_profile = align_budget_profile_with_session(
+                        budget_profile, session_pkg
+                    )
+                    sc_out["prompt_chars"] = len(session_context_prompt or "")
+                    sc_out["turn_relation"] = session_pkg.resolver.turn_relation.value
+                    sc_out["needs_document_retrieval"] = bool(
+                        session_pkg.resolver.needs_document_retrieval
+                    )
+                    sc_out["has_evidence_replay"] = session_pkg.evidence_replay is not None
+                    sc_out["execution_tier"] = budget_profile.get("execution_tier")
+                except Exception as sc_err:
+                    logger.warning("case session context assembly failed: %s", sc_err)
+                    session_context_prompt = None
+                    session_context_meta = None
+
         state_contract = ConversationPolicyService.build_case_state_contract(
             case_id=case_id,
             session_id=session_id,
@@ -330,6 +755,8 @@ async def assistant_chat_v2(
         state_contract.budget_profile = budget_profile
         state_contract.task_family = task_family
 
+        # Scope router runs inside LangGraph extract_retrieval_task_node (no duplicate pre-route).
+
         # Создаём ChatRequest
         chat_request = ChatRequest(
             case_id=case_id,
@@ -337,6 +764,7 @@ async def assistant_chat_v2(
             current_user=current_user,
             web_search=web_search,
             legal_research=legal_research,
+            court_practice=court_practice,
             deep_think=deep_think,
             draft_mode=draft_mode,
             document_context=document_context,
@@ -358,10 +786,15 @@ async def assistant_chat_v2(
             clarification_needed=clarification_needed,
             budget_profile=state_contract.budget_profile,
             corpus_size=max(case_doc_count, len(attached_file_ids or [])),
+            retrieval_task=None,
+            scoped_file_ids=None,
+            scoped_doc_type=None,
             semantic_intent=semantic_intent,
             retrieval_probe_hits=int(probe_hits),
             retrieval_probe_covered=bool(probe_covered),
             draft_action=draft_action,
+            session_context_prompt=session_context_prompt,
+            session_context_meta=session_context_meta,
         )
         
         # Создаём оркестратор и обрабатываем запрос
@@ -371,6 +804,8 @@ async def assistant_chat_v2(
                 orchestrator=orchestrator,
                 chat_request=chat_request,
                 trace_id=trace_id,
+                trace_ctx=trace_ctx,
+                http_trace_prepared=trace_ctx is not None,
             ),
             media_type="text/event-stream",
             headers={
@@ -392,12 +827,13 @@ async def _stream_with_trace(
     orchestrator: ChatOrchestrator,
     chat_request: ChatRequest,
     trace_id: str,
+    trace_ctx=None,
+    http_trace_prepared: bool = False,
 ):
     # Hard cutover: in-case assistant always uses LangGraph runtime.
     graph_v2_selected = True
     sampled = _should_sample_langfuse()
-    trace_ctx = None
-    if sampled:
+    if trace_ctx is None and sampled:
         trace_ctx = create_trace_context(
             name="assistant_chat_v2",
             trace_id=trace_id,
@@ -421,10 +857,45 @@ async def _stream_with_trace(
                 citation_result="citation_pending",
                 confidence_result="confidence_pending",
                 tags=["assistant", "case_assistant", "in_case_chat"],
-                extra={"mode_hint": chat_request.editor_mode_hint, "mode": chat_request.mode},
+                extra={
+                    "mode_hint": chat_request.editor_mode_hint,
+                    "mode": chat_request.mode,
+                    **_context_pipeline_trace_extra(chat_request),
+                },
             ),
             input_payload={"question": chat_request.question[:3000]},
         )
+    elif trace_ctx is not None:
+        try:
+            update_trace(
+                trace_ctx,
+                metadata=build_assistant_trace_metadata(
+                    feature="case_assistant",
+                    route="/api/v2/assistant/chat",
+                    environment=getattr(config, "ENVIRONMENT", None),
+                    model_provider=getattr(config, "LLM_PROVIDER", None),
+                    case_id=chat_request.case_id,
+                    draft_mode=bool(chat_request.draft_mode),
+                    attached_files_count=len(chat_request.attached_file_ids or []),
+                    web_search=bool(chat_request.web_search),
+                    legal_research=bool(chat_request.legal_research),
+                    deep_think=bool(chat_request.deep_think),
+                    assistant_type="case_assistant",
+                    mode=chat_request.mode,
+                    execution_path="case_langgraph_v2",
+                    scope_result="scope_pending",
+                    citation_result="citation_pending",
+                    confidence_result="confidence_pending",
+                    tags=["assistant", "case_assistant", "in_case_chat"],
+                    extra={
+                        "mode_hint": chat_request.editor_mode_hint,
+                        "mode": chat_request.mode,
+                        **_context_pipeline_trace_extra(chat_request),
+                    },
+                ),
+            )
+        except Exception:
+            logger.debug("case trace metadata enrich failed", exc_info=True)
 
     started = False
     response_chars = 0
@@ -433,30 +904,34 @@ async def _stream_with_trace(
     trace_token = set_active_trace_context(trace_ctx) if trace_ctx is not None else None
     try:
         yield SSESerializer.trace(trace_id)
-        trace_contract_event(
-            trace_ctx,
-            name="request_received",
-            metadata=normalize_observability_metadata(
-                {
-                    "assistant_type": "case_assistant",
-                    "route": "/api/v2/assistant/chat",
-                    "mode": chat_request.mode or "",
-                    "case_id": chat_request.case_id,
-                    "session_id": chat_request.session_id or "",
-                    "task_type": chat_request.task_type or "",
-                    "task_family": chat_request.task_family or "",
-                    "depth_tier": chat_request.depth_tier or "",
-                    "attached_files_count": len(chat_request.attached_file_ids or []),
-                },
-                step_name="request_received",
-                status="success",
-            ),
-            input_payload={"question": (chat_request.question or "")[:3000]},
-        )
+        if not http_trace_prepared:
+            trace_contract_event(
+                trace_ctx,
+                name="request_received",
+                metadata=normalize_observability_metadata(
+                    {
+                        "assistant_type": "case_assistant",
+                        "route": "/api/v2/assistant/chat",
+                        "mode": chat_request.mode or "",
+                        "case_id": chat_request.case_id,
+                        "session_id": chat_request.session_id or "",
+                        "task_type": chat_request.task_type or "",
+                        "task_family": chat_request.task_family or "",
+                        "depth_tier": chat_request.depth_tier or "",
+                        "attached_files_count": len(chat_request.attached_file_ids or []),
+                    },
+                    step_name="request_received",
+                    status="success",
+                ),
+                input_payload={"question": (chat_request.question or "")[:3000]},
+            )
         process_span = trace_span(
             trace_ctx,
             name="case_chat_orchestrator_stream",
             metadata={"route": "/api/v2/assistant/chat"},
+        )
+        process_parent_token = (
+            set_trace_span_parent(process_span) if process_span is not None else None
         )
         try:
             trace_contract_event(
@@ -470,9 +945,13 @@ async def _stream_with_trace(
                         "depth_tier": chat_request.depth_tier or "",
                         "corpus_size": int(chat_request.corpus_size or 0),
                         "budget_profile_name": str((chat_request.budget_profile or {}).get("name") or ""),
+                        "execution_tier": (chat_request.budget_profile or {}).get("execution_tier"),
                         "semantic_intent": chat_request.semantic_intent or "",
                         "probe_hits": int(chat_request.retrieval_probe_hits or 0),
                         "probe_covered": bool(chat_request.retrieval_probe_covered),
+                        **turn_context_trace_fields(
+                            (chat_request.budget_profile or {}).get("turn_context")
+                        ),
                     },
                     step_name="graph_v2_selected",
                     status="success",
@@ -546,6 +1025,8 @@ async def _stream_with_trace(
                 )
             raise
         finally:
+            if process_parent_token is not None:
+                reset_trace_span_parent(process_parent_token)
             if process_span:
                 try:
                     process_span.end()
@@ -789,7 +1270,16 @@ async def assistant_global_chat(
         draft_plan = body.get("draft_plan") if isinstance(body.get("draft_plan"), dict) else None
         attached_file_ids = body.get("attached_file_ids") or []
         requested_use_legal_corpus = _normalize_bool(body.get("use_legal_corpus", False))
-        use_legal_corpus = True if config.LEGAL_CORPUS_FORCE_ENABLED else requested_use_legal_corpus
+        from app.services.chat.chat_instrument_policy import normalize_chat_instrument_flags
+
+        requested_court_practice = _normalize_bool(body.get("court_practice", False))
+        draft_mode, use_legal_corpus, court_practice = normalize_chat_instrument_flags(
+            draft_mode=draft_mode,
+            use_legal_corpus=requested_use_legal_corpus,
+            court_practice=requested_court_practice,
+        )
+        use_legal_corpus = bool(use_legal_corpus)
+        court_practice = bool(court_practice)
         trace_id = normalize_trace_id(body.get("trace_id"))
         sampled = _should_sample_langfuse()
         preview_global_ctx = ConversationPolicyService.build_run_context(
@@ -802,6 +1292,7 @@ async def assistant_global_chat(
             mode_hint=body.get("mode"),
         )
         trace_ctx = None
+        http_trace_token = None
         if sampled:
             trace_ctx = create_trace_context(
                 name="assistant_global_chat_v2",
@@ -836,20 +1327,7 @@ async def assistant_global_chat(
                     status="success",
                 ),
             )
-
-        if attached_file_ids:
-            from app.models.case import File as CaseFile
-            for fid in attached_file_ids:
-                file_obj = db.query(CaseFile).filter(CaseFile.id == fid).first()
-                if file_obj and file_obj.original_text:
-                    file_contexts.append(
-                        {
-                            "filename": file_obj.filename,
-                            "text": file_obj.original_text[:12000],
-                            "file_id": fid,
-                            "case_id": str(file_obj.case_id) if file_obj.case_id else None,
-                        }
-                    )
+            http_trace_token = set_active_trace_context(trace_ctx)
 
         if not messages:
             raise HTTPException(status_code=400, detail="No messages provided")
@@ -859,51 +1337,123 @@ async def assistant_global_chat(
 
         question = (last_message.get("content") or "").strip()
 
-        session = None
-        if session_id:
-            session = db.query(GlobalAssistantSession).filter(
-                GlobalAssistantSession.id == session_id,
-                GlobalAssistantSession.user_id == current_user_id,
-            ).first()
-        if not session:
-            session = GlobalAssistantSession(
-                user_id=current_user_id,
-                title=question[:200] if question else "Новый чат",
-            )
-            db.add(session)
-            db.commit()
-            db.refresh(session)
+        try:
+            with assistant_step_span(
+                "global",
+                "http.request_prep",
+                input_payload={"question_chars": len(question)},
+            ) as global_prep_out:
+                if attached_file_ids:
+                    with assistant_step_span(
+                        "global",
+                        "http.load_attached_files",
+                        input_payload={"attached_count": len(attached_file_ids)},
+                    ) as files_out:
+                        from app.models.case import File as CaseFile
 
-        db.add(GlobalAssistantMessage(session_id=session.id, role="user", content=question))
-        db.commit()
-        current_session_id = session.id
+                        loaded = 0
+                        for fid in attached_file_ids:
+                            file_obj = db.query(CaseFile).filter(CaseFile.id == fid).first()
+                            if file_obj and file_obj.original_text:
+                                file_contexts.append(
+                                    {
+                                        "filename": file_obj.filename,
+                                        "text": file_obj.original_text[:12000],
+                                        "file_id": fid,
+                                        "case_id": str(file_obj.case_id) if file_obj.case_id else None,
+                                    }
+                                )
+                                loaded += 1
+                        files_out["loaded_count"] = loaded
 
-        matter_contexts = [
-            {
-                "file_id": fc.get("file_id"),
-                "filename": fc.get("filename", "Документ"),
-                "text": fc.get("text", ""),
-                "case_id": fc.get("case_id"),
-            }
-            for fc in file_contexts
-            if fc.get("text")
-        ]
-        chat_history = [
-            {"role": m.get("role", "user"), "content": m.get("content", "")}
-            for m in messages
-        ]
+                with assistant_step_span("global", "http.get_or_create_session") as sess_out:
+                    session = None
+                    if session_id:
+                        session = db.query(GlobalAssistantSession).filter(
+                            GlobalAssistantSession.id == session_id,
+                            GlobalAssistantSession.user_id == current_user_id,
+                        ).first()
+                    if not session:
+                        session = GlobalAssistantSession(
+                            user_id=current_user_id,
+                            title=question[:200] if question else "Новый чат",
+                        )
+                        db.add(session)
+                        db.commit()
+                        db.refresh(session)
+                    sess_out["session_id"] = session.id
+
+                with assistant_step_span("global", "http.save_user_message") as user_out:
+                    db.add(GlobalAssistantMessage(session_id=session.id, role="user", content=question))
+                    db.commit()
+                    user_out["saved"] = True
+                current_session_id = session.id
+
+                from app.services.chat.dialog_transcript_service import (
+                    build_chat_history,
+                    build_global_turn_messages,
+                    load_global_chat_history,
+                )
+
+                with assistant_step_span("global", "http.load_transcript") as tx_out:
+                    matter_contexts = [
+                        {
+                            "file_id": fc.get("file_id"),
+                            "filename": fc.get("filename", "Документ"),
+                            "text": fc.get("text", ""),
+                            "case_id": fc.get("case_id"),
+                        }
+                        for fc in file_contexts
+                        if fc.get("text")
+                    ]
+                    db_transcript = load_global_chat_history(db, current_session_id)
+                    chat_history = build_chat_history(db_transcript, pending_question=question)
+                    canonical_messages = None
+                    if bool(getattr(config, "GLOBAL_ASSISTANT_CHECKPOINT_MESSAGES_ENABLED", True)):
+                        canonical_messages = build_global_turn_messages(db_transcript, question)
+                    tx_out["transcript_turns"] = len(db_transcript or [])
+                global_prep_out["session_id"] = current_session_id
+        finally:
+            if http_trace_token is not None:
+                reset_active_trace_context(http_trace_token)
+
         langgraph_enabled = bool(getattr(config, "GLOBAL_ASSISTANT_LANGGRAPH_ENABLED", True))
 
         async def generate():
             full_response = ""
             citations_out: List[Dict[str, Any]] = []
+            persist_committed = False
             stream_started = False
             trace_finished = False
             trace_token = set_active_trace_context(trace_ctx) if trace_ctx is not None else None
+            process_span = trace_span(
+                trace_ctx,
+                name="global_chat_orchestrator_stream",
+                metadata={"route": "/api/v2/assistant/global-chat"},
+            )
+            process_parent_token = (
+                set_trace_span_parent(process_span) if process_span is not None else None
+            )
             try:
                 yield SSESerializer.trace(trace_id)
                 yield SSESerializer.session(current_session_id)
                 stream_started = True
+                trace_contract_event(
+                    trace_ctx,
+                    name="request_routed",
+                    metadata=normalize_observability_metadata(
+                        {
+                            "assistant_type": "global_assistant",
+                            "execution_path": preview_global_ctx.execution_path,
+                            "mode": preview_global_ctx.mode or "",
+                            "use_legal_corpus": bool(use_legal_corpus),
+                            "court_practice": bool(court_practice),
+                            "draft_mode": bool(draft_mode),
+                        },
+                        step_name="global_stream_selected",
+                        status="success",
+                    ),
+                )
                 trace_contract_event(
                     trace_ctx,
                     name="llm_generation",
@@ -915,6 +1465,11 @@ async def assistant_global_chat(
                 )
 
                 if not langgraph_enabled:
+                    record_execution_branch(
+                        "global",
+                        branch="langgraph_disabled",
+                        reason="config",
+                    )
                     trace_event(
                         trace_ctx,
                         name="global_chat_langgraph_disabled",
@@ -953,16 +1508,93 @@ async def assistant_global_chat(
                     },
                 )
 
-                service = GlobalAssistantLangGraphService()
-                timeout_sec = int(getattr(config, "GLOBAL_ASSISTANT_GRAPH_TIMEOUT_SEC", 120) or 120)
-                run_span = trace_span(
-                    trace_ctx,
-                    name="global_chat_langgraph_run",
-                    metadata={"timeout_sec": timeout_sec},
-                )
-                try:
-                    result = await asyncio.wait_for(
-                        service.run(
+                session_context_prompt = ""
+                session_context_meta: Dict[str, Any] = {}
+                recap_done = False
+                with assistant_step_span(
+                    "global",
+                    "session_context.build",
+                    input_payload={"question_chars": len(question)},
+                ) as sc_out:
+                    try:
+                        from app.utils.database import SessionLocal
+
+                        resolve_db = SessionLocal()
+                        try:
+                            session_ctx = build_session_context_for_turn(
+                                resolve_db,
+                                scope="global",
+                                question=question,
+                                session_id=current_session_id,
+                            )
+                            session_context_prompt = session_ctx.prompt_block or ""
+                            session_context_meta = session_context_meta_from_package(session_ctx)
+                            session_reply = session_ctx.evidence_replay
+                            if bool(
+                                getattr(config, "GLOBAL_ASSISTANT_CHECKPOINT_MESSAGES_ENABLED", True)
+                            ) and not bool(
+                                getattr(config, "GLOBAL_ASSISTANT_TRANSCRIPT_REPLAY_ENABLED", False)
+                            ):
+                                session_reply = None
+                        finally:
+                            resolve_db.close()
+                        sc_out["has_evidence_replay"] = session_reply is not None
+                        if session_reply is not None:
+                            full_response = session_reply.content
+                            citations_out = session_reply.citations
+                            route_decision = f"session_context_{session_reply.resolution_kind}"
+                            record_execution_branch(
+                                "global",
+                                branch="session_evidence_replay",
+                                reason=str(session_reply.resolution_kind or ""),
+                                metadata={"route_decision": route_decision},
+                            )
+                            result = SimpleNamespace(
+                                response=full_response,
+                                citations=citations_out,
+                                route_confidence=1.0,
+                                route_decision=route_decision,
+                                answer_status="ready",
+                                draft_plan_id=None,
+                                draft_plan=None,
+                                answer_system_prompt="",
+                                answer_user_prompt="",
+                            )
+                            recap_done = True
+                            sc_out["recap_done"] = True
+                    except Exception as recap_err:
+                        logger.warning("global session context assembly failed: %s", recap_err)
+                        session_context_prompt = ""
+                        session_context_meta = {}
+
+                if not recap_done:
+                    record_execution_branch(
+                        "global",
+                        branch="langgraph",
+                        reason=str(run_ctx.mode or "global_chat"),
+                    )
+                    service = GlobalAssistantLangGraphService()
+                    timeout_sec = int(getattr(config, "GLOBAL_ASSISTANT_GRAPH_TIMEOUT_SEC", 360) or 360)
+                    stream_graph_progress = bool(
+                        getattr(config, "GLOBAL_ASSISTANT_STREAM_GRAPH_PROGRESS", True)
+                    )
+                    with assistant_step_span(
+                        "global",
+                        "langgraph.run",
+                        metadata={
+                            "timeout_sec": timeout_sec,
+                            "stream_graph_progress": stream_graph_progress,
+                        },
+                    ) as lg_out:
+                        run_span = trace_span(
+                            trace_ctx,
+                            name="global_chat_langgraph_run",
+                            metadata={
+                                "timeout_sec": timeout_sec,
+                                "stream_graph_progress": stream_graph_progress,
+                            },
+                        )
+                        graph_kwargs = dict(
                             user_query=question,
                             chat_history=chat_history,
                             draft_mode=draft_mode,
@@ -970,38 +1602,65 @@ async def assistant_global_chat(
                             draft_modifications=draft_modifications,
                             draft_plan=draft_plan,
                             use_legal_corpus=use_legal_corpus,
+                            use_court_practice=court_practice,
                             matter_contexts=matter_contexts,
                             user_id=current_user_id,
                             thread_id=f"global_{current_session_id}",
                             mode=run_ctx.mode,
-                        ),
-                        timeout=timeout_sec,
-                    )
-                    if run_span:
-                        run_span.update(
-                            output={
-                                "answer_status": result.answer_status,
-                                "citations_count": len(result.citations or []),
-                            }
+                            session_context_prompt=session_context_prompt or None,
+                            session_context_meta=session_context_meta or None,
+                            canonical_messages=canonical_messages,
                         )
-                except asyncio.TimeoutError:
-                    logger.error("Global chat LangGraph timeout after %ss", timeout_sec)
-                    if run_span:
-                        run_span.update(
-                            level="ERROR",
-                            status_message="timeout",
-                            output={"timeout_sec": timeout_sec},
-                        )
-                    yield SSESerializer.error(
-                        "Ассистент слишком долго обрабатывал запрос. Уточните вопрос или повторите попытку."
-                    )
-                    return
-                finally:
-                    if run_span:
                         try:
-                            run_span.end()
-                        except Exception:
-                            logger.debug("global_chat_langgraph_run span end failed", exc_info=True)
+                            result = None
+                            graph_started = time.monotonic()
+                            if stream_graph_progress:
+                                async for graph_event in service.stream(**graph_kwargs):
+                                    if (time.monotonic() - graph_started) > timeout_sec:
+                                        raise asyncio.TimeoutError()
+                                    if graph_event.phase:
+                                        yield SSESerializer.status(
+                                            "routing",
+                                            route=graph_event.phase[:160],
+                                            phase=graph_event.phase[:160],
+                                        )
+                                    if graph_event.result is not None:
+                                        result = graph_event.result
+                                        break
+                                if result is None:
+                                    raise RuntimeError("Global graph stream ended without result")
+                            else:
+                                result = await asyncio.wait_for(
+                                    service.run(**graph_kwargs),
+                                    timeout=timeout_sec,
+                                )
+                            lg_out["answer_status"] = result.answer_status
+                            lg_out["citations_count"] = len(result.citations or [])
+                            if run_span:
+                                run_span.update(
+                                    output={
+                                        "answer_status": result.answer_status,
+                                        "citations_count": len(result.citations or []),
+                                    }
+                                )
+                        except asyncio.TimeoutError:
+                            logger.error("Global chat LangGraph timeout after %ss", timeout_sec)
+                            if run_span:
+                                run_span.update(
+                                    level="ERROR",
+                                    status_message="timeout",
+                                    output={"timeout_sec": timeout_sec},
+                                )
+                            yield SSESerializer.error(
+                                "Ассистент слишком долго обрабатывал запрос. Уточните вопрос или повторите попытку."
+                            )
+                            return
+                        finally:
+                            if run_span:
+                                try:
+                                    run_span.end()
+                                except Exception:
+                                    logger.debug("global_chat_langgraph_run span end failed", exc_info=True)
 
                 full_response = result.response or ""
                 if draft_mode and not draft_approved:
@@ -1092,55 +1751,163 @@ async def assistant_global_chat(
                     )
                     yield SSESerializer.status("draft_state", draft_state="approved")
                     reasoning_progressive = ""
-                    generation_span = trace_span(
-                        trace_ctx,
-                        name="global_chat_generation_stream",
-                        metadata={"provider": config.LLM_PROVIDER},
-                    )
+                    gen_messages = [
+                        SystemMessage(content=system_prompt),
+                        HumanMessage(content=user_prompt),
+                    ]
+                    # In court_practice-only mode we buffer generation first to enforce format contract,
+                    # then stream the final (possibly retried) text to the UI.
+                    # If the current turn is an in-thread clarification, do not enforce
+                    # the "precedent finder" format contract — we are replaying / clarifying
+                    # prior content from the same chat, not generating a new court-practice подборку.
+                    thread_clarify = False
                     try:
-                        async for chunk in llm.astream(
-                            [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)],
-                            config={"callbacks": callbacks} if callbacks else None,
-                        ):
-                            r_delta = _reasoning_delta_from_chunk(chunk)
-                            if config.YANDEX_SSE_STREAM_MODEL_REASONING and r_delta:
-                                reasoning_progressive += r_delta
-                                yield SSESerializer.reasoning(
-                                    phase="model_reasoning",
-                                    step=1,
-                                    total_steps=1,
-                                    content=reasoning_progressive,
+                        from app.services.chat.session_context_retrieval import is_memory_only_turn
+
+                        thread_clarify = is_memory_only_turn(session_context_meta or None)
+                    except Exception:
+                        thread_clarify = False
+
+                    strict_court_practice = bool(
+                        court_practice and not use_legal_corpus and not draft_mode and not thread_clarify
+                    )
+                    with assistant_step_span(
+                        "global",
+                        "generation.stream",
+                        metadata={"provider": config.LLM_PROVIDER},
+                    ) as gen_step_out:
+                        generation_span = trace_span(
+                            trace_ctx,
+                            name="global_chat_generation_stream",
+                            metadata={"provider": config.LLM_PROVIDER},
+                        )
+                        try:
+                            if strict_court_practice:
+                                from app.services.chat.court_practice_answer_contract import (
+                                    extract_case_numbers_from_citations,
                                 )
 
-                            token = chunk.content if hasattr(chunk, "content") else str(chunk)
-                            if token:
-                                full_response += token
-                                yield SSESerializer.text_delta(token)
-                        if reasoning_progressive.strip():
-                            trace_contract_event(
-                                trace_ctx,
-                                name="llm_generation",
-                                metadata=normalize_observability_metadata(
-                                    {"assistant_type": "global_assistant"},
-                                    step_name="model_reasoning_stream",
-                                    status="success",
-                                ),
-                                output_payload={"reasoning_content": reasoning_progressive},
+                                # 1) First pass (buffered)
+                                inv = await llm.ainvoke(
+                                    gen_messages,
+                                    config={"callbacks": callbacks} if callbacks else None,
+                                )
+                                full_response = _ainvoke_text(inv) or ""
+
+                                # 2) Quality gate + optional retry once
+                                available_cases = extract_case_numbers_from_citations(result.citations or [])
+                                cp_gate = LegalQualityGates.court_practice_answer_gate(
+                                    run_ctx,
+                                    answer_text=full_response,
+                                    citations=list(result.citations or []),
+                                    enabled=True,
+                                    strict_mode=True,
+                                    available_case_numbers=available_cases,
+                                )
+                                trace_contract_event(
+                                    trace_ctx,
+                                    name="quality_gate",
+                                    metadata=normalize_observability_metadata(
+                                        {
+                                            "assistant_type": "global_assistant",
+                                            "gate": "court_practice_contract",
+                                            "gate_status": cp_gate.status,
+                                        },
+                                        step_name="court_practice_contract_gate",
+                                        status="passed" if cp_gate.allowed else "blocked",
+                                        citations_count=len(result.citations or []),
+                                    ),
+                                    output_payload={"metrics": cp_gate.metadata or {}, "message": cp_gate.message or ""},
+                                )
+                                if not cp_gate.allowed:
+                                    repair_sys = (
+                                        "Ты — редактор ответа режима «подбор судебной практики».\n"
+                                        "Перепиши ответ так, чтобы он строго соответствовал контракту:\n"
+                                        "- Только подборка судебных актов (карточки дел), без советов/рекомендаций.\n"
+                                        "- 2–6 карточек дел.\n"
+                                        "- Каждая карточка начинается bullet‑строкой с номером дела и [N].\n"
+                                        "- Внутри: «Что решил/сказал суд» (2–4 предложения, строго по источнику, [N]) "
+                                        "и «Почему релевантно» (1–2 предложения без домыслов).\n"
+                                        "- Все существенные тезисы — со ссылками [N].\n"
+                                        "Не добавляй новые факты."
+                                    )
+                                    repair_user = (
+                                        f"Доступные дела из источников: {', '.join(available_cases) if available_cases else '[не удалось извлечь номера]'}\n\n"
+                                        f"Исходный ответ:\n{full_response}\n"
+                                    )
+                                    inv2 = await llm.ainvoke(
+                                        [SystemMessage(content=repair_sys), HumanMessage(content=repair_user)],
+                                        config={"callbacks": callbacks} if callbacks else None,
+                                    )
+                                    full_response = _ainvoke_text(inv2) or full_response
+
+                                # 3) Stream final text in chunks (UX-friendly)
+                                for text_chunk in _chunk_for_stream_preserve_newlines(full_response, max_len=220) or [full_response]:
+                                    if text_chunk:
+                                        yield SSESerializer.text_delta(text_chunk)
+                                        await asyncio.sleep(0)
+                            else:
+                                async for chunk in llm.astream(
+                                    gen_messages,
+                                    config={"callbacks": callbacks} if callbacks else None,
+                                ):
+                                    r_delta = _reasoning_delta_from_chunk(chunk)
+                                    if config.YANDEX_SSE_STREAM_MODEL_REASONING and r_delta:
+                                        reasoning_progressive += r_delta
+                                        yield SSESerializer.reasoning(
+                                            phase="model_reasoning",
+                                            step=1,
+                                            total_steps=1,
+                                            content=reasoning_progressive,
+                                        )
+
+                                    token = _text_delta_from_llm_chunk(chunk)
+                                    if token:
+                                        full_response += token
+                                        yield SSESerializer.text_delta(token)
+                            if reasoning_progressive.strip():
+                                trace_contract_event(
+                                    trace_ctx,
+                                    name="llm_generation",
+                                    metadata=normalize_observability_metadata(
+                                        {"assistant_type": "global_assistant"},
+                                        step_name="model_reasoning_stream",
+                                        status="success",
+                                    ),
+                                    output_payload={"reasoning_content": reasoning_progressive},
+                                )
+                            if generation_span:
+                                generation_span.update(
+                                    output={
+                                        "response_chars": len(full_response),
+                                        "has_reasoning_stream": bool(reasoning_progressive.strip()),
+                                        "strict_court_practice": bool(strict_court_practice),
+                                    }
+                                )
+                            gen_step_out["response_chars"] = len(full_response)
+                        finally:
+                            if generation_span:
+                                try:
+                                    generation_span.end()
+                                except Exception:
+                                    logger.debug("global_chat_generation_stream span end failed", exc_info=True)
+                    if not (full_response or "").strip() and not strict_court_practice:
+                        try:
+                            inv = await llm.ainvoke(
+                                gen_messages,
+                                config={"callbacks": callbacks} if callbacks else None,
                             )
-                        if generation_span:
-                            generation_span.update(
-                                output={
-                                    "response_chars": len(full_response),
-                                    "has_reasoning_stream": bool(reasoning_progressive.strip()),
-                                }
+                            fb = _ainvoke_text(inv)
+                            if fb:
+                                full_response = fb
+                                yield SSESerializer.text_delta(fb)
+                        except Exception as inv_err:
+                            logger.warning(
+                                "global_chat generation ainvoke fallback failed: %s",
+                                inv_err,
+                                exc_info=True,
                             )
-                    finally:
-                        if generation_span:
-                            try:
-                                generation_span.end()
-                            except Exception:
-                                logger.debug("global_chat_generation_stream span end failed", exc_info=True)
-                    if not full_response:
+                    if not (full_response or "").strip():
                         # Fallback: do not leave UI with an empty assistant bubble.
                         if reasoning_progressive.strip():
                             fallback = (
@@ -1150,16 +1917,24 @@ async def assistant_global_chat(
                             full_response = fallback
                             yield SSESerializer.text_delta(fallback)
                         else:
+                            if trace_ctx and not trace_finished:
+                                end_trace(
+                                    trace_ctx,
+                                    status="error",
+                                    error="empty_generation_stream",
+                                    metadata={"sampled": sampled, "stream_started": stream_started},
+                                )
+                                trace_finished = True
                             yield SSESerializer.error("Модель не вернула текст ответа.")
                         return
                 elif full_response:
                     # Fallback for non-streamable branches
-                    text_chunks = _chunk_for_stream(full_response, max_len=220)
+                    text_chunks = _chunk_for_stream_preserve_newlines(full_response, max_len=220)
                     if not text_chunks:
                         yield SSESerializer.text_delta(full_response)
                     else:
                         for text_chunk in text_chunks:
-                            yield SSESerializer.text_delta(text_chunk + (" " if not text_chunk.endswith("\n") else ""))
+                            yield SSESerializer.text_delta(text_chunk)
                             await asyncio.sleep(0)
 
                 citations_out = result.citations or []
@@ -1180,7 +1955,7 @@ async def assistant_global_chat(
                         citations_count=len(citations_out or []),
                     ),
                 )
-                if not citation_gate.allowed:
+                if not citation_gate.allowed and not (recap_done and citations_out):
                     yield SSESerializer.status(
                         "quality_gate",
                         gate_status=citation_gate.status,
@@ -1222,6 +1997,16 @@ async def assistant_global_chat(
                         "citations_count": len(citations_out or []),
                     },
                 )
+                if full_response and should_sync_persist_before_finish():
+                    persist_job = GlobalAssistantPersistJob(
+                        session_id=current_session_id,
+                        content=full_response,
+                        citations=list(citations_out or []),
+                        last_user=question,
+                        last_assistant=full_response,
+                    )
+                    persist_committed = persist_global_assistant_sync(persist_job)
+                yield SSESerializer.finish()
 
             except Exception as e:
                 logger.error("Global chat LangGraph error: %s", e, exc_info=True)
@@ -1234,47 +2019,100 @@ async def assistant_global_chat(
                 trace_finished = True
                 yield SSESerializer.error(str(e))
             finally:
-                if full_response:
-                    try:
-                        save_span = trace_span(trace_ctx, name="global_chat_save_assistant_message")
-                        from app.utils.database import SessionLocal
-
-                        save_db = SessionLocal()
-                        try:
-                            asst_msg = GlobalAssistantMessage(
-                                session_id=current_session_id,
-                                role="assistant",
-                                content=full_response,
-                                reasoning_steps=[{"phase": "citations", "step": 1, "totalSteps": 1, "content": json.dumps(citations_out, ensure_ascii=False)}] if citations_out else None,
-                            )
-                            save_db.add(asst_msg)
-                            save_db.query(GlobalAssistantSession).filter(
-                                GlobalAssistantSession.id == current_session_id
-                            ).update({"updated_at": datetime.utcnow()})
-                            save_db.commit()
-                            if save_span:
-                                save_span.update(
-                                    output={
-                                        "saved": True,
-                                        "session_id": current_session_id,
-                                        "content_chars": len(full_response),
-                                    }
-                                )
-                        finally:
-                            save_db.close()
-                            if save_span:
-                                try:
-                                    save_span.end()
-                                except Exception:
-                                    logger.debug("global_chat_save_assistant_message span end failed", exc_info=True)
-                    except Exception as save_err:
-                        logger.error("Failed to save global assistant message: %s", save_err)
-                        trace_event(
-                            trace_ctx,
-                            name="global_chat_save_failed",
-                            level="ERROR",
-                            metadata={"error": str(save_err)},
+                if full_response and not persist_committed:
+                    with assistant_step_span(
+                        "global",
+                        "persist.assistant_message",
+                        input_payload={"content_chars": len(full_response)},
+                    ) as persist_out:
+                        persist_job = GlobalAssistantPersistJob(
+                            session_id=current_session_id,
+                            content=full_response,
+                            citations=list(citations_out or []),
+                            last_user=question,
+                            last_assistant=full_response,
                         )
+                        if assistant_async_persist_enabled():
+                            schedule_global_assistant_persist(persist_job)
+                            persist_out["persist_mode"] = "async"
+                            trace_contract_event(
+                                trace_ctx,
+                                name="response_persist_scheduled",
+                                metadata=normalize_observability_metadata(
+                                    {
+                                        "assistant_type": "global_assistant",
+                                        "session_id": current_session_id,
+                                        "persist_mode": "async",
+                                    },
+                                    step_name="save_assistant_message",
+                                    status="scheduled",
+                                    citations_count=len(citations_out or []),
+                                ),
+                                output_payload={"content_chars": len(full_response)},
+                            )
+                        else:
+                            try:
+                                save_span = trace_span(trace_ctx, name="global_chat_save_assistant_message")
+                                from app.utils.database import SessionLocal
+
+                                save_db = SessionLocal()
+                                try:
+                                    evidence_bundle = build_evidence_bundle(citations=citations_out or [])
+                                    asst_msg = GlobalAssistantMessage(
+                                        session_id=current_session_id,
+                                        role="assistant",
+                                        content=full_response,
+                                        reasoning_steps=[
+                                            {
+                                                "phase": "citations",
+                                                "step": 1,
+                                                "totalSteps": 1,
+                                                "content": json.dumps(citations_out, ensure_ascii=False),
+                                            }
+                                        ]
+                                        if citations_out
+                                        else None,
+                                        evidence=evidence_bundle,
+                                    )
+                                    save_db.add(asst_msg)
+                                    save_db.query(GlobalAssistantSession).filter(
+                                        GlobalAssistantSession.id == current_session_id
+                                    ).update({"updated_at": datetime.utcnow()})
+                                    save_db.commit()
+                                    refresh_session_context_after_turn(
+                                        save_db,
+                                        scope="global",
+                                        session_id=current_session_id,
+                                        last_user=question,
+                                        last_assistant=full_response,
+                                    )
+                                    persist_out["persist_mode"] = "sync"
+                                    if save_span:
+                                        save_span.update(
+                                            output={
+                                                "saved": True,
+                                                "session_id": current_session_id,
+                                                "content_chars": len(full_response),
+                                            }
+                                        )
+                                finally:
+                                    save_db.close()
+                                    if save_span:
+                                        try:
+                                            save_span.end()
+                                        except Exception:
+                                            logger.debug(
+                                                "global_chat_save_assistant_message span end failed",
+                                                exc_info=True,
+                                            )
+                            except Exception as save_err:
+                                logger.error("Failed to save global assistant message: %s", save_err)
+                                trace_event(
+                                    trace_ctx,
+                                    name="global_chat_save_failed",
+                                    level="ERROR",
+                                    metadata={"error": str(save_err)},
+                                )
                 if full_response and not trace_finished:
                     citation_result = "pending"
                     confidence_result = "pending"
@@ -1317,6 +2155,17 @@ async def assistant_global_chat(
                         output_payload={"response_chars": 0},
                         metadata={"sampled": sampled, "stream_started": stream_started},
                     )
+                if process_parent_token is not None:
+                    reset_trace_span_parent(process_parent_token)
+                if process_span:
+                    try:
+                        process_span.update(output={"response_chars": len(full_response or "")})
+                        process_span.end()
+                    except Exception:
+                        logger.debug(
+                            "global_chat_orchestrator_stream span end failed",
+                            exc_info=True,
+                        )
                 if trace_token is not None:
                     reset_active_trace_context(trace_token)
 

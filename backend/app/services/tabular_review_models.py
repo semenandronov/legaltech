@@ -1,13 +1,34 @@
 """Pydantic models for Tabular Review structured output"""
-from typing import Optional, Annotated, Dict
+from typing import Any, Optional, Dict
 from pydantic import BaseModel, Field, field_validator, model_validator
 from datetime import datetime
 import re
 import logging
 
 from app.services.date_validator import parse_and_normalize_date
+from app.services.document_type_labels import doc_type_display_label
 
 logger = logging.getLogger(__name__)
+
+
+def coerce_optional_int(value: Any) -> Optional[int]:
+    """Coerce LLM output (e.g. 'N/A', 'стр. 3') into optional int for Pydantic."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        stripped = value.strip().lower()
+        if stripped in ("", "n/a", "na", "none", "null", "-", "—", "–", "нет", "не указано"):
+            return None
+        match = re.search(r"\d+", stripped)
+        if match:
+            return int(match.group(0))
+    return None
 
 
 def validate_currency(value: str) -> str:
@@ -44,35 +65,6 @@ def validate_number(value: str) -> str:
 
 def validate_yes_no(value: str) -> str:
     """Validate and normalize yes/no value"""
-    # #region agent log
-    import json
-    import os
-    import logging
-    logger = logging.getLogger(__name__)
-    log_data = {
-        "timestamp": int(__import__('time').time() * 1000),
-        "location": "tabular_review_models.py:45",
-        "message": "validate_yes_no called",
-        "data": {
-            "input_value": value,
-            "input_type": str(type(value)),
-            "is_empty": not value,
-            "is_string": isinstance(value, str)
-        },
-        "sessionId": "debug-session",
-        "runId": "run1",
-        "hypothesisId": "G"
-    }
-    logger.info(f"[DEBUG] {json.dumps(log_data)}")
-    log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.cursor', 'debug.log')
-    try:
-        os.makedirs(os.path.dirname(log_path), exist_ok=True)
-        with open(log_path, 'a') as f:
-            f.write(json.dumps(log_data) + "\n")
-    except Exception:
-        pass
-    # #endregion
-    
     if not value or not isinstance(value, str):
         return "Unknown"
     
@@ -112,31 +104,7 @@ def validate_yes_no(value: str) -> str:
     for no_variant in no_variants:
         if no_variant in value_clean:
             return 'No'
-    
-    # #region agent log
-    import logging
-    logger = logging.getLogger(__name__)
-    log_data = {
-        "timestamp": int(__import__('time').time() * 1000),
-        "location": "tabular_review_models.py:95",
-        "message": "validate_yes_no returning Unknown",
-        "data": {
-            "value_clean": value_clean,
-            "original_value": value,
-            "reason": "not in yes or no lists"
-        },
-        "sessionId": "debug-session",
-        "runId": "run1",
-        "hypothesisId": "G"
-    }
-    logger.info(f"[DEBUG] {json.dumps(log_data)}")
-    try:
-        with open(log_path, 'a') as f:
-            f.write(json.dumps(log_data) + "\n")
-    except Exception:
-        pass
-    # #endregion
-    
+
     return 'Unknown'
 
 
@@ -167,6 +135,11 @@ class TabularCellExtractionModel(BaseModel):
     # Store column_type for validation
     column_type: Optional[str] = Field(None, description="Тип колонки для валидации (не сохраняется в БД)")
     
+    @field_validator('source_page', 'source_start_line', 'source_end_line', mode='before')
+    @classmethod
+    def validate_optional_int_fields(cls, v: Any) -> Optional[int]:
+        return coerce_optional_int(v)
+
     @field_validator('cell_value')
     @classmethod
     def validate_cell_value(cls, v: str, info) -> str:
@@ -229,58 +202,19 @@ class TabularCellExtractionModel(BaseModel):
                 self.normalized_value = original_value
         
         elif self.column_type == 'yes_no':
-            # #region agent log
-            import json
-            import os
-            log_data = {
-                "timestamp": int(__import__('time').time() * 1000),
-                "location": "tabular_review_models.py:231",
-                "message": "Validating yes_no value",
-                "data": {
-                    "original_value": original_value,
-                    "original_value_type": str(type(original_value)),
-                    "original_value_lower": original_value.lower() if original_value else None
-                },
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "F"
-            }
-            logger.info(f"[DEBUG] {json.dumps(log_data)}")
-            log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.cursor', 'debug.log')
-            try:
-                os.makedirs(os.path.dirname(log_path), exist_ok=True)
-                with open(log_path, 'a') as f:
-                    f.write(json.dumps(log_data) + "\n")
-            except Exception:
-                pass
-            # #endregion
-            
             validated = validate_yes_no(original_value)
-            
-            # #region agent log
-            log_data = {
-                "timestamp": int(__import__('time').time() * 1000),
-                "location": "tabular_review_models.py:255",
-                "message": "After validate_yes_no",
-                "data": {
-                    "validated_value": validated,
-                    "original_value": original_value
-                },
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "F"
-            }
-            logger.info(f"[DEBUG] {json.dumps(log_data)}")
-            try:
-                with open(log_path, 'a') as f:
-                    f.write(json.dumps(log_data) + "\n")
-            except Exception:
-                pass
-            # #endregion
-            
             self.cell_value = validated
             self.normalized_value = validated.lower()
-        
+
+        elif self.column_type == 'document_type':
+            code = original_value.strip().lower().replace(" ", "_")
+            if code in ("n/a", "na", "нет", "неизвестно", "unknown"):
+                self.cell_value = "N/A"
+                self.normalized_value = "N/A"
+            else:
+                self.normalized_value = code
+                self.cell_value = doc_type_display_label(code)
+
         else:
             # For text, verbatim, tags - no validation needed, just normalize
             self.cell_value = original_value

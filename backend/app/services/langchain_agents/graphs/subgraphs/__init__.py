@@ -8,7 +8,6 @@ Sub-graphs обеспечивают:
 - Параллельное выполнение через Send API
 
 Доступные sub-graphs:
-- file_extraction: Извлечение данных из одного файла (TabularGraph)
 - rag_retrieval: RAG поиск в документах дела
 - thinking: Пошаговое мышление (deep_think)
 
@@ -34,12 +33,6 @@ def dispatch_retrievals(state):
 ```
 """
 
-from app.services.langchain_agents.graphs.subgraphs.file_extraction import (
-    FileExtractionState,
-    create_file_extraction_subgraph,
-    create_initial_file_extraction_state,
-)
-
 from app.services.langchain_agents.graphs.subgraphs.rag_retrieval import (
     RAGRetrievalState,
     create_rag_retrieval_subgraph,
@@ -54,10 +47,6 @@ from app.services.langchain_agents.graphs.subgraphs.thinking import (
 )
 
 __all__ = [
-    # File Extraction
-    "FileExtractionState",
-    "create_file_extraction_subgraph",
-    "create_initial_file_extraction_state",
     # RAG Retrieval
     "RAGRetrievalState",
     "create_rag_retrieval_subgraph",
@@ -68,4 +57,3 @@ __all__ = [
     "create_thinking_subgraph",
     "create_initial_thinking_state",
 ]
-

@@ -7,6 +7,7 @@ import functools
 from typing import List
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import Form
 from fastapi.responses import Response
 
 from app.models.user import User
@@ -27,7 +28,14 @@ def _safe_job_filename(name: str) -> str:
     return n or "document"
 
 
-async def _run_legal_corpus_job(*, job_id: str, file_paths: List[str], file_names: List[str], user_id: str) -> None:
+async def _run_legal_corpus_job(
+    *,
+    job_id: str,
+    file_paths: List[str],
+    file_names: List[str],
+    user_id: str,
+    instrument_id: str | None = None,
+) -> None:
     """
     Background worker for legal corpus indexing.
     Writes progress into in-memory job store (SSE queue).
@@ -77,6 +85,7 @@ async def _run_legal_corpus_job(*, job_id: str, file_paths: List[str], file_name
                     content,
                     name,
                     created_by_user_id=user_id,
+                    instrument_id=instrument_id,
                     progress_cb=_cb,
                 )
             )
@@ -193,9 +202,23 @@ async def legal_corpus_files(current_user: User = Depends(get_current_user)):
     return {"files": files}
 
 
+@router.get("/api/v2/legal-corpus/instruments")
+async def legal_corpus_instruments(current_user: User = Depends(get_current_user)):
+    """
+    Справочник актов для загрузки/роутинга: instrument_id -> label/aliases.
+    Доступен любому авторизованному пользователю (чтобы UI мог отрисовать список),
+    но загружать файлы всё равно могут только uploader-аккаунты.
+    """
+    _ = current_user
+    from app.services.legal_instruments import list_instruments_for_api
+
+    return {"instruments": list_instruments_for_api()}
+
+
 @router.post("/api/v2/legal-corpus/upload-job")
 async def legal_corpus_upload_job(
     files: List[UploadFile] = File(...),
+    instrument_id: str | None = Form(None),
     current_user: User = Depends(get_current_user),
 ):
     """
@@ -246,6 +269,7 @@ async def legal_corpus_upload_job(
             file_paths=file_paths,
             file_names=file_names,
             user_id=str(current_user.id),
+            instrument_id=instrument_id,
         )
     )
     return {"job_id": job.job_id, "status": job.status, "total_files": job.total_files}

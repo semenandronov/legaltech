@@ -147,7 +147,7 @@ class DraftHandler:
         """Единая сборка текста шаблона для draft_graph_agent."""
         from app.services.draft_template_context import resolve_draft_template_context
 
-        text, label = resolve_draft_template_context(
+        text, label, _template_key = resolve_draft_template_context(
             self.db,
             template_system_id=template_system_id,
             template_file_content=template_file_content,

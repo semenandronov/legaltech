@@ -160,6 +160,7 @@ class ChatRequest:
     # Режимы (взаимоисключающие в UI)
     web_search: bool = False
     legal_research: bool = False  # СПРАВОЧНИК
+    court_practice: bool = False    # Судебная практика (корпус ВС/КС и т.д.)
     deep_think: bool = False      # GigaChat Pro + Thinking
     draft_mode: bool = False      # Создание документов
     
@@ -195,6 +196,12 @@ class ChatRequest:
     clarification_needed: bool = False
     budget_profile: Optional[Dict[str, Any]] = None
     corpus_size: int = 0
+    retrieval_task: Optional[Dict[str, Any]] = None
+    scoped_file_ids: Optional[List[str]] = None
+    scoped_doc_type: Optional[str] = None
+    # Session Context Service (case + global): prompt + meta for LangGraph state
+    session_context_prompt: Optional[str] = None
+    session_context_meta: Optional[Dict[str, Any]] = None
     # Явное действие UI: одобрить / отклонить план без двусмысленного текста в чате
     draft_action: Optional[str] = None
 
@@ -881,6 +888,7 @@ class ChatOrchestrator:
                 user=request.current_user,
                 deep_think=False,
                 legal_research=request.legal_research,
+                court_practice=bool(request.court_practice),
                 draft_mode=True,
                 document_context=request.document_context,
                 document_id=request.document_id,
@@ -898,6 +906,9 @@ class ChatOrchestrator:
                 budget_profile=request.budget_profile,
                 corpus_size=request.corpus_size,
                 clarification_needed=bool(request.clarification_needed),
+                retrieval_task=request.retrieval_task,
+                scoped_file_ids=request.scoped_file_ids,
+                scoped_doc_type=request.scoped_doc_type,
             ):
                 yield event
             return
@@ -929,6 +940,7 @@ class ChatOrchestrator:
                 user=request.current_user,
                 deep_think=bool(request.deep_think),
                 legal_research=bool(request.legal_research),
+                court_practice=bool(request.court_practice),
                 draft_mode=False,
                 document_context=None,
                 document_id=None,
@@ -946,6 +958,11 @@ class ChatOrchestrator:
                 budget_profile=request.budget_profile,
                 corpus_size=request.corpus_size,
                 clarification_needed=bool(request.clarification_needed),
+                retrieval_task=request.retrieval_task,
+                scoped_file_ids=request.scoped_file_ids,
+                scoped_doc_type=request.scoped_doc_type,
+                session_context_prompt=request.session_context_prompt,
+                session_context_meta=request.session_context_meta,
             ):
                 yield event
             return

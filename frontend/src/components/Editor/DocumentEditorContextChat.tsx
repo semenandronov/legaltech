@@ -1,15 +1,21 @@
 "use client"
 
 import React, { useState, useCallback, useRef, KeyboardEvent, useEffect } from "react"
-import { chatOverDocument } from "@/services/documentEditorApi"
+import {
+  streamDocumentChat,
+  warmupEditorChat,
+  createEditorChatSession,
+} from "@/services/documentEditorApi"
 import type { StructuredEdit } from "@/services/documentEditorApi"
+import { buildEditorContextForChat } from "@/utils/editorContextWindow"
+import { applyHybridEditWithFeedback } from "@/utils/applyHybridEdit"
 import { getCaseFiles, UploadedFile } from "@/services/api"
 import { toast } from "sonner"
 import { Loader } from "@/components/ai-elements/loader"
 import {
   Check, Edit3, HelpCircle, FileText,
   Sparkles, ListPlus, ArrowRight, ChevronDown, ChevronUp, X, Paperclip,
-  BookOpen, ChevronRight, Mic, MicOff
+  BookOpen, ChevronRight, Mic, MicOff, MessageSquarePlus,
 } from "lucide-react"
 
 // ==================== TYPES ====================
@@ -52,6 +58,7 @@ interface DocumentEditorContextChatProps {
   onReplaceText?: (original: string, newText: string) => boolean
   onReplaceAllText?: (original: string, newText: string) => number
   onReplaceRange?: (from: number, to: number, text: string) => void
+  onReplaceNodeById?: (nodeId: string, newText: string) => boolean
   onRunPlaybook?: () => void
   caseId?: string
   pendingPlaybookResult?: PlaybookResult | null
@@ -60,6 +67,8 @@ interface DocumentEditorContextChatProps {
   selectionRange?: { from: number; to: number } | null
   onClearSelection?: () => void
   onScrollToText?: (text: string, nthOccurrence?: number) => boolean
+  onReplaceTextFuzzy?: (original: string, newText: string) => boolean
+  getDocumentContextForChat?: () => string
 }
 
 interface Message {
@@ -253,7 +262,7 @@ type Item =
 function buildItems(edits: StructuredEdit[], docContent: string | undefined): Item[] {
   return edits.flatMap((edit): Item[] => {
     const isFound = edit.found_in_document !== false
-    const occs = (edit.replace_all && isFound && docContent)
+    const occs = (edit.replace_all && isFound && docContent && edit.original_text?.trim())
       ? findOccurrencesWithContext(edit.original_text, docContent)
       : []
     if (occs.length > 1) {
@@ -399,9 +408,9 @@ const StructuredEditsBlock: React.FC<{
               </div>
               <div className="flex items-center justify-between gap-2 px-3 pb-2.5 pt-1 border-t" style={{ borderColor: '#ebebeb' }}>
                 {/* Left: scroll to text */}
-                {onScrollToText && !status && (
+                {onScrollToText && edit.original_text && !status && (
                   <button
-                    onClick={() => onScrollToText(edit.original_text, occIdx)}
+                    onClick={() => onScrollToText(edit.original_text!, occIdx)}
                     className="flex items-center gap-1 text-xs transition-opacity hover:opacity-70"
                     style={{ color: 'var(--color-text-tertiary, #9ca3af)' }}
                   >
@@ -431,25 +440,36 @@ const StructuredEditsBlock: React.FC<{
         const { edit } = item
         const isFound = edit.found_in_document !== false
         const status = statuses[edit.id]
-        const singleCtx = (isFound && documentContent)
+        const singleCtx = (isFound && documentContent && edit.original_text)
           ? findOccurrencesWithContext(edit.original_text, documentContent)[0]
           : undefined
         return (
           <div key={edit.id} className="rounded-xl border overflow-hidden" style={{ borderColor: '#e5e7eb', background: '#f5f5f5' }}>
             <div className="px-3 pt-2.5 pb-1.5">
+              {edit.node_id && (
+                <div className="mb-1.5">
+                  <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 border border-indigo-100">
+                    блок {edit.node_id.slice(0, 12)}{edit.node_id.length > 12 ? '…' : ''}
+                  </span>
+                </div>
+              )}
               <div className="px-2 py-2 rounded-md text-xs leading-relaxed break-words" style={{ background: 'rgba(0,0,0,0.03)', lineHeight: '1.7' }}>
                 {singleCtx?.before && <span style={{ color: '#9ca3af' }}>…{singleCtx.before}</span>}
-                {renderInlineDiff(edit.original_text, edit.new_text)}
+                {edit.original_text
+                  ? renderInlineDiff(edit.original_text, edit.new_text)
+                  : <span style={{ color: '#2563eb', fontWeight: 500 }}>{edit.new_text}</span>}
                 {singleCtx?.after && <span style={{ color: '#9ca3af' }}>{singleCtx.after}…</span>}
               </div>
               {!isFound && !status && (
-                <div className="text-xs text-amber-600 mt-1.5">⚠ Фрагмент не найден в документе</div>
+                <div className="text-xs text-amber-600 mt-1.5">
+                  {edit.node_id ? '⚠ Блок не найден в документе' : '⚠ Фрагмент не найден в документе'}
+                </div>
               )}
             </div>
             <div className="flex items-center justify-between gap-2 px-3 pb-2.5 pt-1 border-t" style={{ borderColor: '#ebebeb' }}>
-              {onScrollToText && isFound && !status && (
+              {onScrollToText && isFound && edit.original_text && !status && (
                 <button
-                  onClick={() => onScrollToText(edit.original_text, 0)}
+                  onClick={() => onScrollToText(edit.original_text!, 0)}
                   className="flex items-center gap-1 text-xs transition-opacity hover:opacity-70"
                   style={{ color: 'var(--color-text-tertiary, #9ca3af)' }}
                 >
@@ -675,6 +695,7 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
   onReplaceText,
   onReplaceAllText,
   onReplaceRange,
+  onReplaceNodeById,
   onRunPlaybook,
   caseId,
   pendingPlaybookResult,
@@ -683,6 +704,8 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
   selectionRange,
   onClearSelection,
   onScrollToText,
+  onReplaceTextFuzzy,
+  getDocumentContextForChat,
 }) => {
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(false)
@@ -692,7 +715,10 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
   const [showTemplates, setShowTemplates] = useState(false)
   const [showFilesPicker, setShowFilesPicker] = useState(false)
   const [caseFiles, setCaseFiles] = useState<UploadedFile[]>([])
+  const [attachedFileIds, setAttachedFileIds] = useState<string[]>([])
   const [loadingFiles, setLoadingFiles] = useState(false)
+  const [editorSessionId, setEditorSessionId] = useState<string | undefined>(undefined)
+  const [startingNewDialog, setStartingNewDialog] = useState(false)
   // Locked selection: captured from editor when user starts typing in chat
   const [activeSelection, setActiveSelection] = useState<string>('')
   const [activeSelectionRange, setActiveSelectionRange] = useState<{ from: number; to: number } | null>(null)
@@ -738,6 +764,52 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  // Чат редактора только на время открытой страницы — не пишем в историю ассистента.
+  useEffect(() => {
+    return () => {
+      setMessages([])
+      setAttachedFileIds([])
+      setInputValue('')
+      setEditorSessionId(undefined)
+    }
+  }, [])
+
+  // Прогрев LangGraph при открытии редактора (снижает задержку первого сообщения).
+  useEffect(() => {
+    if (!caseId || !documentId) return
+    let cancelled = false
+    warmupEditorChat(documentId, caseId, editorSessionId)
+      .then((res) => {
+        if (!cancelled && res.session_id) {
+          setEditorSessionId(res.session_id)
+        }
+      })
+      .catch(() => {
+        /* warmup best-effort */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [caseId, documentId])
+
+  const handleNewDialog = useCallback(async () => {
+    if (!caseId || startingNewDialog) return
+    setStartingNewDialog(true)
+    try {
+      const res = await createEditorChatSession(documentId, caseId)
+      setEditorSessionId(res.session_id)
+      setMessages([])
+      setEditStatuses({})
+      setAttachedFileIds([])
+      setInputValue('')
+      await warmupEditorChat(documentId, caseId, res.session_id)
+    } catch {
+      toast.error('Не удалось начать новый диалог')
+    } finally {
+      setStartingNewDialog(false)
+    }
+  }, [caseId, documentId, startingNewDialog])
 
   // Inject playbook result as a chat message
   useEffect(() => {
@@ -820,9 +892,18 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
     }
   }, [caseId, caseFiles.length, showFilesPicker])
 
+  const MAX_ATTACHED_FILES = 3
+
   const handleAttachFile = (file: UploadedFile) => {
+    if (attachedFileIds.length >= MAX_ATTACHED_FILES) {
+      toast.error(`Можно прикрепить не более ${MAX_ATTACHED_FILES} файлов`)
+      return
+    }
     const tag = `[Файл: ${file.filename}]`
     setInputValue((prev) => prev ? `${prev}\n${tag}` : tag)
+    setAttachedFileIds((prev) =>
+      prev.includes(file.id) ? prev : [...prev, file.id],
+    )
     setShowFilesPicker(false)
     textareaRef.current?.focus()
   }
@@ -846,60 +927,130 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
     setInputValue('')
     if (selectionSnapshot) clearActiveSelection()
 
+    const assistantId = `assistant-${Date.now()}`
+    setMessages((prev) => [...prev, {
+      id: assistantId,
+      role: 'assistant',
+      content: '',
+      mode,
+      selectionRange: selectionRangeSnapshot || undefined,
+    }])
+
+    const contextHtml = selectionSnapshot.trim()
+      ? buildEditorContextForChat(documentContent || '', {
+          selectedText: selectionSnapshot,
+        }).html
+      : (getDocumentContextForChat?.() ??
+        buildEditorContextForChat(documentContent || '').html)
+
     try {
-      const response = await chatOverDocument(documentId, text.trim(), {
-        currentContent: documentContent,
-        mode,
-        selectedText: selectionSnapshot || undefined,
-      })
-
-      // Strip any residual code blocks from the displayed answer
-      const cleanAnswer = response.answer
-        .replace(/```(?:html|edit|)\s*\n[\s\S]*?\n?```/gi, '')
-        .replace(/```[\s\S]*?```/g, '')
-        .trim() || "Изменения готовы."
-
-      // Draft mode: show preview with accept/reject before inserting
-      if (mode === 'draft' && cleanAnswer) {
-        setMessages((prev) => [...prev, {
-          id: `assistant-${Date.now()}`,
-          role: "assistant",
-          content: '',
+      const response = await streamDocumentChat(
+        documentId,
+        text.trim(),
+        {
+          currentContent: contextHtml,
           mode,
-          draftInsertedText: cleanAnswer,
-          selectionRange: selectionRangeSnapshot || undefined,
-        }])
+          selectedText: selectionSnapshot || undefined,
+          selectionRange: selectionRangeSnapshot ?? undefined,
+          attachedFileIds: attachedFileIds.length ? attachedFileIds : undefined,
+          sessionId: editorSessionId,
+        },
+        {
+          onTurnStarted: () => {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId
+                  ? { ...m, content: '', structuredEdits: undefined }
+                  : m,
+              ),
+            )
+          },
+          onContentSync: (content) => {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId ? { ...m, content } : m,
+              ),
+            )
+          },
+          onTextDelta: (delta) => {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId ? { ...m, content: m.content + delta } : m,
+              ),
+            )
+          },
+          onStructuredEdits: (edits) => {
+            if (mode !== 'edit') return
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId ? { ...m, structuredEdits: edits } : m,
+              ),
+            )
+          },
+          onCitations: (citations) => {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId ? { ...m, citations } : m,
+              ),
+            )
+          },
+          onEditedContent: (content) => {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId ? { ...m, editedContent: content } : m,
+              ),
+            )
+          },
+        },
+      )
+
+      const cleanAnswer = response.answer.trim() || 'Изменения готовы.'
+
+      if (mode === 'draft' && cleanAnswer) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId
+              ? {
+                  ...m,
+                  content: '',
+                  draftInsertedText: cleanAnswer,
+                  selectionRange: selectionRangeSnapshot || undefined,
+                }
+              : m,
+          ),
+        )
         return
       }
 
-      const assistantMessage: Message = {
-        id: `assistant-${Date.now()}`,
-        role: "assistant",
-        content: cleanAnswer,
-        citations: response.citations,
-        editedContent: response.edited_content,
-        structuredEdits: response.structured_edits && response.structured_edits.length > 0
-          ? response.structured_edits
-          : undefined,
-        mode,
-        selectionRange: selectionRangeSnapshot || undefined,
-      }
-
-      setMessages((prev) => [...prev, assistantMessage])
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantId
+            ? {
+                ...m,
+                content: cleanAnswer,
+                citations: response.citations,
+                editedContent: response.edited_content,
+                structuredEdits:
+                  mode === 'edit' && response.structured_edits?.length
+                    ? response.structured_edits
+                    : undefined,
+              }
+            : m,
+        ),
+      )
     } catch (err: any) {
       toast.error("Ошибка: " + (err.message || "Не удалось получить ответ"))
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `assistant-error-${Date.now()}`,
-          role: "assistant",
-          content: "Извините, произошла ошибка при обработке запроса.",
-        },
-      ])
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantId
+            ? { ...m, content: "Извините, произошла ошибка при обработке запроса." }
+            : m,
+        ),
+      )
     } finally {
       setIsLoading(false)
     }
-  }, [documentId, isLoading, mode, documentContent, activeSelection, activeSelectionRange, onReplaceRange])
+  }, [documentId, isLoading, mode, documentContent, activeSelection, activeSelectionRange, attachedFileIds, getDocumentContextForChat, onReplaceRange])
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -940,54 +1091,52 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
     }))
   }
 
-  const handleAcceptEdit = (messageId: string, edit: StructuredEdit) => {
-    const msg = messages.find(m => m.id === messageId)
-    if (msg?.selectionRange && onReplaceRange) {
-      onReplaceRange(msg.selectionRange.from, msg.selectionRange.to, edit.new_text)
-      setStatus(messageId, edit.id, 'accepted')
-      toast.success('Правка принята')
-    } else if (edit.replace_all && onReplaceAllText) {
-      const count = onReplaceAllText(edit.original_text, edit.new_text)
-      if (count > 0) {
-        setStatus(messageId, edit.id, 'accepted')
-        toast.success(`Правка принята (${count} замен)`)
-      } else {
-        toast.error('Не удалось найти фрагмент в документе')
-      }
-    } else if (onReplaceText) {
-      const success = onReplaceText(edit.original_text, edit.new_text)
-      if (success) {
-        setStatus(messageId, edit.id, 'accepted')
-        toast.success('Правка принята')
-      } else {
-        toast.error('Не удалось найти фрагмент в документе')
-      }
-    }
+  const hybridHandlers = {
+    onReplaceNodeById,
+    onReplaceRange,
+    onReplaceText,
+    onReplaceTextFuzzy,
+    onReplaceAllText,
   }
 
-  const handleAcceptAllEdits = (messageId: string, edits: StructuredEdit[]) => {
+  const handleAcceptEdit = async (messageId: string, edit: StructuredEdit) => {
     const msg = messages.find(m => m.id === messageId)
-    const pendingEdits = edits.filter(e => e.found_in_document !== false && !editStatuses[messageId]?.[e.id])
-
-    if (msg?.selectionRange && onReplaceRange && pendingEdits.length === 1) {
-      onReplaceRange(msg.selectionRange.from, msg.selectionRange.to, pendingEdits[0].new_text)
-      setStatus(messageId, pendingEdits[0].id, 'accepted')
+    const result = applyHybridEditWithFeedback(edit, msg, hybridHandlers)
+    if (result.success) {
+      setStatus(messageId, edit.id, 'accepted')
       toast.success('Правка принята')
       return
     }
+    if (result.copyText && navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(result.copyText)
+        toast.error(result.failureMessage || 'Не удалось применить правку', {
+          description: 'Новый текст скопирован в буфер обмена.',
+        })
+      } catch {
+        toast.error(result.failureMessage || 'Не удалось применить правку')
+      }
+    } else {
+      toast.error(result.failureMessage || 'Не удалось применить правку')
+    }
+  }
 
-    if (!onReplaceText && !onReplaceAllText) return
+  const handleAcceptAllEdits = async (messageId: string, edits: StructuredEdit[]) => {
+    const msg = messages.find(m => m.id === messageId)
+    const pendingEdits = edits.filter(e => e.found_in_document !== false && !editStatuses[messageId]?.[e.id])
+
     let applied = 0
     for (const edit of pendingEdits) {
-      const success = edit.replace_all && onReplaceAllText
-        ? onReplaceAllText(edit.original_text, edit.new_text) > 0
-        : onReplaceText?.(edit.original_text, edit.new_text) ?? false
-      if (success) {
+      const result = applyHybridEditWithFeedback(edit, msg, hybridHandlers)
+      if (result.success) {
         setStatus(messageId, edit.id, 'accepted')
         applied++
       }
     }
     if (applied > 0) toast.success(`Принято правок: ${applied}`)
+    if (applied < pendingEdits.length) {
+      toast.error(`Не применено: ${pendingEdits.length - applied}. Скопируйте текст вручную.`)
+    }
   }
 
   const handleDismissEdit = (messageId: string, editId: string) => {
@@ -1002,9 +1151,20 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
 
       {/* ── Header ── */}
       <div className="px-4 pt-4 pb-3 border-b shrink-0" style={{ borderColor: '#e5e7eb', height: '54px' }}>
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">AI Ассистент</span>
-          <span className="text-xs text-gray-400 truncate max-w-[160px]">{documentTitle}</span>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider shrink-0">AI Ассистент</span>
+          <div className="flex items-center gap-1 min-w-0">
+            <button
+              type="button"
+              onClick={() => void handleNewDialog()}
+              disabled={!caseId || startingNewDialog || isLoading}
+              title="Новый диалог"
+              className="shrink-0 p-1 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 disabled:opacity-40"
+            >
+              <MessageSquarePlus className="w-3.5 h-3.5" />
+            </button>
+            <span className="text-xs text-gray-400 truncate max-w-[120px]">{documentTitle}</span>
+          </div>
         </div>
       </div>
 
@@ -1119,7 +1279,9 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
         {showFilesPicker && (
           <div className="mx-3 mb-2 rounded-xl border bg-white shadow-sm overflow-hidden" style={{ borderColor: '#e5e7eb' }}>
             <div className="flex items-center justify-between px-3 py-2 border-b" style={{ borderColor: '#e5e7eb' }}>
-              <span className="text-xs font-semibold text-gray-500">Файлы дела</span>
+              <span className="text-xs font-semibold text-gray-500">
+                Файлы дела (до {MAX_ATTACHED_FILES})
+              </span>
               <button onClick={() => setShowFilesPicker(false)} className="text-gray-400 hover:text-gray-600">
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -1182,6 +1344,32 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
 
         {/* Selection chip hidden — activeSelection is kept in state for prompt context */}
 
+        {attachedFileIds.length > 0 && (
+          <div className="mx-3 mb-2 flex flex-wrap gap-1.5">
+            {attachedFileIds.map((fileId) => {
+              const file = caseFiles.find((f) => f.id === fileId)
+              const label = file?.filename || fileId.slice(0, 8)
+              return (
+                <span
+                  key={fileId}
+                  className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100"
+                >
+                  <Paperclip className="w-3 h-3" />
+                  {label}
+                  <button
+                    type="button"
+                    onClick={() => setAttachedFileIds((prev) => prev.filter((id) => id !== fileId))}
+                    className="hover:text-indigo-900"
+                    aria-label="Убрать файл"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              )
+            })}
+          </div>
+        )}
+
         {/* Input box */}
         <div className="px-3 pt-3 pb-2">
           <div className="rounded-2xl border bg-gray-50 overflow-hidden transition-shadow focus-within:shadow-sm focus-within:border-gray-300" style={{ borderColor: '#e5e7eb' }}>
@@ -1242,7 +1430,7 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
                       return (
                         <button
                           key={key}
-                          onClick={() => { setMode(key); setInputValue(''); setShowModeDropdown(false); setModeDropdownPos(null) }}
+                          onClick={() => { setMode(key); setShowModeDropdown(false); setModeDropdownPos(null) }}
                           className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-gray-50 transition-colors"
                           style={{ color: isActive ? cfg.color : '#374151' }}
                         >

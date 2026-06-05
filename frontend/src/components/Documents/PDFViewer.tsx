@@ -29,7 +29,7 @@ import {
 } from '@mui/icons-material'
 import './Documents.css'
 
-/** Сначала подсветка текста в text layer; если фрагмент не найден — оверлей по bbox (как в chunk-lab при наличии координат). */
+/** При наличии bbox из Docling — только оверлей по координатам; text layer без bbox (сканы). */
 const PDF_CITATION_HIGHLIGHT = {
   fill: 'rgba(250, 204, 21, 0.42)',
   border: '1px solid rgba(234, 179, 8, 0.6)',
@@ -38,6 +38,66 @@ const PDF_CITATION_HIGHLIGHT = {
 
 // Set up PDF.js worker
 pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`
+
+/** Должен совпадать с тем, как ниже склеиваются строки при полнодокументном поиске цитаты. */
+function normPdfPlain(s: string) {
+  return s
+    .replace(/\u00a0/g, ' ')
+    .replace(/\u00ad/g, '')
+    .replace(/[\u200b\u200c\u200d\ufeff]/g, '')
+    .toLowerCase()
+    .replace(/[«»""„''‟]/g, ' ')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** Тот же порядок чтения страницы, что и подсветка: сортировка по PDF y,x, затем norm целиком на join(raw). */
+function normPageTextFromPdfItems(items: any[]): string {
+  type Raw = { str: string; tx: number; ty: number }
+  const raw: Raw[] = []
+  items.forEach((item) => {
+    if (!item?.str?.trim()) return
+    const [,,,, tx, ty] = item.transform || [1, 0, 0, 1, 0, 0]
+    if (Math.abs(tx) < 1 && Math.abs(ty) < 1) return
+    raw.push({ str: String(item.str), tx, ty })
+  })
+  raw.sort((a, b) => {
+    const tyDiff = b.ty - a.ty
+    if (Math.abs(tyDiff) > 8) return tyDiff
+    return a.tx - b.tx
+  })
+  return normPdfPlain(raw.map((r) => r.str).join(' '))
+}
+
+function buildPdfCitationProbes(rawHighlight: string): string[] {
+  const hlNorm = normPdfPlain(rawHighlight)
+  if (hlNorm.length < 2) return []
+  const hlWords = hlNorm.split(/\s+/).filter(Boolean)
+  const probes: string[] = []
+  const seen = new Set<string>()
+  const add = (s: string) => {
+    if (s.length < 2 || seen.has(s)) return
+    seen.add(s)
+    probes.push(s)
+  }
+  add(hlNorm)
+  add(hlNorm.slice(0, Math.min(hlNorm.length, 200)))
+  add(hlNorm.slice(0, 160))
+  add(hlNorm.slice(0, 120))
+  add(hlNorm.slice(0, 80))
+  add(hlNorm.slice(0, 50))
+  add(hlWords.slice(0, 12).join(' '))
+  add(hlWords.slice(0, 8).join(' '))
+  add(hlWords.slice(0, 6).join(' '))
+  add(hlWords.slice(0, 4).join(' '))
+  add(hlWords.slice(0, 3).join(' '))
+  add(hlWords.slice(0, 2).join(' '))
+  for (let i = 0; i < hlWords.length - 3; i++) {
+    add(hlWords.slice(i, i + 4).join(' '))
+  }
+  return probes
+}
 
 type PdfBBoxCompat = { x0?: number; y0?: number; x1?: number; y1?: number }
 
@@ -63,6 +123,13 @@ interface PDFViewerProps {
     [key: string]: any
   }
   fileApiBase?: string
+  /** When highlightPage / bbox absent, scan pdf.js text on every page until highlightText matches (chat citations). */
+  expandHighlightSearchAllPages?: boolean
+  /** Доп. строки для поиска в text layer (например quote после text_preview в ассистенте). */
+  highlightTextCandidates?: string[]
+  /** Превью цитаты в чате: без поля поиска и без печати. */
+  showDocumentSearch?: boolean
+  showPrint?: boolean
 }
 
 const PDFViewer: React.FC<PDFViewerProps> = ({
@@ -82,8 +149,27 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   showAbout = false,
   metadata,
   fileApiBase,
+  expandHighlightSearchAllPages = false,
+  highlightTextCandidates,
+  showDocumentSearch = true,
+  showPrint = true,
 }) => {
   const apiBase = fileApiBase ?? `/api/cases/${caseId}`
+
+  const highlightSearchStrings = useMemo(() => {
+    const extra = (highlightTextCandidates ?? []).map((s) => String(s).trim()).filter((s) => s.length >= 2)
+    const primary = highlightText?.trim() ? highlightText.trim() : ''
+    const out: string[] = []
+    const seen = new Set<string>()
+    const add = (s: string) => {
+      if (s.length < 2 || seen.has(s)) return
+      seen.add(s)
+      out.push(s)
+    }
+    add(primary)
+    extra.forEach(add)
+    return out
+  }, [highlightText, highlightTextCandidates])
   const [numPages, setNumPages] = useState<number | null>(null)
   const [pageNumber, setPageNumber] = useState(initialPage || 1)
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
@@ -100,6 +186,9 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   const [pageTextItems, setPageTextItems] = useState<any[]>([])
   const [highlightItemIndices, setHighlightItemIndices] = useState<number[]>([])
   const [derivedPageBBox, setDerivedPageBBox] = useState<{ width: number; height: number } | null>(null)
+  const pdfDocRef = useRef<{ getPage: (n: number) => Promise<any>; numPages: number } | null>(null)
+  /** Avoid stale closures in deferred full-document scan timeouts. */
+  const highlightMatchRef = useRef(false)
 
   useEffect(() => {
     loadPDF()
@@ -122,6 +211,10 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
     setHighlightItemIndices([])
   }, [pageNumber, fileId])
 
+  useEffect(() => {
+    highlightMatchRef.current = highlightItemIndices.length > 0
+  }, [highlightItemIndices])
+
   const handlePageLoadSuccess = (page: any) => {
     try {
       const viewport = page?.getViewport?.({ scale: 1 })
@@ -139,13 +232,6 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
     const items = (textContent.items as any[]).filter(item => 'str' in item)
     setPageTextItems(items)
   }
-
-  const normText = (s: string) =>
-    s.toLowerCase()
-      .replace(/[«»""„''‟]/g, ' ')
-      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
 
   const bboxRegionsToDraw = useMemo((): PdfBBoxCompat[] => {
     if (highlightBBoxRegions && highlightBBoxRegions.length > 0) {
@@ -177,29 +263,27 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   const pageW = effectivePageBBox?.width
   const pageH = effectivePageBBox?.height
 
-  const preferTextHighlight = (highlightText?.trim().length ?? 0) >= 2
-  const textLayerReady = pageTextItems.length > 0
-  const textMatchFound = highlightItemIndices.length > 0
-  /** Не показывать bbox, пока ждём text layer (если хотим искать по тексту). */
-  const waitingTextLayer = preferTextHighlight && !textLayerReady
+  const hasCitationBbox = bboxRegionsToDraw.length > 0
+  /** Текстовый поиск только если координат нет (скан); иначе bbox стабильнее и не «сужается» через несколько секунд. */
+  const preferTextHighlight = highlightSearchStrings.length > 0 && !hasCitationBbox
 
   const useBboxHighlight =
-    !waitingTextLayer &&
-    bboxRegionsToDraw.length > 0 &&
+    hasCitationBbox &&
     typeof pageW === 'number' &&
     typeof pageH === 'number' &&
     pageW > 0 &&
     pageH > 0 &&
-    (highlightPageProp == null || highlightPageProp === pageNumber) &&
-    (!preferTextHighlight || !textMatchFound)
+    (highlightPageProp == null || highlightPageProp === pageNumber)
 
   useEffect(() => {
-    if (!highlightText || pageTextItems.length === 0) {
+    if (hasCitationBbox) {
       setHighlightItemIndices([])
       return
     }
-
-    const hlNorm = normText(highlightText)
+    if (highlightSearchStrings.length === 0 || pageTextItems.length === 0) {
+      setHighlightItemIndices([])
+      return
+    }
 
     type RawItem = { origIdx: number; str: string; tx: number; ty: number }
     const rawItems: RawItem[] = []
@@ -215,65 +299,70 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
       return a.tx - b.tx
     })
 
-    let pos = 0
-    const itemPositions: { origIdx: number; normStart: number; normEnd: number; str: string }[] = []
-    rawItems.forEach(({ origIdx, str }) => {
-      const normalized = normText(str)
-      itemPositions.push({ origIdx, normStart: pos, normEnd: pos + normalized.length, str })
-      pos += normalized.length + 1
-    })
-    const normFullText = itemPositions.map(ip => normText(ip.str)).join(' ')
+    const MAX_WINDOW = Math.min(rawItems.length, 400)
 
-    const hlWords = hlNorm.split(/\s+/)
-    const windowVariants: string[] = []
-    for (let i = 0; i < hlWords.length - 3; i++) {
-      windowVariants.push(hlWords.slice(i, i + 4).join(' '))
-    }
+    /** Не полагаемся на norm целой страницы — только скользящие окна (как в скане по документу). */
+    let matchedRaw = ''
+    let bestI = -1
+    let bestJ = -1
 
-    const variants = [
-      hlNorm,
-      hlNorm.substring(0, 200),
-      hlNorm.substring(0, 100),
-      hlNorm.substring(0, 60),
-      hlWords.slice(0, 10).join(' '),
-      hlWords.slice(0, 8).join(' '),
-      hlWords.slice(0, 6).join(' '),
-      hlWords.slice(0, 4).join(' '),
-      hlWords.slice(0, 3).join(' '),
-      hlWords.slice(0, 2).join(' '),
-      ...windowVariants,
-    ].filter((v) => v.length >= 3)
-
-    for (const text of variants) {
-      const idx = normFullText.indexOf(text)
-      if (idx === -1) continue
-      const matched = itemPositions.filter(ip => ip.normEnd > idx && ip.normStart < idx + text.length)
-      if (matched.length > 0) {
-        const indices = matched.map(ip => ip.origIdx)
-
-        const matchedTys = indices.map(oi => {
-          const [,,,, , ty] = (pageTextItems[oi].transform || [1,0,0,1,0,0])
-          return ty as number
-        })
-        const minTy = Math.min(...matchedTys)
-        const maxTy = Math.max(...matchedTys)
-        for (const ri of rawItems) {
-          if (indices.includes(ri.origIdx)) continue
-          if (ri.ty < minTy - 8 || ri.ty > maxTy + 8) continue
-          const norm = normText(ri.str)
-          if (norm.length >= 1 && hlNorm.includes(norm)) indices.push(ri.origIdx)
+    rawLoop: for (const raw of highlightSearchStrings) {
+      const probes = [...buildPdfCitationProbes(raw)].sort((a, b) => b.length - a.length)
+      for (const pr of probes) {
+        let localBest = Infinity
+        let li = -1
+        let lj = -1
+        for (let i = 0; i < rawItems.length; i++) {
+          let acc = ''
+          for (let j = i; j < Math.min(rawItems.length, i + MAX_WINDOW); j++) {
+            acc = acc ? `${acc} ${rawItems[j].str}` : rawItems[j].str
+            const cand = normPdfPlain(acc)
+            if (!cand.includes(pr)) continue
+            const span = j - i
+            if (span < localBest) {
+              localBest = span
+              li = i
+              lj = j
+            }
+            break
+          }
         }
-
-        setHighlightItemIndices(indices)
-        setTimeout(() => {
-          const mark = containerRef.current?.querySelector('[data-pdf-mark]')
-          if (mark) mark.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        }, 300)
-        return
+        if (li >= 0) {
+          matchedRaw = raw
+          bestI = li
+          bestJ = lj
+          break rawLoop
+        }
       }
     }
-    setHighlightItemIndices([])
-  }, [highlightText, pageTextItems, pageNumber])
+
+    if (bestI < 0 || !matchedRaw) {
+      setHighlightItemIndices([])
+      return
+    }
+
+    const hlNorm = normPdfPlain(matchedRaw)
+
+    const indices = rawItems.slice(bestI, bestJ + 1).map((r) => r.origIdx)
+    const matchedTys = indices.map((oi) => {
+      const [, , , , , ty] = pageTextItems[oi].transform || [1, 0, 0, 1, 0, 0]
+      return ty as number
+    })
+    const minTy = Math.min(...matchedTys)
+    const maxTy = Math.max(...matchedTys)
+    for (const ri of rawItems) {
+      if (indices.includes(ri.origIdx)) continue
+      if (ri.ty < minTy - 8 || ri.ty > maxTy + 8) continue
+      const normPiece = normPdfPlain(ri.str)
+      if (normPiece.length >= 1 && hlNorm.includes(normPiece)) indices.push(ri.origIdx)
+    }
+
+    setHighlightItemIndices(indices)
+    setTimeout(() => {
+      const mark = containerRef.current?.querySelector('[data-pdf-mark]')
+      if (mark) mark.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 300)
+  }, [hasCitationBbox, highlightSearchStrings, pageTextItems, pageNumber])
 
   useEffect(() => {
     if (!useBboxHighlight) return
@@ -283,6 +372,107 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
     }, 300)
     return () => window.clearTimeout(t)
   }, [useBboxHighlight, pageNumber, bboxRegionsToDraw])
+
+  const onDocumentLoadSuccess = (pdf: { numPages: number; getPage?: (n: number) => Promise<any> }) => {
+    const n = pdf?.numPages ?? 0
+    setNumPages(n)
+    pdfDocRef.current = pdf as typeof pdfDocRef.current
+    if (initialPage && initialPage >= 1 && initialPage <= n) {
+      setPageNumber(initialPage)
+    } else {
+      setPageNumber(1)
+    }
+  }
+
+  // Chat / citations: при отсутствии bbox ищем цитату по всему PDF. Если страница передана, но
+  // на ней нет совпадения в text layer (или она ошибочна) — откладываем полный проход.
+  useEffect(() => {
+    if (!expandHighlightSearchAllPages || highlightSearchStrings.length === 0) return
+    const hasBbox =
+      (highlightBBoxRegions && highlightBBoxRegions.length > 0) ||
+      !!(
+        highlightBBox &&
+        highlightBBox.x0 != null &&
+        highlightBBox.y0 != null &&
+        highlightBBox.x1 != null &&
+        highlightBBox.y1 != null
+      )
+    if (hasBbox) return
+    const pdf = pdfDocRef.current
+    const n = numPages
+    if (!pdf?.getPage || !n || n < 1) return
+
+    let cancelled = false
+
+    const runScan = async () => {
+      for (const raw of highlightSearchStrings) {
+        const probes = buildPdfCitationProbes(raw)
+        if (probes.length === 0) continue
+        for (let p = 1; p <= n; p++) {
+          if (cancelled) return
+          try {
+            const page = await pdf.getPage(p)
+            const textContent = await page.getTextContent()
+            const items = (textContent.items as any[]).filter(
+              (item) => item && typeof item.str === 'string' && item.str.trim(),
+            )
+            const joined = normPageTextFromPdfItems(items)
+            for (const pr of probes) {
+              if (joined.includes(pr)) {
+                setPageNumber(p)
+                setTimeout(() => {
+                  const mark = containerRef.current?.querySelector('[data-pdf-mark]')
+                  if (mark) mark.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                }, 400)
+                return
+              }
+            }
+          } catch {
+            continue
+          }
+        }
+      }
+    }
+
+    const hasPageHint = highlightPageProp != null && highlightPageProp >= 1
+
+    if (!hasPageHint) {
+      void runScan()
+      return () => {
+        cancelled = true
+      }
+    }
+
+    if (pageNumber !== highlightPageProp) {
+      return () => {
+        cancelled = true
+      }
+    }
+
+    const textLayerKnown = pageTextItems.length > 0
+    const delayMs = textLayerKnown ? 450 : 900
+    const t = window.setTimeout(() => {
+      if (cancelled) return
+      if (highlightMatchRef.current) return
+      void runScan()
+    }, delayMs)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(t)
+    }
+  }, [
+    expandHighlightSearchAllPages,
+    highlightSearchStrings,
+    highlightPageProp,
+    highlightBBox,
+    highlightBBoxRegions,
+    numPages,
+    fileId,
+    pageNumber,
+    pageTextItems,
+    highlightItemIndices,
+  ])
 
   const customTextRenderer = ({ str, itemIndex }: { str: string; itemIndex: number }) => {
     if (!highlightItemIndices.includes(itemIndex)) return str
@@ -302,7 +492,7 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
         `${apiBase}/files/${fileId}/content`,
         {
           headers: {
-            'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+            'X-Access-Token': localStorage.getItem('access_token') || ''
           }
         }
       )
@@ -323,15 +513,6 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
       }
     } finally {
       setLoading(false)
-    }
-  }
-
-  const onDocumentLoadSuccess = ({ numPages }: { numPages: number }) => {
-    setNumPages(numPages)
-    if (initialPage && initialPage >= 1 && initialPage <= numPages) {
-      setPageNumber(initialPage)
-    } else {
-      setPageNumber(1)
     }
   }
 
@@ -490,48 +671,52 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
           </IconButton>
         </Stack>
 
-        <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
+        {showDocumentSearch && (
+          <>
+            <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
 
-        <TextField
-          inputRef={searchInputRef}
-          size="small"
-          placeholder="Поиск в документе..."
-          value={searchQuery}
-          onChange={(e) => handleSearch(e.target.value)}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <SearchIcon fontSize="small" />
-              </InputAdornment>
-            ),
-            endAdornment: searchQuery ? (
-              <InputAdornment position="end">
-                <IconButton
-                  size="small"
-                  onClick={() => {
-                    setSearchQuery('')
-                    setSearchResults([])
-                  }}
-                >
-                  <CloseIcon fontSize="small" />
+            <TextField
+              inputRef={searchInputRef}
+              size="small"
+              placeholder="Поиск в документе..."
+              value={searchQuery}
+              onChange={(e) => handleSearch(e.target.value)}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon fontSize="small" />
+                  </InputAdornment>
+                ),
+                endAdornment: searchQuery ? (
+                  <InputAdornment position="end">
+                    <IconButton
+                      size="small"
+                      onClick={() => {
+                        setSearchQuery('')
+                        setSearchResults([])
+                      }}
+                    >
+                      <CloseIcon fontSize="small" />
+                    </IconButton>
+                  </InputAdornment>
+                ) : null,
+              }}
+              sx={{ width: 250 }}
+            />
+            {searchQuery && searchResults.length > 0 && (
+              <Stack direction="row" spacing={0.5} alignItems="center">
+                <Typography variant="caption" color="text.secondary">
+                  {currentSearchIndex + 1} / {searchResults.length}
+                </Typography>
+                <IconButton size="small" onClick={handlePrevSearch}>
+                  <ChevronLeftIcon fontSize="small" />
                 </IconButton>
-              </InputAdornment>
-            ) : null,
-          }}
-          sx={{ width: 250 }}
-        />
-        {searchQuery && searchResults.length > 0 && (
-          <Stack direction="row" spacing={0.5} alignItems="center">
-            <Typography variant="caption" color="text.secondary">
-              {currentSearchIndex + 1} / {searchResults.length}
-            </Typography>
-            <IconButton size="small" onClick={handlePrevSearch}>
-              <ChevronLeftIcon fontSize="small" />
-            </IconButton>
-            <IconButton size="small" onClick={handleNextSearch}>
-              <ChevronRightIcon fontSize="small" />
-            </IconButton>
-          </Stack>
+                <IconButton size="small" onClick={handleNextSearch}>
+                  <ChevronRightIcon fontSize="small" />
+                </IconButton>
+              </Stack>
+            )}
+          </>
         )}
 
         <Box sx={{ flexGrow: 1 }} />
@@ -563,9 +748,11 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
           <IconButton size="small" onClick={handleDownload} aria-label="Скачать">
             <DownloadIcon />
           </IconButton>
-          <IconButton size="small" onClick={handlePrint} aria-label="Печать">
-            <PrintIcon />
-          </IconButton>
+          {showPrint && (
+            <IconButton size="small" onClick={handlePrint} aria-label="Печать">
+              <PrintIcon />
+            </IconButton>
+          )}
         </Stack>
       </Paper>
 
@@ -595,7 +782,7 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
               renderAnnotationLayer={true}
               onLoadSuccess={handlePageLoadSuccess}
               onGetTextSuccess={handleGetTextSuccess}
-              customTextRenderer={useBboxHighlight ? undefined : customTextRenderer}
+              customTextRenderer={preferTextHighlight ? customTextRenderer : undefined}
             />
             {useBboxHighlight &&
               bboxRegionsToDraw.map((r, i) => {

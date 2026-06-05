@@ -10,7 +10,23 @@ from app.models.case import Case, File
 from app.models.user import User
 from app.services.llm_factory import create_llm
 from app.config import config
-from app.services.tabular_review_models import TabularCellExtractionModel
+from app.services.tabular_review_models import TabularCellExtractionModel, coerce_optional_int
+from app.services.tabular_cell_pipeline import (
+    cell_result_to_api_payload,
+    cell_result_to_websocket_payload,
+    run_tabular_cell_extraction,
+    TabularColumnExtractionOutcome,
+)
+from app.services.tabular_extraction_policy import (
+    coerce_source_references,
+    count_nonempty_cells,
+)
+from app.services.tabular_cell_payload import build_tabular_cell_db_payload
+from app.services.tabular_file_queries import (
+    fetch_files_for_extraction,
+    fetch_files_for_table,
+    fetch_files_ids_only,
+)
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 import json
@@ -55,12 +71,7 @@ class TabularReviewService:
         
         # Verify selected files belong to the case
         if selected_file_ids:
-            files = self.db.query(File).filter(
-                and_(
-                    File.id.in_(selected_file_ids),
-                    File.case_id == case_id
-                )
-            ).all()
+            files = fetch_files_ids_only(self.db, case_id, selected_file_ids)
             if len(files) != len(selected_file_ids):
                 raise ValueError("Some selected files do not belong to this case")
         
@@ -312,34 +323,75 @@ class TabularReviewService:
         self,
         review_id: str,
         column_id: str,
-        user_id: str
-    ) -> bool:
-        """Delete a column (cascade deletes all cells)"""
-        # Verify review belongs to user
+        user_id: str,
+    ) -> Dict[str, Any]:
+        """Delete a column and related rows in review queue; compact order_index."""
         review = self.db.query(TabularReview).filter(
             and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
         ).first()
-        
+
         if not review:
             raise ValueError(f"Tabular review {review_id} not found or access denied")
-        
-        # Get the column
+
         column = self.db.query(TabularColumn).filter(
             and_(
                 TabularColumn.id == column_id,
-                TabularColumn.tabular_review_id == review_id
+                TabularColumn.tabular_review_id == review_id,
             )
         ).first()
-        
+
         if not column:
             raise ValueError(f"Column {column_id} not found in review {review_id}")
-        
-        # Delete column (cascade will delete all cells)
+
+        column_label = column.column_label
+        deleted_order = column.order_index
+
         self.db.delete(column)
+        self.db.flush()
+
+        remaining = (
+            self.db.query(TabularColumn)
+            .filter(TabularColumn.tabular_review_id == review_id)
+            .order_by(TabularColumn.order_index)
+            .all()
+        )
+        for index, col in enumerate(remaining):
+            col.order_index = index
+
+        review.updated_at = datetime.utcnow()
         self.db.commit()
-        
-        logger.info(f"Deleted column {column_id} from review {review_id}")
-        return True
+
+        logger.info(
+            "Deleted column %s (%s) from review %s",
+            column_id,
+            column_label,
+            review_id,
+        )
+        return {
+            "column_id": column_id,
+            "column_label": column_label,
+            "order_index": deleted_order,
+        }
+
+    async def delete_column_and_notify(
+        self,
+        review_id: str,
+        column_id: str,
+        user_id: str,
+    ) -> Dict[str, Any]:
+        """Delete column in DB and broadcast column_deleted to connected clients."""
+        payload = self.delete_column(review_id, column_id, user_id)
+        from app.services.websocket_manager import websocket_manager
+
+        await websocket_manager.broadcast_to_review(
+            review_id,
+            {
+                "type": "column_deleted",
+                "column_id": payload["column_id"],
+                "column_label": payload.get("column_label"),
+            },
+        )
+        return payload
     
     def reorder_columns(
         self,
@@ -402,11 +454,9 @@ class TabularReviewService:
         if not review:
             raise ValueError(f"Tabular review {review_id} not found or access denied")
         
-        # Get files for the case, filtered by selected_file_ids if specified
-        files_query = self.db.query(File).filter(File.case_id == review.case_id)
-        if review.selected_file_ids:
-            files_query = files_query.filter(File.id.in_(review.selected_file_ids))
-        files = files_query.all()
+        # Metadata only — no file_content / html_content blobs
+        file_ids = review.selected_file_ids if review.selected_file_ids else None
+        files = fetch_files_for_table(self.db, review.case_id, file_ids)
         
         # Get columns
         columns = self.db.query(TabularColumn).filter(
@@ -563,6 +613,10 @@ class TabularReviewService:
             ],
             "rows": table_rows,
         }
+
+    @staticmethod
+    def _coerce_source_references(raw: Any) -> List[Dict[str, Any]]:
+        return coerce_source_references(raw)
     
     def _normalize_extraction_result(
         self,
@@ -648,15 +702,15 @@ class TabularReviewService:
             # Generate default reasoning
             normalized['reasoning'] = f"Извлечено из документа '{file.filename}' для колонки '{column.column_label}'"
         
-        # Map source_references
-        if 'source_references' in result_dict and result_dict['source_references']:
-            normalized['source_references'] = result_dict['source_references']
-        elif 'citations' in result_dict and result_dict['citations']:
-            normalized['source_references'] = result_dict['citations']
-        elif 'sources' in result_dict and result_dict['sources']:
-            normalized['source_references'] = result_dict['sources']
-        else:
-            normalized['source_references'] = []
+        # Map source_references (coerce LLM quirks: string / single dict → list)
+        refs_raw = None
+        if result_dict.get('source_references'):
+            refs_raw = result_dict['source_references']
+        elif result_dict.get('citations'):
+            refs_raw = result_dict['citations']
+        elif result_dict.get('sources'):
+            refs_raw = result_dict['sources']
+        normalized['source_references'] = self._coerce_source_references(refs_raw)
         
         # Map confidence
         if 'confidence' in result_dict:
@@ -668,10 +722,13 @@ class TabularReviewService:
             normalized['confidence'] = 0.8
         
         # Copy other optional fields if present
-        for field in ['normalized_value', 'verbatim_extract', 'source_page', 'source_section', 
-                      'source_start_line', 'source_end_line', 'extraction_method']:
+        for field in ['normalized_value', 'verbatim_extract', 'source_section', 'extraction_method']:
             if field in result_dict and result_dict[field] is not None:
                 normalized[field] = result_dict[field]
+
+        for int_field in ('source_page', 'source_start_line', 'source_end_line'):
+            if int_field in result_dict and result_dict[int_field] is not None:
+                normalized[int_field] = coerce_optional_int(result_dict[int_field])
         
         logger.debug(f"Normalized extraction result: {list(result_dict.keys())} -> {list(normalized.keys())}")
         return normalized
@@ -706,7 +763,8 @@ class TabularReviewService:
                 "date": "дата в формате YYYY-MM-DD или DD.MM.YYYY",
                 "tag": "один тег из предопределенного списка",
                 "verbatim": "точная цитата из документа с указанием источника",
-                "manual_input": "ручной ввод (не используется AI)"
+                "manual_input": "ручной ввод (не используется AI)",
+                "document_type": "категория юридического документа по содержанию",
             }
             
             type_desc = column_type_descriptions.get(column.column_type, "свободный текст")
@@ -1338,398 +1396,119 @@ class TabularReviewService:
                     return True
             
             return False
+
+    def _build_cell_extraction_response(
+        self,
+        *,
+        file: File,
+        column: TabularColumn,
+        result: TabularCellExtractionModel,
+        included_docs: Optional[List[Document]] = None,
+        verification_outcome=None,
+    ) -> Dict[str, Any]:
+        """Map extraction model to DB payload (provenance + status gates)."""
+        return build_tabular_cell_db_payload(
+            file=file,
+            column=column,
+            result=result,
+            included_docs=included_docs,
+            db=self.db,
+            verification_outcome=verification_outcome,
+        )
     
     async def extract_cell_value_improved(
         self,
         file: File,
         column: TabularColumn,
-        strategy: str = 'multi_query'
+        strategy: str = 'multi_query',
+        rag_service=None,
     ) -> Dict[str, Any]:
         """
-        Improved extraction using LangChain retrievers and structured output
-        
-        Args:
-            file: File to extract from
-            column: Column definition
-            strategy: Extraction strategy ('multi_query', 'compression', 'iterative')
-        
-        Returns:
-            Dictionary with extraction results
+        Canonical tabular cell pipeline: assistant RAG → structured extract → verify → payload.
+
+        strategy is retained for API compatibility; retrieval uses case-assistant hybrid funnel.
         """
+        if not self.llm:
+            return await self.extract_cell_value(file, column)
+
+        if rag_service is None:
+            from app.services.rag_service import get_rag_service
+
+            rag_service = get_rag_service()
+
         try:
-            from app.services.document_processor import get_document_processor
-            from app.services.langchain_retrievers import AdvancedRetrieverService
-            from app.services.iterative_rag_service import IterativeRAGService
-            from app.services.rag_service import RAGService
-            from langchain_text_splitters import RecursiveCharacterTextSplitter
+            pipeline = await run_tabular_cell_extraction(
+                self.llm,
+                rag_service=rag_service,
+                file=file,
+                column=column,
+                normalize_fn=self._normalize_extraction_result,
+            )
 
-            # Retrieval-first: use indexed chunks (pgvector + FTS) scoped to this file.
-            document_processor = get_document_processor()
-            retriever_service = AdvancedRetrieverService(document_processor)
+            logger.info(
+                "Tabular pipeline file=%s column=%s recall=%s context_docs=%s forced_na=%s review=%s",
+                file.id,
+                column.id,
+                len(pipeline.prepared.file_chunks),
+                len(pipeline.prepared.included_docs),
+                pipeline.verification.forced_na,
+                pipeline.verification.needs_review,
+            )
 
-            # Build query for retrieval
-            query = f"{column.prompt} {column.column_label}".strip()
+            return self._build_cell_extraction_response(
+                file=file,
+                column=column,
+                result=pipeline.extraction,
+                included_docs=pipeline.prepared.included_docs,
+                verification_outcome=pipeline.verification,
+            )
 
-            # Prefer strict scoping by file_id via metadata_filter so we never mix documents.
-            # Also prefer docling-level chunks if present.
-            chunk_levels = ["docling"]
-            metadata_filter = {"file_id": file.id}
-
-            file_chunks: List[Document] = []
-            relevant_chunks: List[Document] = []
-
-            try:
-                if strategy in ("hybrid", "rag"):
-                    # Hybrid retrieval: dense (pgvector) + sparse (Postgres FTS / BM25), fused with RRF.
-                    file_chunks = document_processor.hybrid_search(
-                        case_id=file.case_id,
-                        query=query,
-                        k=15,
-                        alpha=0.7,
-                        chunk_levels=chunk_levels,
-                        metadata_filter=metadata_filter,
-                    )
-                elif strategy == "iterative":
-                    # Iterative RAG: adaptive retrieval with query reformulation (quality-first for complex questions).
-                    rag_service = RAGService()
-                    iterative_rag = IterativeRAGService(rag_service)
-                    relevant_chunks = iterative_rag.retrieve_iteratively(
-                        case_id=file.case_id,
-                        query=query,
-                        max_iterations=3,
-                        initial_k=10,
-                    )
-                elif strategy == "compression":
-                    # Compression retrieval (may use LLM) – fall back to hybrid if unsupported.
-                    relevant_chunks = retriever_service.retrieve_with_compression(
-                        case_id=file.case_id,
-                        query=query,
-                        k=10,
-                    )
-                else:
-                    # Multi-query retrieval (query expansion) – fall back to hybrid if unsupported.
-                    relevant_chunks = retriever_service.retrieve_with_multi_query(
-                        case_id=file.case_id,
-                        query=query,
-                        k=10,
-                    )
-            except Exception as e:
-                logger.warning(
-                    f"Retrieval failed (strategy={strategy}) for file {file.id}, column {column.id}: {e}",
-                    exc_info=True,
-                )
-                relevant_chunks = []
-                file_chunks = []
-
-            # If we used non-hybrid retrievers, we must re-scope results to this file.
-            # Prefer strict file_id match; keep filename heuristics as a last resort for legacy metadata.
-            if not file_chunks and relevant_chunks:
-                file_chunks = [
-                    chunk for chunk in relevant_chunks
-                    if (chunk.metadata.get('file_id') == file.id or
-                        chunk.metadata.get('doc_id') == file.id or
-                        chunk.metadata.get('source_file') == file.filename or
-                        chunk.metadata.get('source_file', '').endswith(file.filename))
-                ]
-
-            # Fallback: if retrieval returned nothing, do local chunking from full text.
-            # This is intentionally a last resort – quality-first path should be RAG.
-            if not file_chunks:
-                document_text = file.original_text or ""
-                if not document_text:
-                    logger.warning(f"File {file.id} has no text content")
-                    return {
-                        "file_id": file.id,
-                        "column_id": column.id,
-                        "cell_value": None,
-                        "error": "No text content"
-                    }
-                logger.warning(
-                    "RAG returned no chunks for file %s (case %s). Falling back to local chunking.",
-                    file.id,
-                    file.case_id,
-                )
-                splitter = RecursiveCharacterTextSplitter(
-                    chunk_size=1200,
-                    chunk_overlap=200,
-                    separators=["\n\n", "\n", ". ", " ", ""],
-                    length_function=len,
-                    is_separator_regex=False,
-                )
-                raw_chunks = splitter.split_text(document_text)
-                file_chunks = [
-                    Document(
-                        page_content=raw_chunks[i],
-                        metadata={"chunk_index": i, "file_id": file.id, "source_file": file.filename}
-                    )
-                    for i in range(min(8, len(raw_chunks)))
-                ]
-            
-            if not file_chunks:
+        except ValueError as err:
+            code = str(err)
+            if code == "No text content":
+                logger.warning("File %s has no text content", file.id)
                 return {
                     "file_id": file.id,
                     "column_id": column.id,
                     "cell_value": None,
-                    "error": "No chunks available for extraction"
+                    "error": "No text content",
                 }
-            
-            # Try to use structured output
-            all_candidates = []  # Store all extraction results
-            best_result = None
-            best_confidence = 0.0
-            
-            # Chunk budget for extraction: keep it small for cost/latency, but large enough for recall.
-            # Simple types still benefit from 2 chunks (avoid picking the wrong occurrence in long contracts).
-            simple_types = {'date', 'currency', 'number', 'yes_no', 'tag'}
-            max_chunks = 2 if column.column_type in simple_types else 6
-            # Process top chunks
-            for chunk in file_chunks[:max_chunks]:
-                try:
-                    # Build type descriptions
-                    column_type_descriptions = {
-                        "text": "свободный текст",
-                        "number": "числовое значение",
-                        "currency": "денежная сумма с валютой (например: '100000 USD' или '50 000 руб.')",
-                        "yes_no": "только 'Yes' или 'No'",
-                        "date": "дата в формате YYYY-MM-DD или DD.MM.YYYY",
-                        "tag": "один тег из предопределенного списка",
-                        "verbatim": "точная цитата из документа с указанием источника",
-                        "manual_input": "ручной ввод (не используется AI)"
-                    }
-                    
-                    type_desc = column_type_descriptions.get(column.column_type, "свободный текст")
-                    
-                    # Для tag добавляем доступные опции
-                    tag_options_text = ""
-                    if column.column_type == "tag" and column.column_config:
-                        options = column.column_config.get("options", [])
-                        if options:
-                            tag_options_text = f"\n\nДоступные опции: {', '.join([opt.get('label', '') for opt in options])}"
-                    
-                    # Create prompt
-                    prompt = ChatPromptTemplate.from_messages([
-                        # IMPORTANT: ChatPromptTemplate treats `{...}` as template variables.
-                        # Do NOT include JSON examples with braces in the prompt text here.
-                        ("system", f"""Ты эксперт по извлечению информации из юридических документов.
-Тип ответа: {column.column_type}
-Описание: {type_desc}{tag_options_text}
-
-ВАЖНО:
-- Указывай source_page если возможно
-- Указывай source_section (например, "Раздел 3.1", "Статья 5")
-- Указывай source_references — список конкретных мест в документе с цитатами (НЕ в JSON-формате), например: [(page=1, section="Раздел 3", text="цитата")]
-- Указывай reasoning - подробное объяснение, почему именно такой ответ, с указанием конкретных мест в документе
-- Указывай confidence - насколько ты уверен (0.0-1.0)
-- Если информация не найдена, верни "N/A" для cell_value
-- Для tag используй ТОЛЬКО опции из списка выше"""),
-                        ("human", f"""Вопрос: {column.prompt}
-
-Документ:
-{(chunk.page_content or '')[:6000]}
-
-Извлеки информацию согласно типу {column.column_type}.
-Если это verbatim, приведи ТОЧНУЮ цитату из документа.
-ВСЕГДА указывай source_references с конкретными цитатами из документа.""")
-                    ])
-                    
-                    # Try structured output first
-                    try:
-                        # Prefer json_mode to avoid brittle JSON Schema enforcement on some providers.
-                        structured_llm = self.llm.with_structured_output(
-                            TabularCellExtractionModel,
-                            method="json_mode"
-                        )
-                        chain = prompt | structured_llm
-                        raw_result = await chain.ainvoke({})
-                        
-                        # Normalize result in case LLM returns different field names
-                        if hasattr(raw_result, 'model_dump'):
-                            result_dict = raw_result.model_dump()
-                        elif isinstance(raw_result, dict):
-                            result_dict = raw_result
-                        else:
-                            result_dict = raw_result.__dict__ if hasattr(raw_result, '__dict__') else {}
-                        
-                        result_dict = self._normalize_extraction_result(result_dict, column, file)
-                        result_dict['column_type'] = column.column_type
-                        result = TabularCellExtractionModel(**result_dict)
-                        
-                    except Exception as e:
-                        logger.warning(f"Structured output failed, using parser or manual extraction: {e}")
-                        # Fallback: try parser with retry (if llm_helper available), else manual extraction
-                        chain = prompt | self.llm
-                        response = await chain.ainvoke({})
-                        response_text = response.content if hasattr(response, 'content') else str(response)
-
-                        result = None
-                        try:
-                            from app.services.langchain_agents.llm_helper import create_fixing_parser
-                            parser = create_fixing_parser(
-                                TabularCellExtractionModel,
-                                self.llm,
-                                max_retries=3
-                            )
-                            result = parser.parse(response_text)
-                            result.column_type = column.column_type
-                        except ImportError:
-                            logger.debug("llm_helper not available, using manual extraction")
-                        except Exception as parse_error:
-                            logger.warning(f"Parser failed: {parse_error}")
-
-                        if result is None:
-                            # Manual JSON extraction as last resort
-                            import json as json_module
-                            import re as re_module
-                            json_match = re_module.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', response_text, re_module.DOTALL)
-                            if json_match:
-                                try:
-                                    parsed = json_module.loads(json_match.group(0))
-                                    parsed = self._normalize_extraction_result(parsed, column, file)
-                                    parsed['column_type'] = column.column_type
-                                    result = TabularCellExtractionModel(**parsed)
-                                except Exception:
-                                    result = TabularCellExtractionModel(
-                                        cell_value="N/A",
-                                        reasoning=f"Не удалось извлечь данные из документа '{file.filename}'",
-                                        column_type=column.column_type
-                                    )
-                            else:
-                                result = TabularCellExtractionModel(
-                                    cell_value="N/A",
-                                    reasoning=f"Не удалось извлечь данные из документа '{file.filename}'",
-                                    column_type=column.column_type
-                                )
-                    
-                    # Update source_page from metadata if not set
-                    if not result.source_page:
-                        result.source_page = chunk.metadata.get('source_page')
-                    
-                    # Update source_section if available in metadata
-                    if not result.source_section:
-                        result.source_section = chunk.metadata.get('source_section')
-                    
-                    # Store all candidates (not just best)
-                    all_candidates.append(result)
-                    
-                    # Track best result
-                    if result.confidence > best_confidence:
-                        best_result = result
-                        best_confidence = result.confidence
-                        
-                        # Early stop if confidence is very high
-                        if result.confidence >= 0.95:
-                            break
-                            
-                except Exception as e:
-                    logger.warning(f"Error extracting from chunk: {e}")
-                    continue
-            
-            if not best_result:
-                # Final fallback: use old method
-                logger.warning(f"All extraction attempts failed for file {file.id}, column {column.id}, using fallback")
+            if code == "No chunks available for extraction":
+                logger.warning(
+                    "No chunks for file %s (case %s); extraction aborted",
+                    file.id,
+                    file.case_id,
+                )
+                return {
+                    "file_id": file.id,
+                    "column_id": column.id,
+                    "cell_value": None,
+                    "error": "No chunks available for extraction",
+                }
+            if code == "empty_context":
+                logger.warning(
+                    "Empty RAG context for file %s column %s; legacy fallback",
+                    file.id,
+                    column.id,
+                )
                 return await self.extract_cell_value(file, column)
-            
-            # Detect conflicts
-            has_conflict = self._detect_conflicts(all_candidates, column.column_type)
-            
-            # Prepare candidates list for storage
-            candidates_list = []
-            for candidate in all_candidates:
-                candidate_dict = {
-                    "value": candidate.cell_value,
-                    "normalized_value": candidate.normalized_value,
-                    "confidence": float(candidate.confidence),
-                    "source_page": candidate.source_page,
-                    "source_section": candidate.source_section,
-                    "verbatim": candidate.verbatim_extract,
-                    "reasoning": candidate.reasoning,
-                    "extraction_method": candidate.extraction_method
-                }
-                # Add source_references if available
-                if candidate.source_references:
-                    candidate_dict["source_references"] = candidate.source_references
-                candidates_list.append(candidate_dict)
-            
-            # Run verifier if available
-            from app.services.tabular_review_verifier import TabularReviewVerifier
-            verifier = TabularReviewVerifier(self.db)
-            
-            # Create temporary cell object for verification
-            temp_cell = TabularCell(
-                cell_value=best_result.cell_value,
-                normalized_value=best_result.normalized_value,
-                verbatim_extract=best_result.verbatim_extract,
-                confidence_score=best_result.confidence,
-                status="completed"
-            )
-            
-            verification_result = verifier.verify_cell(temp_cell, column, file)
-            
-            # Determine status based on conflict detection and verification
-            if not best_result.cell_value or best_result.cell_value.strip() == "" or best_result.cell_value.strip().upper() == "N/A":
-                cell_status = "empty" if not best_result.cell_value or best_result.cell_value.strip() == "" else "n_a"
-            elif has_conflict:
-                cell_status = "conflict"
-            elif not verification_result.is_valid:
-                # If verification failed, use suggested status or mark as low confidence
-                cell_status = verification_result.suggested_status
-                if cell_status == "completed" and best_result.confidence < 0.7:
-                    cell_status = "pending"  # Low confidence needs review
-            else:
-                cell_status = "completed"
-            
-            # Build source_references from best result
-            source_references = []
-            if best_result.source_page or best_result.source_section:
-                source_ref = {
-                    "page": best_result.source_page,
-                    "section": best_result.source_section,
-                    "text": best_result.verbatim_extract or best_result.cell_value[:200]  # First 200 chars as quote
-                }
-                source_references.append(source_ref)
-            
-            # Add any additional source_references from result
-            if hasattr(best_result, 'source_references') and best_result.source_references:
-                source_references.extend(best_result.source_references)
+            raise
 
-            # Quality gate: evidence must be present for any non-N/A value.
-            # If the model produced an answer without citations, force review instead of silently "completed".
-            if (
-                best_result.cell_value
-                and best_result.cell_value.strip().upper() != "N/A"
-                and len(source_references) == 0
-            ):
-                cell_status = "pending"
-
-            # Quality gate: low confidence is review-worthy even if verifier passed.
-            if best_result.confidence < 0.6 and cell_status == "completed":
-                cell_status = "pending"
-            
-            return {
-                "file_id": file.id,
-                "column_id": column.id,
-                "cell_value": best_result.cell_value,
-                "normalized_value": best_result.normalized_value,
-                "verbatim_extract": best_result.verbatim_extract,
-                "source_page": best_result.source_page,
-                "source_section": best_result.source_section,
-                "source_references": source_references,
-                "reasoning": best_result.reasoning,
-                "confidence_score": float(best_result.confidence),
-                "extraction_method": best_result.extraction_method,
-                "status": cell_status,
-                "candidates": candidates_list if len(candidates_list) > 1 else None  # Only store if multiple candidates
-            }
-            
         except Exception as e:
-            logger.error(f"Error in improved extraction for file {file.id}, column {column.id}: {e}", exc_info=True)
-            # Fallback to old method
+            logger.error(
+                "Tabular pipeline failed for file %s column %s: %s",
+                file.id,
+                column.id,
+                e,
+                exc_info=True,
+            )
             return await self.extract_cell_value(file, column)
-    
+
     async def extract_cell_value_smart(
         self,
         file: File,
-        column: TabularColumn
+        column: TabularColumn,
+        rag_service=None,
     ) -> Dict[str, Any]:
         """
         Smart extraction with automatic strategy selection
@@ -1738,7 +1517,349 @@ class TabularReviewService:
         """
         strategy = self._determine_extraction_strategy(file, column)
         logger.debug(f"Using extraction strategy '{strategy}' for file {file.id}, column {column.id}")
-        return await self.extract_cell_value_improved(file, column, strategy=strategy)
+        return await self.extract_cell_value_improved(
+            file,
+            column,
+            strategy=strategy,
+            rag_service=rag_service,
+        )
+
+    async def extract_workflow_tabular_step(
+        self,
+        *,
+        case_id: str,
+        file_ids: List[str],
+        columns: List[Dict[str, Any]],
+        confidence_threshold: float = 0.8,
+        rag_service=None,
+    ) -> Dict[str, Any]:
+        """
+        Ad-hoc tabular extraction for WorkflowGraph steps (no LangGraph duplicate).
+
+        Uses the same retrieve → extract → verify pipeline as TabularReviewPage.
+        """
+        from types import SimpleNamespace
+
+        from app.services.tabular_extraction_policy import is_na_cell_value
+
+        if rag_service is None:
+            from app.services.rag_service import get_rag_service
+
+            rag_service = get_rag_service()
+
+        col_objs = [
+            SimpleNamespace(
+                id=str(col["id"]),
+                column_label=col.get("label", col["id"]),
+                column_type=col.get("type", col.get("column_type", "text")),
+                prompt=col.get("prompt", f"Извлеки {col.get('label', col['id'])}"),
+                column_config=col.get("config") or col.get("column_config"),
+            )
+            for col in columns
+        ]
+
+        files = (
+            self.db.query(File)
+            .filter(File.case_id == case_id, File.id.in_(file_ids))
+            .all()
+        )
+        file_by_id = {f.id: f for f in files}
+
+        pairs: List[tuple[File, Any]] = []
+        for file_id in file_ids:
+            file = file_by_id.get(file_id)
+            if not file:
+                continue
+            for col in col_objs:
+                pairs.append((file, col))
+
+        async def _one(file: File, col) -> Dict[str, Any]:
+            return await self.extract_cell_value_smart(file, col, rag_service=rag_service)
+
+        raw_results = await asyncio.gather(
+            *[_one(f, c) for f, c in pairs],
+            return_exceptions=True,
+        )
+
+        successful: List[Dict[str, Any]] = []
+        needs_clarification: List[Dict[str, Any]] = []
+
+        for (file, col), raw in zip(pairs, raw_results):
+            if isinstance(raw, Exception) or raw.get("error"):
+                err = str(raw) if isinstance(raw, Exception) else raw.get("error")
+                needs_clarification.append(
+                    {
+                        "column_id": col.id,
+                        "file_id": file.id,
+                        "value": "",
+                        "confidence": 0.0,
+                        "source_quote": None,
+                        "source_page": None,
+                        "needs_clarification": True,
+                        "clarification_question": f"Ошибка извлечения '{col.column_label}': {err}",
+                    }
+                )
+                continue
+
+            value = raw.get("cell_value")
+            confidence = float(raw.get("confidence_score") or 0.0)
+            entry = {
+                "column_id": col.id,
+                "file_id": file.id,
+                "value": value,
+                "confidence": confidence,
+                "source_quote": raw.get("verbatim_extract"),
+                "source_page": raw.get("source_page"),
+                "needs_clarification": False,
+                "clarification_question": None,
+            }
+
+            if is_na_cell_value(value if value is None else str(value)):
+                entry["needs_clarification"] = True
+                entry["clarification_question"] = (
+                    f"Значение для '{col.column_label}' не найдено в документе"
+                )
+                needs_clarification.append(entry)
+            elif confidence < confidence_threshold or raw.get("status") == "pending":
+                entry["needs_clarification"] = True
+                entry["clarification_question"] = (
+                    f"Проверьте значение для '{col.column_label}' "
+                    f"(уверенность: {confidence:.0%})"
+                )
+                needs_clarification.append(entry)
+            else:
+                successful.append(entry)
+
+        total = len(pairs)
+        return {
+            "successful": successful,
+            "needs_clarification": needs_clarification,
+            "total_cells": total,
+            "success_rate": len(successful) / total if total else 0.0,
+        }
+
+    def upsert_tabular_cell_from_extraction(
+        self,
+        review_id: str,
+        result: Dict[str, Any],
+    ) -> TabularCell:
+        """Persist one extraction result as a tabular cell (create or update)."""
+        existing_cell = self.db.query(TabularCell).filter(
+            and_(
+                TabularCell.file_id == result["file_id"],
+                TabularCell.column_id == result["column_id"],
+            )
+        ).first()
+
+        source_refs = result.get("source_references", [])
+        source_page = result.get("source_page")
+        source_section = result.get("source_section")
+        # Prefer explicit deep-link fields (improved pipeline), fall back to first source_reference.
+        primary_source_doc_id = result.get("primary_source_doc_id") or result["file_id"]
+        primary_source_char_start = result.get("primary_source_char_start")
+        primary_source_char_end = result.get("primary_source_char_end")
+        verified_flag = result.get("verified_flag")
+
+        if source_refs and isinstance(source_refs, list) and len(source_refs) > 0:
+            first_ref = source_refs[0]
+            if isinstance(first_ref, dict):
+                source_page = first_ref.get("page") or source_page
+                source_section = first_ref.get("section") or source_section
+                if primary_source_char_start is None:
+                    primary_source_char_start = first_ref.get("char_start") or first_ref.get("start_char")
+                if primary_source_char_end is None:
+                    primary_source_char_end = first_ref.get("char_end") or first_ref.get("end_char")
+                if not result.get("primary_source_doc_id") and first_ref.get("doc_id"):
+                    primary_source_doc_id = first_ref.get("doc_id")
+                if verified_flag is None and "verified" in first_ref:
+                    verified_flag = first_ref.get("verified")
+
+        if existing_cell:
+            existing_cell.cell_value = result.get("cell_value")
+            existing_cell.normalized_value = result.get("normalized_value")
+            existing_cell.verbatim_extract = result.get("verbatim_extract")
+            existing_cell.reasoning = result.get("reasoning")
+            existing_cell.source_references = result.get("source_references")
+            existing_cell.confidence_score = result.get("confidence_score")
+            existing_cell.candidates = result.get("candidates")
+            existing_cell.source_page = source_page
+            existing_cell.source_section = source_section
+            existing_cell.primary_source_doc_id = primary_source_doc_id
+            existing_cell.primary_source_char_start = primary_source_char_start
+            existing_cell.primary_source_char_end = primary_source_char_end
+            existing_cell.verified_flag = verified_flag
+            existing_cell.status = result.get("status", "completed")
+            existing_cell.updated_at = datetime.utcnow()
+            return existing_cell
+
+        cell = TabularCell(
+            tabular_review_id=review_id,
+            file_id=result["file_id"],
+            column_id=result["column_id"],
+            cell_value=result.get("cell_value"),
+            normalized_value=result.get("normalized_value"),
+            verbatim_extract=result.get("verbatim_extract"),
+            reasoning=result.get("reasoning"),
+            source_references=result.get("source_references"),
+            confidence_score=result.get("confidence_score"),
+            source_page=source_page,
+            source_section=source_section,
+            status=result.get("status", "completed"),
+            candidates=result.get("candidates"),
+            primary_source_doc_id=primary_source_doc_id,
+            primary_source_char_start=primary_source_char_start,
+            primary_source_char_end=primary_source_char_end,
+            verified_flag=verified_flag,
+        )
+        self.db.add(cell)
+        return cell
+
+    async def _broadcast_tabular_cell_saved(
+        self,
+        review_id: str,
+        cell: TabularCell,
+        result: Dict[str, Any],
+    ) -> None:
+        from app.services.websocket_manager import websocket_manager
+
+        await websocket_manager.broadcast_cell_update(
+            review_id,
+            cell_result_to_websocket_payload(cell.id, result),
+        )
+
+    async def _broadcast_tabular_extraction_cell_finished(
+        self,
+        review_id: str,
+        *,
+        column_id: str,
+        file_id: str,
+        success: bool,
+    ) -> None:
+        from app.services.websocket_manager import websocket_manager
+
+        await websocket_manager.broadcast_to_review(
+            review_id,
+            {
+                "type": "extraction_cell_finished",
+                "column_id": column_id,
+                "file_id": file_id,
+                "success": success,
+            },
+        )
+
+    async def _extract_single_column_cell(
+        self,
+        file: File,
+        column: TabularColumn,
+        rag_service,
+    ) -> TabularColumnExtractionOutcome:
+        """Run one cell extraction; always returns file_id (never raises to caller)."""
+        try:
+            result = await self.extract_cell_value_smart(
+                file,
+                column,
+                rag_service=rag_service,
+            )
+            return TabularColumnExtractionOutcome.from_result(file.id, result)
+        except Exception as exc:
+            logger.error(
+                "Extraction task failed for file %s column %s: %s",
+                file.id,
+                column.id,
+                exc,
+                exc_info=True,
+            )
+            return TabularColumnExtractionOutcome.from_exception(file.id, exc)
+
+    async def _broadcast_column_extraction_progress(
+        self,
+        review_id: str,
+        *,
+        column_id: str,
+        finished_count: int,
+        total_tasks: int,
+        saved_count: int,
+        error_count: int,
+    ) -> None:
+        from app.services.websocket_manager import websocket_manager
+
+        await websocket_manager.broadcast_to_review(
+            review_id,
+            {
+                "type": "extraction_progress",
+                "progress": {
+                    "column_id": column_id,
+                    "progress": finished_count,
+                    "total": total_tasks,
+                    "saved_count": saved_count,
+                    "error_count": error_count,
+                },
+            },
+        )
+
+    async def _apply_column_extraction_outcome(
+        self,
+        review_id: str,
+        column_id: str,
+        outcome: TabularColumnExtractionOutcome,
+        *,
+        finished_count: int,
+        total_tasks: int,
+        saved_count: int,
+        error_count: int,
+    ) -> tuple[int, int, Optional[Dict[str, Any]]]:
+        """
+        Persist one outcome, notify clients, return updated (saved_count, error_count, api_payload?).
+        """
+        if not outcome.succeeded or outcome.result is None:
+            error_count += 1
+            if outcome.error:
+                logger.warning(
+                    "Extraction error for file %s column %s: %s",
+                    outcome.file_id,
+                    column_id,
+                    outcome.error,
+                )
+            await self._broadcast_tabular_extraction_cell_finished(
+                review_id,
+                column_id=column_id,
+                file_id=outcome.file_id,
+                success=False,
+            )
+            await self._broadcast_column_extraction_progress(
+                review_id,
+                column_id=column_id,
+                finished_count=finished_count,
+                total_tasks=total_tasks,
+                saved_count=saved_count,
+                error_count=error_count,
+            )
+            return saved_count, error_count, None
+
+        result = outcome.result
+        cell = self.upsert_tabular_cell_from_extraction(review_id, result)
+        self.db.commit()
+        self.db.refresh(cell)
+
+        payload = cell_result_to_api_payload(result)
+        saved_count += 1
+
+        await self._broadcast_tabular_cell_saved(review_id, cell, result)
+        await self._broadcast_tabular_extraction_cell_finished(
+            review_id,
+            column_id=column_id,
+            file_id=outcome.file_id,
+            success=True,
+        )
+        await self._broadcast_column_extraction_progress(
+            review_id,
+            column_id=column_id,
+            finished_count=finished_count,
+            total_tasks=total_tasks,
+            saved_count=saved_count,
+            error_count=error_count,
+        )
+        return saved_count, error_count, payload
     
     async def run_extraction(self, review_id: str, user_id: str) -> Dict[str, Any]:
         """Run parallel extraction for all documents and columns"""
@@ -1755,12 +1876,9 @@ class TabularReviewService:
         self.db.commit()
         
         try:
-            # Get files - filter by selected_file_ids if specified
-            files_query = self.db.query(File).filter(File.case_id == review.case_id)
-            if review.selected_file_ids:
-                files_query = files_query.filter(File.id.in_(review.selected_file_ids))
-            files = files_query.all()
-            
+            file_ids = review.selected_file_ids if review.selected_file_ids else None
+            files = fetch_files_for_extraction(self.db, review.case_id, file_ids)
+
             # Get columns
             columns = self.db.query(TabularColumn).filter(
                 TabularColumn.tabular_review_id == review_id
@@ -1771,14 +1889,25 @@ class TabularReviewService:
             
             if not columns:
                 raise ValueError("No columns defined for this review")
+
+            from app.services.rag_service import get_rag_service
+            from app.services.document_processor import get_document_processor
+            from app.services.bm25_case_prewarm import ensure_bm25_index
+
+            rag_service = get_rag_service()
+            document_processor = get_document_processor()
+            await asyncio.to_thread(
+                ensure_bm25_index,
+                document_processor,
+                review.case_id,
+                force_rebuild=False,
+            )
             
-            # Create tasks for parallel processing
-            tasks = []
-            for file in files:
-                for column in columns:
-                    # Use smart extraction method
-                    task = self.extract_cell_value_smart(file, column)
-                    tasks.append(task)
+            tasks = [
+                self.extract_cell_value_smart(file, column, rag_service=rag_service)
+                for file in files
+                for column in columns
+            ]
             
             # Execute tasks in parallel
             logger.info(f"Starting parallel extraction: {len(tasks)} tasks")
@@ -1797,123 +1926,22 @@ class TabularReviewService:
                 if result.get("error"):
                     error_count += 1
                     continue
-                
-                # Check if cell already exists
-                existing_cell = self.db.query(TabularCell).filter(
-                    and_(
-                        TabularCell.file_id == result["file_id"],
-                        TabularCell.column_id == result["column_id"]
-                    )
-                ).first()
-                
-                if existing_cell:
-                    # Update existing cell with all new fields
-                    existing_cell.cell_value = result.get("cell_value")
-                    existing_cell.normalized_value = result.get("normalized_value")
-                    existing_cell.verbatim_extract = result.get("verbatim_extract")
-                    existing_cell.reasoning = result.get("reasoning")
-                    existing_cell.source_references = result.get("source_references")
-                    existing_cell.confidence_score = result.get("confidence_score")
-                    existing_cell.candidates = result.get("candidates")
-                    existing_cell.status = result.get("status", "completed")
-                    # Extract source_page from first source_reference if available
-                    source_refs = result.get("source_references", [])
-                    if source_refs and isinstance(source_refs, list) and len(source_refs) > 0:
-                        first_ref = source_refs[0]
-                        if isinstance(first_ref, dict):
-                            existing_cell.source_page = first_ref.get("page")
-                            existing_cell.source_section = first_ref.get("section")
-                    else:
-                        existing_cell.source_page = result.get("source_page")
-                        existing_cell.source_section = result.get("source_section")
-                    existing_cell.updated_at = datetime.utcnow()
-                else:
-                    # Extract source_page from first source_reference if available
-                    source_refs = result.get("source_references", [])
-                    source_page = result.get("source_page")
-                    source_section = result.get("source_section")
-                    
-                    # Phase 4: Extract doc_id and char offsets from source_references
-                    primary_source_doc_id = result["file_id"]  # Use file_id as doc_id (doc_id = file_id for new documents)
-                    primary_source_char_start = None
-                    primary_source_char_end = None
-                    verified_flag = None
-                    
-                    if source_refs and isinstance(source_refs, list) and len(source_refs) > 0:
-                        first_ref = source_refs[0]
-                        if isinstance(first_ref, dict):
-                            source_page = first_ref.get("page") or source_page
-                            source_section = first_ref.get("section") or source_section
-                            # Phase 4: Extract char offsets if available in source_reference
-                            primary_source_char_start = first_ref.get("char_start") or first_ref.get("start_char")
-                            primary_source_char_end = first_ref.get("char_end") or first_ref.get("end_char")
-                            # Phase 4: Extract doc_id if available (for future use)
-                            if first_ref.get("doc_id"):
-                                primary_source_doc_id = first_ref.get("doc_id")
-                            # Phase 4: Extract verified flag if available
-                            if "verified" in first_ref:
-                                verified_flag = first_ref.get("verified")
-                    
-                    # Create new cell with all fields
-                    cell = TabularCell(
-                        tabular_review_id=review_id,
-                        file_id=result["file_id"],
-                        column_id=result["column_id"],
-                        cell_value=result.get("cell_value"),
-                        normalized_value=result.get("normalized_value"),
-                        verbatim_extract=result.get("verbatim_extract"),
-                        reasoning=result.get("reasoning"),
-                        source_references=result.get("source_references"),
-                        confidence_score=result.get("confidence_score"),
-                        candidates=result.get("candidates"),
-                        source_page=source_page,
-                        source_section=source_section,
-                        status=result.get("status", "completed"),
-                        # Phase 4: Citation system fields
-                        primary_source_doc_id=primary_source_doc_id,
-                        primary_source_char_start=primary_source_char_start,
-                        primary_source_char_end=primary_source_char_end,
-                        verified_flag=verified_flag
-                    )
-                    self.db.add(cell)
-                
+
+                # Canonical persistence path (keeps deep-link + provenance fields consistent).
+                self.upsert_tabular_cell_from_extraction(review_id, result)
                 saved_count += 1
             
             self.db.commit()
-            
-            # Automatically build review queue after extraction
+
             try:
-                from app.services.review_queue_service import ReviewQueueService
-                from app.models.tabular_review import ReviewQueueItem
-                
-                queue_service = ReviewQueueService(self.db)
-                queue_items = queue_service.build_review_queue(review_id)
-                
-                # Delete existing unreviewed items
-                self.db.query(ReviewQueueItem).filter(
-                    and_(
-                        ReviewQueueItem.tabular_review_id == review_id,
-                        ReviewQueueItem.is_reviewed == False
-                    )
-                ).delete()
-                
-                # Save new queue items
-                for item in queue_items:
-                    queue_item = ReviewQueueItem(
-                        tabular_review_id=item.review_id,
-                        file_id=item.file_id,
-                        column_id=item.column_id,
-                        cell_id=item.cell_id,
-                        priority=item.priority,
-                        reason=item.reason
-                    )
-                    self.db.add(queue_item)
-                
-                self.db.commit()
-                logger.info(f"Review queue built: {len(queue_items)} items")
+                self._refresh_review_queue(review_id)
             except Exception as e:
-                logger.warning(f"Failed to build review queue: {e}", exc_info=True)
-                # Don't fail extraction if queue building fails
+                logger.warning(
+                    "Failed to build review queue for review %s: %s",
+                    review_id,
+                    e,
+                    exc_info=True,
+                )
             
             # Update review status
             review.status = "completed"
@@ -1934,6 +1962,37 @@ class TabularReviewService:
             review.status = "draft"
             self.db.commit()
             raise
+
+    def _refresh_review_queue(self, review_id: str) -> int:
+        """Rebuild unreviewed queue items after extraction (idempotent)."""
+        from app.models.tabular_review import ReviewQueueItem
+        from app.services.review_queue_service import ReviewQueueService
+
+        queue_service = ReviewQueueService(self.db)
+        queue_items = queue_service.build_review_queue(review_id)
+
+        self.db.query(ReviewQueueItem).filter(
+            and_(
+                ReviewQueueItem.tabular_review_id == review_id,
+                ReviewQueueItem.is_reviewed == False,
+            )
+        ).delete()
+
+        for item in queue_items:
+            self.db.add(
+                ReviewQueueItem(
+                    tabular_review_id=item.review_id,
+                    file_id=item.file_id,
+                    column_id=item.column_id,
+                    cell_id=item.cell_id,
+                    priority=item.priority,
+                    reason=item.reason,
+                )
+            )
+
+        self.db.commit()
+        logger.info("Review queue built: %s items for review %s", len(queue_items), review_id)
+        return len(queue_items)
     
     async def run_column_extraction(self, review_id: str, column_id: str, user_id: str) -> Dict[str, Any]:
         """Run extraction for a specific column across all documents"""
@@ -1964,152 +2023,94 @@ class TabularReviewService:
                 "error_count": 0,
                 "total_tasks": 0,
                 "column_id": column_id,
+                "cells": [],
             }
 
-        # Get files - filter by selected_file_ids if specified
-        files_query = self.db.query(File).filter(File.case_id == review.case_id)
-        if review.selected_file_ids:
-            files_query = files_query.filter(File.id.in_(review.selected_file_ids))
-        files = files_query.all()
-        
+        file_ids = review.selected_file_ids if review.selected_file_ids else None
+        files = fetch_files_for_extraction(self.db, review.case_id, file_ids)
+
         if not files:
             raise ValueError("No files found for this case")
-        
-        # Create tasks for parallel processing (only for this column)
-        tasks = []
-        for file in files:
-            task = self.extract_cell_value_smart(file, column)
-            tasks.append(task)
-        
-        # Execute tasks in parallel
-        logger.info(f"Starting parallel extraction for column {column_id}: {len(tasks)} tasks")
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Save results to database
+
+        from app.services.rag_service import get_rag_service
+        from app.services.document_processor import get_document_processor
+        from app.services.bm25_case_prewarm import ensure_bm25_index
+
+        rag_service = get_rag_service()
+        document_processor = get_document_processor()
+        bm25_ok = await asyncio.to_thread(
+            ensure_bm25_index,
+            document_processor,
+            review.case_id,
+            force_rebuild=False,
+        )
+        logger.info(
+            "Tabular column extraction: column=%s files=%s bm25_ready=%s rerank=%s (shared RAG)",
+            column_id,
+            len(files),
+            bm25_ok,
+            getattr(config, "TABULAR_RERANK_ENABLED", False),
+        )
+
+        extraction_tasks = [
+            asyncio.create_task(
+                self._extract_single_column_cell(file, column, rag_service)
+            )
+            for file in files
+        ]
+
+        logger.info(
+            "Starting parallel extraction for column %s: %s tasks (incremental save + WS)",
+            column_id,
+            len(extraction_tasks),
+        )
+
         saved_count = 0
         error_count = 0
-        
-        for result in results:
-            if isinstance(result, Exception):
-                error_count += 1
-                logger.error(f"Extraction task failed: {result}")
-                continue
-            
-            if result.get("error"):
-                error_count += 1
-                continue
-            
-            # Check if cell already exists
-            existing_cell = self.db.query(TabularCell).filter(
-                and_(
-                    TabularCell.file_id == result["file_id"],
-                    TabularCell.column_id == result["column_id"]
-                )
-            ).first()
-            
-            if existing_cell:
-                # Update existing cell with all new fields
-                existing_cell.cell_value = result.get("cell_value")
-                existing_cell.normalized_value = result.get("normalized_value")
-                existing_cell.verbatim_extract = result.get("verbatim_extract")
-                existing_cell.reasoning = result.get("reasoning")
-                existing_cell.source_references = result.get("source_references")
-                existing_cell.confidence_score = result.get("confidence_score")
-                existing_cell.candidates = result.get("candidates")
-                # Extract source_page from first source_reference if available
-                source_refs = result.get("source_references", [])
-                
-                # Phase 4: Extract doc_id and char offsets from source_references
-                primary_source_doc_id = result["file_id"]  # Use file_id as doc_id
-                primary_source_char_start = None
-                primary_source_char_end = None
-                verified_flag = None
-                
-                if source_refs and isinstance(source_refs, list) and len(source_refs) > 0:
-                    first_ref = source_refs[0]
-                    if isinstance(first_ref, dict):
-                        existing_cell.source_page = first_ref.get("page")
-                        existing_cell.source_section = first_ref.get("section")
-                        # Phase 4: Extract char offsets if available
-                        primary_source_char_start = first_ref.get("char_start") or first_ref.get("start_char")
-                        primary_source_char_end = first_ref.get("char_end") or first_ref.get("end_char")
-                        if first_ref.get("doc_id"):
-                            primary_source_doc_id = first_ref.get("doc_id")
-                        if "verified" in first_ref:
-                            verified_flag = first_ref.get("verified")
-                else:
-                    existing_cell.source_page = result.get("source_page")
-                    existing_cell.source_section = result.get("source_section")
-                
-                # Phase 4: Update citation system fields
-                existing_cell.primary_source_doc_id = primary_source_doc_id
-                existing_cell.primary_source_char_start = primary_source_char_start
-                existing_cell.primary_source_char_end = primary_source_char_end
-                existing_cell.verified_flag = verified_flag
-                existing_cell.status = result.get("status", "completed")
-                existing_cell.updated_at = datetime.utcnow()
-            else:
-                # Extract source_page from first source_reference if available
-                source_refs = result.get("source_references", [])
-                source_page = result.get("source_page")
-                source_section = result.get("source_section")
-                if source_refs and isinstance(source_refs, list) and len(source_refs) > 0:
-                    first_ref = source_refs[0]
-                    if isinstance(first_ref, dict):
-                        source_page = first_ref.get("page") or source_page
-                        source_section = first_ref.get("section") or source_section
-                
-                # Phase 4: Extract doc_id and char offsets from source_references
-                primary_source_doc_id = result["file_id"]  # Use file_id as doc_id
-                primary_source_char_start = None
-                primary_source_char_end = None
-                verified_flag = None
-                
-                if source_refs and isinstance(source_refs, list) and len(source_refs) > 0:
-                    first_ref = source_refs[0]
-                    if isinstance(first_ref, dict):
-                        primary_source_char_start = first_ref.get("char_start") or first_ref.get("start_char")
-                        primary_source_char_end = first_ref.get("char_end") or first_ref.get("end_char")
-                        if first_ref.get("doc_id"):
-                            primary_source_doc_id = first_ref.get("doc_id")
-                        if "verified" in first_ref:
-                            verified_flag = first_ref.get("verified")
-                
-                # Create new cell with all fields
-                cell = TabularCell(
-                    tabular_review_id=review_id,
-                    file_id=result["file_id"],
-                    column_id=result["column_id"],
-                    cell_value=result.get("cell_value"),
-                    normalized_value=result.get("normalized_value"),
-                    verbatim_extract=result.get("verbatim_extract"),
-                    reasoning=result.get("reasoning"),
-                    source_references=result.get("source_references"),
-                    confidence_score=result.get("confidence_score"),
-                    source_page=source_page,
-                    source_section=source_section,
-                    status=result.get("status", "completed"),
-                    candidates=result.get("candidates"),
-                    # Phase 4: Citation system fields
-                    primary_source_doc_id=primary_source_doc_id,
-                    primary_source_char_start=primary_source_char_start,
-                    primary_source_char_end=primary_source_char_end,
-                    verified_flag=verified_flag
-                )
-                self.db.add(cell)
-            
-            saved_count += 1
-        
-        self.db.commit()
-        
-        logger.info(f"Column extraction completed: {saved_count} cells saved, {error_count} errors")
-        
+        cells_payload: List[Dict[str, Any]] = []
+        total_tasks = len(extraction_tasks)
+        finished_count = 0
+
+        for pending in asyncio.as_completed(extraction_tasks):
+            outcome = await pending
+            finished_count += 1
+            saved_count, error_count, payload = await self._apply_column_extraction_outcome(
+                review_id,
+                column_id,
+                outcome,
+                finished_count=finished_count,
+                total_tasks=total_tasks,
+                saved_count=saved_count,
+                error_count=error_count,
+            )
+            if payload is not None:
+                cells_payload.append(payload)
+
+        logger.info(
+            "Column extraction completed: %s cells saved, %s filled, %s errors",
+            saved_count,
+            count_nonempty_cells(cells_payload),
+            error_count,
+        )
+
+        try:
+            self._refresh_review_queue(review_id)
+        except Exception as queue_err:
+            logger.warning(
+                "Review queue refresh failed for review %s: %s",
+                review_id,
+                queue_err,
+                exc_info=True,
+            )
+
         return {
             "status": "completed",
             "saved_count": saved_count,
+            "filled_count": count_nonempty_cells(cells_payload),
             "error_count": error_count,
-            "total_tasks": len(tasks),
-            "column_id": column_id
+            "total_tasks": total_tasks,
+            "column_id": column_id,
+            "cells": cells_payload,
         }
     
     def update_selected_files(
@@ -2129,12 +2130,7 @@ class TabularReviewService:
         
         # Verify files belong to the case
         if file_ids:
-            files = self.db.query(File).filter(
-                and_(
-                    File.id.in_(file_ids),
-                    File.case_id == review.case_id
-                )
-            ).all()
+            files = fetch_files_ids_only(self.db, review.case_id, file_ids)
             if len(files) != len(file_ids):
                 raise ValueError("Some selected files do not belong to this case")
         
@@ -2308,14 +2304,7 @@ class TabularReviewService:
         if not review:
             raise ValueError(f"Tabular review {review_id} not found or access denied")
         
-        # Verify files belong to the case
-        files = self.db.query(File).filter(
-            and_(
-                File.id.in_(file_ids),
-                File.case_id == review.case_id
-            )
-        ).all()
-        
+        files = fetch_files_ids_only(self.db, review.case_id, file_ids)
         if len(files) != len(file_ids):
             raise ValueError("Some files do not belong to this case")
         
@@ -2364,14 +2353,7 @@ class TabularReviewService:
         if not review:
             raise ValueError(f"Tabular review {review_id} not found or access denied")
         
-        # Get files
-        files = self.db.query(File).filter(
-            and_(
-                File.id.in_(file_ids),
-                File.case_id == review.case_id
-            )
-        ).all()
-        
+        files = fetch_files_for_extraction(self.db, review.case_id, file_ids)
         if len(files) != len(file_ids):
             raise ValueError("Some files do not belong to this case")
         
@@ -2385,13 +2367,26 @@ class TabularReviewService:
         
         if len(columns) != len(column_ids):
             raise ValueError("Some columns do not belong to this review")
+
+        from app.services.rag_service import get_rag_service
+        from app.services.document_processor import get_document_processor
+        from app.services.bm25_case_prewarm import ensure_bm25_index
+
+        rag_service = get_rag_service()
+        document_processor = get_document_processor()
+        await asyncio.to_thread(
+            ensure_bm25_index,
+            document_processor,
+            review.case_id,
+            force_rebuild=False,
+        )
         
         # Create tasks for parallel processing
-        tasks = []
-        for file in files:
-            for column in columns:
-                task = self.extract_cell_value_smart(file, column)
-                tasks.append(task)
+        tasks = [
+            self.extract_cell_value_smart(file, column, rag_service=rag_service)
+            for file in files
+            for column in columns
+        ]
         
         # Execute tasks in parallel
         logger.info(f"Starting bulk extraction: {len(tasks)} tasks for {len(file_ids)} files, {len(column_ids)} columns")
@@ -2410,63 +2405,8 @@ class TabularReviewService:
             if result.get("error"):
                 error_count += 1
                 continue
-            
-            # Check if cell already exists
-            existing_cell = self.db.query(TabularCell).filter(
-                and_(
-                    TabularCell.file_id == result["file_id"],
-                    TabularCell.column_id == result["column_id"]
-                )
-            ).first()
-            
-            if existing_cell:
-                # Update existing cell
-                existing_cell.cell_value = result.get("cell_value")
-                existing_cell.normalized_value = result.get("normalized_value")
-                existing_cell.verbatim_extract = result.get("verbatim_extract")
-                existing_cell.reasoning = result.get("reasoning")
-                existing_cell.source_references = result.get("source_references")
-                existing_cell.confidence_score = result.get("confidence_score")
-                existing_cell.candidates = result.get("candidates")
-                source_refs = result.get("source_references", [])
-                if source_refs and isinstance(source_refs, list) and len(source_refs) > 0:
-                    first_ref = source_refs[0]
-                    if isinstance(first_ref, dict):
-                        existing_cell.source_page = first_ref.get("page")
-                        existing_cell.source_section = first_ref.get("section")
-                else:
-                    existing_cell.source_page = result.get("source_page")
-                    existing_cell.source_section = result.get("source_section")
-                existing_cell.status = result.get("status", "completed")
-                existing_cell.updated_at = datetime.utcnow()
-            else:
-                # Create new cell
-                source_refs = result.get("source_references", [])
-                source_page = result.get("source_page")
-                source_section = result.get("source_section")
-                if source_refs and isinstance(source_refs, list) and len(source_refs) > 0:
-                    first_ref = source_refs[0]
-                    if isinstance(first_ref, dict):
-                        source_page = first_ref.get("page") or source_page
-                        source_section = first_ref.get("section") or source_section
-                
-                cell = TabularCell(
-                    tabular_review_id=review_id,
-                    file_id=result["file_id"],
-                    column_id=result["column_id"],
-                    cell_value=result.get("cell_value"),
-                    normalized_value=result.get("normalized_value"),
-                    verbatim_extract=result.get("verbatim_extract"),
-                    reasoning=result.get("reasoning"),
-                    source_references=result.get("source_references"),
-                    confidence_score=result.get("confidence_score"),
-                    source_page=source_page,
-                    source_section=source_section,
-                    status=result.get("status", "completed"),
-                    candidates=result.get("candidates"),
-                )
-                self.db.add(cell)
-            
+
+            self.upsert_tabular_cell_from_extraction(review_id, result)
             saved_count += 1
         
         self.db.commit()
@@ -2505,8 +2445,9 @@ class TabularReviewService:
             # If no selected_file_ids, all files are included, so we can't "delete" them
             # Instead, we'll set selected_file_ids to exclude these files
             # Get all files for the case
-            all_files = self.db.query(File).filter(File.case_id == review.case_id).all()
-            all_file_ids = [f.id for f in all_files]
+            all_file_ids = [
+                f.id for f in fetch_files_for_table(self.db, review.case_id)
+            ]
             updated_file_ids = [fid for fid in all_file_ids if fid not in file_ids]
             review.selected_file_ids = updated_file_ids if updated_file_ids else None
         

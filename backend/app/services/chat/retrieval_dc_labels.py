@@ -10,6 +10,8 @@ from typing import Any, Dict, List, Tuple
 
 from langchain_core.documents import Document
 
+from app.services.chat.citation_file_identity import is_synthetic_doc_label
+
 
 def _int_or_none(value: Any) -> int | None:
     if value is None:
@@ -32,9 +34,15 @@ def compute_retrieval_dc_labels(docs: List[Document]) -> List[Tuple[int, int]]:
 
     for idx, doc in enumerate(docs):
         meta = dict(doc.metadata or {})
-        fid_raw = meta.get("file_id") or meta.get("doc_id")
-        fid = str(fid_raw).strip() if fid_raw is not None else ""
-        key = fid if fid else f"__anon_{idx}"
+        fid_raw = meta.get("file_id")
+        if fid_raw is not None and str(fid_raw).strip() and not is_synthetic_doc_label(fid_raw):
+            key = str(fid_raw).strip()
+        else:
+            doc_raw = meta.get("doc_id")
+            if doc_raw is not None and str(doc_raw).strip() and not is_synthetic_doc_label(doc_raw):
+                key = str(doc_raw).strip()
+            else:
+                key = f"__anon_{idx}"
         if key not in file_to_ord:
             file_to_ord[key] = next_ord
             next_ord += 1

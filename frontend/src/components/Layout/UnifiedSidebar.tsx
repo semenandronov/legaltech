@@ -1,7 +1,9 @@
 import { useNavigate, useLocation } from 'react-router-dom'
-import { LucideIcon, FolderOpen, ChevronLeft, ChevronRight, Scale, Workflow, FileText } from 'lucide-react'
+import { LucideIcon, FolderOpen, ChevronLeft, ChevronRight, Scale, Workflow, FileText, Gavel } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { fetchLegalCorpusStatus } from '../../services/api'
+import { useAuth } from '../../contexts/AuthContext'
+import { canAccessInternalDevTools } from '../../utils/internalDevToolsAccess'
 import './UnifiedSidebar.css'
 
 interface NavItem {
@@ -23,6 +25,8 @@ const LEGAL_CORPUS_UPLOADER_CACHE_KEY = 'legal-corpus-is-uploader'
 const UnifiedSidebar = ({ navItems, title = 'Legal AI', showBackButton = true, forceCollapsed = false }: UnifiedSidebarProps) => {
   const navigate = useNavigate()
   const location = useLocation()
+  const { user } = useAuth()
+  const showInternalSidebarLinks = canAccessInternalDevTools(user?.email)
   const [userCollapsed, setUserCollapsed] = useState(() => {
     const saved = localStorage.getItem(SIDEBAR_STATE_KEY)
     return saved === 'true'
@@ -149,23 +153,41 @@ const UnifiedSidebar = ({ navItems, title = 'Legal AI', showBackButton = true, f
             )
           })}
 
-          {showLegalCorpusItem && !navItems.some((item) => item.path === '/legal-corpus') && (
-            <button
-              type="button"
-              onClick={() => navigate('/legal-corpus')}
-              className={`
+          {showInternalSidebarLinks &&
+            showLegalCorpusItem &&
+            !navItems.some((item) => item.path === '/legal-corpus') && (
+              <button
+                type="button"
+                onClick={() => navigate('/legal-corpus')}
+                className={`
                 unified-sidebar__link
                 ${isActive('/legal-corpus') ? 'unified-sidebar__link--active' : ''}
                 ${isCollapsed ? 'justify-center px-2 py-3' : 'gap-3 px-4 py-3'}
               `}
-            >
-              <span className="unified-sidebar__accent" aria-hidden />
-              <Scale className="unified-sidebar__link-icon w-5 h-5" aria-hidden />
-              {!isCollapsed && <span className="flex-1 text-left">Справочник</span>}
-            </button>
-          )}
+              >
+                <span className="unified-sidebar__accent" aria-hidden />
+                <Scale className="unified-sidebar__link-icon w-5 h-5" aria-hidden />
+                {!isCollapsed && <span className="flex-1 text-left">Справочник</span>}
+              </button>
+            )}
 
-          {!navItems.some((item) => item.path === '/admin/draft-templates') && (
+          {!navItems.some((item) => item.path === '/court-practice') && (
+              <button
+                type="button"
+                onClick={() => navigate('/court-practice')}
+                className={`
+                unified-sidebar__link
+                ${isActive('/court-practice') ? 'unified-sidebar__link--active' : ''}
+                ${isCollapsed ? 'justify-center px-2 py-3' : 'gap-3 px-4 py-3'}
+              `}
+              >
+                <span className="unified-sidebar__accent" aria-hidden />
+                <Gavel className="unified-sidebar__link-icon w-5 h-5" aria-hidden />
+                {!isCollapsed && <span className="flex-1 text-left">Суд. практика</span>}
+              </button>
+            )}
+
+          {showInternalSidebarLinks && !navItems.some((item) => item.path === '/admin/draft-templates') && (
             <button
               type="button"
               onClick={() => navigate('/admin/draft-templates')}

@@ -6,7 +6,7 @@ Phase 5.0: Added dynamic model selection (Lite/Pro) with connection pooling.
 from typing import Optional, Any, Dict
 import os
 import threading
-from app.config import config
+from app.config import clean_env_str, config
 import logging
 from app.services.observability.langfuse_service import trace_event
 
@@ -15,6 +15,19 @@ logger = logging.getLogger(__name__)
 # Кэш экземпляров моделей для connection pooling
 _llm_cache: Dict[str, Any] = {}
 _llm_cache_lock = threading.Lock()
+
+
+def _attach_langfuse_llm_instrumentation(llm: Any) -> Any:
+    """Wrap LLM so every invoke/stream emits Langfuse generation spans."""
+    try:
+        from app.services.observability.llm_langfuse_instrumentation import (
+            apply_langfuse_llm_instrumentation,
+        )
+
+        return apply_langfuse_llm_instrumentation(llm, tags=["assistant", "llm"])
+    except Exception:
+        logger.debug("Langfuse LLM instrumentation skipped", exc_info=True)
+        return llm
 
 
 def _normalize_cache_part(value: Any) -> str:
@@ -81,11 +94,11 @@ def legal_deep_extra_kwargs() -> Dict[str, Any]:
     - GigaChat: модель Pro.
     - Yandex: опционально reasoning_mode из YANDEX_DEEP_REASONING_MODE (иначе — общий YANDEX_REASONING_MODE в ChatYandexGPT).
     """
-    provider = (config.LLM_PROVIDER or "yandex").lower()
+    provider = clean_env_str(config.LLM_PROVIDER or "yandex").lower()
     if provider == "gigachat":
         return {"model": config.GIGACHAT_PRO_MODEL or "GigaChat-Pro"}
     extra: Dict[str, Any] = {}
-    deep_rm = os.getenv("YANDEX_DEEP_REASONING_MODE", "").strip().lower()
+    deep_rm = clean_env_str(os.getenv("YANDEX_DEEP_REASONING_MODE")).lower()
     if deep_rm:
         extra["reasoning_mode"] = deep_rm
     return extra
@@ -113,7 +126,7 @@ def create_llm(
     Returns:
         Экземпляр LLM, опционально обёрнутый в rate limiting
     """
-    provider = (provider or config.LLM_PROVIDER or "yandex").lower()
+    provider = clean_env_str(provider or config.LLM_PROVIDER or "yandex").lower()
     llm_kwargs = dict(kwargs)
     cache_enabled = bool(llm_kwargs.pop("cache_enabled", True))
     cache_key = _build_llm_cache_key(
@@ -189,7 +202,7 @@ def create_llm(
                 with _llm_cache_lock:
                     if len(_llm_cache) < 64:
                         _llm_cache[cache_key] = llm
-            return llm
+            return _attach_langfuse_llm_instrumentation(llm)
             
         except ImportError as e:
             raise ImportError(
@@ -284,7 +297,7 @@ def create_llm(
             with _llm_cache_lock:
                 if len(_llm_cache) < 64:
                     _llm_cache[cache_key] = llm
-        return llm
+        return _attach_langfuse_llm_instrumentation(llm)
 
     if provider == "ollama":
         from langchain_openai import ChatOpenAI
@@ -346,7 +359,7 @@ def create_llm(
             with _llm_cache_lock:
                 if len(_llm_cache) < 64:
                     _llm_cache[cache_key] = llm
-        return llm
+        return _attach_langfuse_llm_instrumentation(llm)
 
     raise ValueError(
         f"Unknown LLM provider: {provider}. "
@@ -454,6 +467,19 @@ def create_llm_for_agent(
     )
     
     return llm
+
+
+def user_facing_llm_reasoning_kwargs(*, mode: str = "normal") -> Dict[str, Any]:
+    """
+    Provider kwargs so user-visible text is emitted in AIMessage.content.
+
+    Yandex DeepSeek may stream internal reasoning in additional_kwargs; for
+    case-assistant answers (normal/garant/draft) we disable it so streaming
+    collectors reading ``content`` receive the final answer.
+    """
+    if (mode or "").strip().lower() == "deep_think":
+        return {}
+    return {"reasoning_mode": "disabled"}
 
 
 def create_legal_llm(

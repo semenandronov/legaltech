@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { Search, Replace, X, ChevronUp, ChevronDown, CaseSensitive, Regex } from 'lucide-react'
 import { Editor } from '@tiptap/react'
 import { toast } from 'sonner'
+import { textSpanToPmRange, replaceTextSpanPreservingMarks } from '@/utils/docTextPosition'
 
 interface FindReplaceProps {
   editor: Editor | null
@@ -10,6 +11,8 @@ interface FindReplaceProps {
 }
 
 interface SearchResult {
+  charFrom: number
+  charTo: number
   from: number
   to: number
   text: string
@@ -25,54 +28,44 @@ export const FindReplace = ({ editor, isOpen, onClose }: FindReplaceProps) => {
   const [showReplace, setShowReplace] = useState(false)
   const findInputRef = useRef<HTMLInputElement>(null)
 
-  const charToPmPos = useCallback((charIndex: number): number => {
-    if (!editor) return -1
-    let charCount = 0
-    let foundPos = -1
-    editor.state.doc.descendants((node, pos) => {
-      if (foundPos !== -1) return false
-      if (node.isText && node.text) {
-        const nodeLen = node.text.length
-        if (charCount + nodeLen > charIndex) {
-          foundPos = pos + (charIndex - charCount)
-          return false
-        }
-        charCount += nodeLen
+  const syncHighlights = useCallback(
+    (nextResults: SearchResult[], index: number) => {
+      if (!editor) return
+      if (nextResults.length === 0) {
+        editor.commands.clearSearchHighlights()
+        return
       }
-      return true
-    })
-    return foundPos
-  }, [editor])
+      editor.commands.setSearchHighlights(
+        nextResults.map((r) => ({ from: r.from, to: r.to })),
+        index,
+      )
+    },
+    [editor],
+  )
 
-  const replacePmRangePreserveMarks = useCallback((from: number, to: number, text: string) => {
-    if (!editor) return
-    const $from = editor.state.doc.resolve(from)
-    const marksAtPos = $from.marks()
-    const newNode = marksAtPos.length > 0
-      ? editor.state.schema.text(text, marksAtPos)
-      : editor.state.schema.text(text)
-    const tr = editor.state.tr.replaceWith(from, to, newNode)
-    editor.view.dispatch(tr)
-    editor.commands.focus()
-  }, [editor])
-
-  // Focus input when opened
   useEffect(() => {
     if (isOpen && findInputRef.current) {
       findInputRef.current.focus()
     }
   }, [isOpen])
 
-  // Search for matches
+  useEffect(() => {
+    if (!isOpen && editor) {
+      editor.commands.clearSearchHighlights()
+    }
+  }, [isOpen, editor])
+
   const performSearch = useCallback(() => {
     if (!editor || !findText) {
       setResults([])
       setCurrentIndex(-1)
+      syncHighlights([], -1)
       return
     }
 
     const searchResults: SearchResult[] = []
-    
+    const doc = editor.state.doc
+
     try {
       let searchPattern: RegExp
       if (useRegex) {
@@ -82,55 +75,64 @@ export const FindReplace = ({ editor, isOpen, onClose }: FindReplaceProps) => {
         searchPattern = new RegExp(escapedText, caseSensitive ? 'g' : 'gi')
       }
 
-      // Search on the full doc text, then map char offsets → ProseMirror positions.
-      // This finds matches that span multiple nodes (e.g., formatting marks).
-      const docText = editor.state.doc.textContent
+      const docText = doc.textContent
       let match: RegExpExecArray | null
       searchPattern.lastIndex = 0
+
       while ((match = searchPattern.exec(docText)) !== null) {
         const charFrom = match.index
         const charTo = match.index + match[0].length
-        const from = charToPmPos(charFrom)
-        const to = charToPmPos(charTo)
-        if (from !== -1 && to !== -1 && from < to) {
+        const pmRange = textSpanToPmRange(doc, charFrom, charTo)
+        if (pmRange) {
           searchResults.push({
-            from,
-            to,
+            charFrom,
+            charTo,
+            from: pmRange.from,
+            to: pmRange.to,
             text: match[0],
           })
         }
-        // Prevent infinite loop for zero-length matches
         if (match[0].length === 0) {
           searchPattern.lastIndex++
         }
       }
     } catch {
-      // Invalid regex - silently ignore
+      // invalid regex
     }
 
-    // Sort results by position
     searchResults.sort((a, b) => a.from - b.from)
 
+    const index = searchResults.length > 0 ? 0 : -1
     setResults(searchResults)
-    setCurrentIndex(searchResults.length > 0 ? 0 : -1)
-    
-    // Highlight first result
-    if (searchResults.length > 0) {
-      highlightResult(searchResults[0])
-    }
-  }, [editor, findText, caseSensitive, useRegex, charToPmPos])
+    setCurrentIndex(index)
+    syncHighlights(searchResults, index)
 
-  // Debounced search
+    if (searchResults.length > 0) {
+      highlightResult(editor, searchResults[0])
+    }
+  }, [editor, findText, caseSensitive, useRegex, syncHighlights])
+
   useEffect(() => {
     const timer = setTimeout(performSearch, 200)
     return () => clearTimeout(timer)
   }, [performSearch])
 
-  const highlightResult = (result: SearchResult) => {
-    if (!editor) return
-    
-    editor
-      .chain()
+  useEffect(() => {
+    if (!isOpen || !editor) return
+    let timer: ReturnType<typeof setTimeout>
+    const onUpdate = () => {
+      clearTimeout(timer)
+      timer = setTimeout(performSearch, 200)
+    }
+    editor.on('update', onUpdate)
+    return () => {
+      clearTimeout(timer)
+      editor.off('update', onUpdate)
+    }
+  }, [isOpen, editor, performSearch])
+
+  const highlightResult = (ed: Editor, result: SearchResult) => {
+    ed.chain()
       .focus()
       .setTextSelection({ from: result.from, to: result.to })
       .scrollIntoView()
@@ -138,77 +140,69 @@ export const FindReplace = ({ editor, isOpen, onClose }: FindReplaceProps) => {
   }
 
   const goToNext = () => {
-    if (results.length === 0) return
+    if (!editor || results.length === 0) return
     const nextIndex = (currentIndex + 1) % results.length
     setCurrentIndex(nextIndex)
-    highlightResult(results[nextIndex])
+    syncHighlights(results, nextIndex)
+    highlightResult(editor, results[nextIndex])
   }
 
   const goToPrev = () => {
-    if (results.length === 0) return
+    if (!editor || results.length === 0) return
     const prevIndex = (currentIndex - 1 + results.length) % results.length
     setCurrentIndex(prevIndex)
-    highlightResult(results[prevIndex])
+    syncHighlights(results, prevIndex)
+    highlightResult(editor, results[prevIndex])
   }
 
   const replaceCurrent = () => {
     if (!editor || currentIndex < 0 || currentIndex >= results.length) return
-    
-    const result = results[currentIndex]
 
-    replacePmRangePreserveMarks(result.from, result.to, replaceText)
-    
-    toast.success('Текст заменён')
-    
-    // Re-search after replacement
-    setTimeout(performSearch, 100)
+    const { charFrom, charTo } = results[currentIndex]
+    if (replaceTextSpanPreservingMarks(editor, charFrom, charTo, replaceText)) {
+      toast.success('Текст заменён')
+      setTimeout(performSearch, 100)
+    }
   }
 
   const replaceAll = () => {
     if (!editor || results.length === 0) return
-    
-    // Replace from end to start to maintain positions
-    const sortedResults = [...results].sort((a, b) => b.from - a.from)
-    
-    const trBase = editor.state.tr
-    let tr = trBase
-    let replacedCount = 0
 
-    for (const result of sortedResults) {
-      const $from = tr.doc.resolve(result.from)
-      const marksAtPos = $from.marks()
-      const newNode = marksAtPos.length > 0
-        ? editor.state.schema.text(replaceText, marksAtPos)
-        : editor.state.schema.text(replaceText)
-      tr = tr.replaceWith(result.from, result.to, newNode)
-      replacedCount++
+    const sorted = [...results].sort((a, b) => b.from - a.from)
+    let tr = editor.state.tr
+
+    for (const { from, to } of sorted) {
+      const $from = tr.doc.resolve(from)
+      const marks = $from.marks()
+      const newNode =
+        marks.length > 0
+          ? editor.state.schema.text(replaceText, marks)
+          : editor.state.schema.text(replaceText)
+      tr = tr.replaceWith(from, to, newNode)
     }
 
     editor.view.dispatch(tr)
     editor.commands.focus()
-    
-    toast.success(`Заменено: ${replacedCount} вхождений`)
-    
-    // Clear results after replacement
+
+    toast.success(`Заменено: ${sorted.length} вхождений`)
     setResults([])
     setCurrentIndex(-1)
+    editor.commands.clearSearchHighlights()
   }
 
-  // Refs for stable callbacks to avoid stale closures
   const goToNextRef = useRef(goToNext)
   const goToPrevRef = useRef(goToPrev)
   const onCloseRef = useRef(onClose)
-  
+
   useEffect(() => {
     goToNextRef.current = goToNext
     goToPrevRef.current = goToPrev
     onCloseRef.current = onClose
   })
 
-  // Handle keyboard shortcuts
   useEffect(() => {
     if (!isOpen) return
-    
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         onCloseRef.current()
@@ -226,7 +220,7 @@ export const FindReplace = ({ editor, isOpen, onClose }: FindReplaceProps) => {
         goToPrevRef.current()
       }
     }
-    
+
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isOpen])
@@ -234,17 +228,16 @@ export const FindReplace = ({ editor, isOpen, onClose }: FindReplaceProps) => {
   if (!isOpen) return null
 
   return (
-    <div 
+    <div
       className="absolute top-12 right-4 bg-white rounded-lg shadow-lg border border-gray-200 p-3 z-50 w-80"
       role="dialog"
       aria-label="Поиск и замена"
     >
-      {/* Find row */}
       <div className="flex items-center gap-2 mb-2">
         <div className="relative flex-1">
-          <Search 
-            className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" 
-            aria-hidden="true" 
+          <Search
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400"
+            aria-hidden="true"
           />
           <input
             ref={findInputRef}
@@ -282,12 +275,13 @@ export const FindReplace = ({ editor, isOpen, onClose }: FindReplaceProps) => {
         </div>
       </div>
 
-      {/* Navigation */}
       <div className="flex items-center justify-between mb-2">
         <span className="text-xs text-gray-500">
-          {results.length > 0 
-            ? `${currentIndex + 1} из ${results.length}` 
-            : findText ? 'Не найдено' : ''}
+          {results.length > 0
+            ? `${currentIndex + 1} из ${results.length}`
+            : findText
+              ? 'Не найдено'
+              : ''}
         </span>
         <div className="flex items-center gap-1">
           <button
@@ -330,13 +324,12 @@ export const FindReplace = ({ editor, isOpen, onClose }: FindReplaceProps) => {
         </div>
       </div>
 
-      {/* Replace row */}
       {showReplace && (
         <div className="space-y-2 pt-2 border-t border-gray-200">
           <div className="relative">
-            <Replace 
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" 
-              aria-hidden="true" 
+            <Replace
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400"
+              aria-hidden="true"
             />
             <input
               type="text"
@@ -368,4 +361,3 @@ export const FindReplace = ({ editor, isOpen, onClose }: FindReplaceProps) => {
     </div>
   )
 }
-

@@ -82,7 +82,7 @@ const DOCXViewer: React.FC<DOCXViewerProps> = ({
 
         const response = await fetch(url, {
           headers: {
-            'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+            'X-Access-Token': localStorage.getItem('access_token') || ''
           }
         })
 
@@ -102,7 +102,7 @@ const DOCXViewer: React.FC<DOCXViewerProps> = ({
 
         const response = await fetch(url, {
           headers: {
-            'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+            'X-Access-Token': localStorage.getItem('access_token') || ''
           }
         })
 

@@ -34,6 +34,7 @@ OBSERVABILITY_EVENT_NAMES = {
     "step_failed",
     "sla_warning",
     "graph_node_completed",
+    "execution_branch",
 }
 
 
@@ -44,6 +45,8 @@ try:
     LANGFUSE_OBSERVE_AVAILABLE = True
 except Exception:
     Langfuse = None  # type: ignore
+    propagate_attributes = None  # type: ignore
+    observe = None  # type: ignore
     LANGFUSE_SDK_AVAILABLE = False
     LANGFUSE_OBSERVE_AVAILABLE = False
 
@@ -65,8 +68,9 @@ class TraceContext:
     name: str
     metadata: Dict[str, Any]
     root_observation: Optional[Any] = None
-    _attrs_scope: Optional[Any] = None
-    _root_scope: Optional[Any] = None
+    user_id: Optional[str] = None
+    session_id: Optional[str] = None
+    tags: Optional[list[str]] = None
 
     @property
     def elapsed_ms(self) -> int:
@@ -281,6 +285,21 @@ def get_langfuse_client() -> Optional[Any]:
     return _client
 
 
+def _merge_trace_correlation_metadata(
+    ctx: TraceContext,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Attach user/session/tags from trace root to child observation metadata."""
+    merged: Dict[str, Any] = dict(metadata or {})
+    if ctx.user_id and "user_id" not in merged:
+        merged["user_id"] = ctx.user_id
+    if ctx.session_id and "session_id" not in merged:
+        merged["session_id"] = ctx.session_id
+    if ctx.tags and "tags" not in merged:
+        merged["tags"] = list(ctx.tags)
+    return merged
+
+
 def create_trace_context(
     *,
     name: str,
@@ -294,59 +313,39 @@ def create_trace_context(
     trace_id_value = normalize_trace_id(trace_id)
     payload = dict(metadata or {})
     safe_metadata = _safe_event_payload(payload)
-    safe_attrs_metadata = _safe_propagated_metadata(payload)
     safe_input_payload = _safe_event_payload(input_payload)
     safe_input_payload = _merge_event_input_with_metadata(safe_input_payload, safe_metadata)
     safe_user_id = _to_attr_string(user_id)
     safe_session_id = _to_attr_string(session_id)
-    safe_trace_name = _to_attr_string(name) or "assistant_trace"
     safe_tags = _safe_propagated_tags(tags)
     client = get_langfuse_client()
     root_observation = None
-    attrs_scope = None
-    root_scope = None
-    if client is not None:
+    if client is not None and LANGFUSE_SDK_AVAILABLE:
         try:
-            # Langfuse Python SDK v4 uses observation-centric API.
-            # We create a root span observation and attach a fixed trace_id via trace_context.
-            attrs_scope = propagate_attributes(
-                trace_name=safe_trace_name,
-                user_id=safe_user_id,
-                session_id=safe_session_id,
-                metadata=safe_attrs_metadata,
-                tags=safe_tags,
-            )
-            attrs_scope.__enter__()
-            root_scope = client.start_as_current_observation(
+            # Manual observation (no OTel active-context attach) so trace lifecycle
+            # is safe across FastAPI StreamingResponse / async-generator boundaries.
+            enriched_metadata = dict(safe_metadata or {})
+            if safe_user_id:
+                enriched_metadata["user_id"] = safe_user_id
+            if safe_session_id:
+                enriched_metadata["session_id"] = safe_session_id
+            if safe_tags:
+                enriched_metadata["tags"] = safe_tags
+            root_observation = client.start_observation(
                 trace_context={"trace_id": trace_id_value},
                 as_type="span",
                 name=name,
                 input=safe_input_payload,
-                metadata=safe_metadata,
+                metadata=enriched_metadata,
             )
-            root_observation = root_scope.__enter__()
-            # Ensure root span always has canonical payload, even if SDK internals
-            # omit attributes passed at start in some versions.
             if root_observation is not None:
                 root_observation.update(
                     input=safe_input_payload,
-                    metadata=safe_metadata,
+                    metadata=enriched_metadata,
                 )
         except Exception as exc:
             logger.warning("Langfuse trace creation failed: %s", exc, exc_info=True)
             root_observation = None
-            if attrs_scope is not None:
-                try:
-                    attrs_scope.__exit__(None, None, None)
-                except Exception:
-                    logger.debug("Langfuse propagate_attributes cleanup failed", exc_info=True)
-            attrs_scope = None
-            if root_scope is not None:
-                try:
-                    root_scope.__exit__(None, None, None)
-                except Exception:
-                    logger.debug("Langfuse root observation cleanup failed", exc_info=True)
-            root_scope = None
 
     return TraceContext(
         trace_id=trace_id_value,
@@ -354,8 +353,9 @@ def create_trace_context(
         name=name,
         metadata=safe_metadata or {},
         root_observation=root_observation,
-        _attrs_scope=attrs_scope,
-        _root_scope=root_scope,
+        user_id=safe_user_id,
+        session_id=safe_session_id,
+        tags=safe_tags,
     )
 
 
@@ -371,7 +371,7 @@ def trace_event(
     ctx = ctx or _active_trace_ctx.get()
     if not ctx:
         return
-    safe_metadata = _safe_event_payload(metadata)
+    safe_metadata = _safe_event_payload(_merge_trace_correlation_metadata(ctx, metadata))
     safe_input = _safe_event_payload(input_payload)
     safe_input = _merge_event_input_with_metadata(safe_input, safe_metadata)
     safe_output = _safe_event_payload(output_payload)
@@ -421,7 +421,7 @@ def trace_span(
         return base.start_observation(
             name=name,
             as_type="span",
-            metadata=_safe_event_payload(metadata),
+            metadata=_safe_event_payload(_merge_trace_correlation_metadata(ctx, metadata)),
             input=_safe_event_payload(input_payload),
             output=_safe_event_payload(output_payload),
         )
@@ -473,30 +473,13 @@ def end_trace(
     try:
         update_trace(ctx, output_payload=output_payload, metadata=merged)
     finally:
-        if ctx._root_scope is not None:
-            try:
-                ctx._root_scope.__exit__(None, None, None)
-            except Exception:
-                logger.debug("Langfuse root scope exit failed", exc_info=True)
-            finally:
-                ctx._root_scope = None
-                ctx.root_observation = None
-        elif ctx.root_observation is not None:
-            # Compatibility path when root scope is not available.
+        if ctx.root_observation is not None:
             try:
                 ctx.root_observation.end()
             except Exception:
                 logger.debug("Langfuse trace end failed", exc_info=True)
             finally:
                 ctx.root_observation = None
-
-        if ctx._attrs_scope is not None:
-            try:
-                ctx._attrs_scope.__exit__(None, None, None)
-            except Exception:
-                logger.debug("Langfuse propagate_attributes exit failed", exc_info=True)
-            finally:
-                ctx._attrs_scope = None
 
         if bool(getattr(config, "LANGFUSE_FLUSH_ON_END", True)):
             flush_langfuse()
@@ -573,22 +556,35 @@ def get_langchain_callbacks(
 ) -> List[Any]:
     """
     Build LangChain callbacks list with Langfuse CallbackHandler when available.
+    Nests generations under the active assistant trace / current span parent.
     Returns an empty list when Langfuse is disabled/unavailable.
     """
     if not langfuse_enabled() or not LANGFUSE_LANGCHAIN_HANDLER_AVAILABLE:
         return []
     try:
-        handler_kwargs: Dict[str, Any] = {}
-        safe_session_id = _to_attr_string(session_id)
-        safe_user_id = _to_attr_string(user_id)
-        safe_tags = _safe_propagated_tags(tags)
-        if safe_session_id:
-            handler_kwargs["session_id"] = safe_session_id
-        if safe_user_id:
-            handler_kwargs["user_id"] = safe_user_id
-        if safe_tags:
-            handler_kwargs["tags"] = safe_tags
-        return [LangfuseLangchainCallbackHandler(**handler_kwargs)]
+        active = get_active_trace_context()
+        resolved_user = _to_attr_string(user_id) or (active.user_id if active else None)
+        resolved_session = _to_attr_string(session_id) or (active.session_id if active else None)
+        resolved_tags = _safe_propagated_tags(tags) or (active.tags if active else None)
+
+        trace_context: Optional[Dict[str, str]] = None
+        if active:
+            trace_context = {"trace_id": active.trace_id}
+            parent_span_id = None
+            parent = _trace_span_parent.get()
+            if parent is not None:
+                parent_span_id = getattr(parent, "id", None)
+            elif active.root_observation is not None:
+                parent_span_id = getattr(active.root_observation, "id", None)
+            if parent_span_id:
+                trace_context["parent_span_id"] = str(parent_span_id)
+
+        handler = LangfuseLangchainCallbackHandler(trace_context=trace_context)
+        # Stash resolved attrs on handler for merge_langfuse_into_runnable_config metadata.
+        handler._assistant_langfuse_user_id = resolved_user  # type: ignore[attr-defined]
+        handler._assistant_langfuse_session_id = resolved_session  # type: ignore[attr-defined]
+        handler._assistant_langfuse_tags = resolved_tags  # type: ignore[attr-defined]
+        return [handler]
     except Exception:
         logger.debug("Langfuse CallbackHandler init failed", exc_info=True)
         return []
@@ -630,7 +626,10 @@ def set_active_trace_context(ctx: Optional[TraceContext]):
 
 def reset_active_trace_context(token) -> None:
     """Reset previously bound coroutine trace context."""
-    _active_trace_ctx.reset(token)
+    try:
+        _active_trace_ctx.reset(token)
+    except Exception:
+        logger.debug("active_trace_context reset failed", exc_info=True)
 
 
 def get_active_trace_context() -> Optional[TraceContext]:
@@ -791,17 +790,37 @@ def start_trace_attribute_scope(
     tags: Optional[list[str]] = None,
 ):
     """
-    Start a nested propagate_attributes scope for current active trace context.
-    Useful when session_id becomes known later in request lifecycle.
+    Enrich active trace with session/user/tags without OTel context attach.
+    Returns a no-op scope so callers can safely __exit__ in finally blocks.
     """
-    scope = propagate_attributes(
-        session_id=_to_attr_string(session_id),
-        user_id=_to_attr_string(user_id),
-        metadata=_safe_propagated_metadata(metadata),
-        tags=_safe_propagated_tags(tags),
-    )
-    scope.__enter__()
-    return scope
+    class _NoopScope:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    ctx = get_active_trace_context()
+    if ctx is None:
+        return _NoopScope()
+
+    merged = dict(ctx.metadata or {})
+    safe_user_id = _to_attr_string(user_id)
+    safe_session_id = _to_attr_string(session_id)
+    safe_tags = _safe_propagated_tags(tags)
+    if safe_user_id:
+        ctx.user_id = safe_user_id
+        merged["user_id"] = safe_user_id
+    if safe_session_id:
+        ctx.session_id = safe_session_id
+        merged["session_id"] = safe_session_id
+    if safe_tags:
+        ctx.tags = safe_tags
+        merged["tags"] = safe_tags
+    if metadata:
+        merged.update(_safe_event_payload(metadata) or {})
+    update_trace(ctx, metadata=merged)
+    return _NoopScope()
 
 
 def observe_span(name: str):

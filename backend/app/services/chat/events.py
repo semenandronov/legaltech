@@ -66,14 +66,25 @@ class DocumentInfo(BaseModel):
     case_id: str = Field(..., description="ID дела")
 
 
+class SelectionRange(BaseModel):
+    """ProseMirror selection range for deterministic apply."""
+    from_pos: int = Field(..., alias="from", description="Start position")
+    to_pos: int = Field(..., alias="to", description="End position")
+
+    model_config = {"populate_by_name": True}
+
+
 class StructuredEdit(BaseModel):
     """Структурированное изменение документа"""
     id: str = Field(..., description="ID изменения")
-    original_text: str = Field(..., description="Исходный текст")
     new_text: str = Field(..., description="Новый текст")
+    original_text: Optional[str] = Field(None, description="Исходный текст (fallback)")
+    node_id: Optional[str] = Field(None, description="TipTap block id (data-id)")
+    selection_range: Optional[SelectionRange] = Field(None, description="Exact selection range from editor")
     context_before: Optional[str] = Field(None, description="Контекст до")
     context_after: Optional[str] = Field(None, description="Контекст после")
     found_in_document: bool = Field(True, description="Найден ли текст в документе")
+    replace_all: bool = Field(False, description="Replace all occurrences of original_text")
 
 
 class PlanStep(BaseModel):
@@ -103,6 +114,50 @@ class FeedbackOption(BaseModel):
 # =============================================================================
 # SSE События
 # =============================================================================
+
+class TurnStartedEvent(BaseModel):
+    """Начало хода редактора (один user message = один turn)."""
+    type: Literal["turn_started"] = "turn_started"
+    turn_id: str = Field(..., description="UUID хода")
+    intent: Literal["ask", "edit", "draft"] = Field(..., description="Режим UI")
+    document_id: Optional[str] = Field(None, description="ID документа редактора")
+    status: Literal["running"] = "running"
+
+    def to_sse(self) -> str:
+        payload = self.model_dump(exclude_none=True)
+        return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+class TurnCompletedEvent(BaseModel):
+    """Завершение хода — канонический снимок для UI/истории."""
+    type: Literal["turn_completed"] = "turn_completed"
+    turn_id: str = Field(..., description="UUID хода")
+    intent: Literal["ask", "edit", "draft"] = Field(..., description="Режим UI")
+    artifact_type: Literal["answer", "patch_set", "draft"] = Field(
+        ..., description="Главный артефакт хода"
+    )
+    status: Literal["success", "error"] = "success"
+    answer_chars: int = 0
+    citations_count: int = 0
+    structured_edits_count: int = 0
+    document_id: Optional[str] = None
+
+    def to_sse(self) -> str:
+        payload = self.model_dump(exclude_none=True)
+        return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+class ContentSyncEvent(BaseModel):
+    """Полная замена текста ответа (после sanitize), не append."""
+    type: Literal["content_sync"] = "content_sync"
+    content: str = Field(..., description="Канонический текст ответа")
+    turn_id: Optional[str] = None
+    intent: Optional[Literal["ask", "edit", "draft"]] = None
+
+    def to_sse(self) -> str:
+        payload = self.model_dump(exclude_none=True)
+        return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
 
 class TextDeltaEvent(BaseModel):
     """Событие дельты текста (streaming ответа)"""
@@ -369,6 +424,9 @@ class PlaybookCheckResultEvent(BaseModel):
 # =============================================================================
 
 SSEEvent = Union[
+    TurnStartedEvent,
+    TurnCompletedEvent,
+    ContentSyncEvent,
     TextDeltaEvent,
     CitationsEvent,
     AnswerBlocksEvent,
@@ -411,6 +469,46 @@ class SSESerializer:
         """
         return event.to_sse()
     
+    @staticmethod
+    def turn_started(
+        turn_id: str,
+        intent: str,
+        *,
+        document_id: Optional[str] = None,
+    ) -> str:
+        return TurnStartedEvent(
+            turn_id=turn_id,
+            intent=intent,  # type: ignore[arg-type]
+            document_id=document_id,
+        ).to_sse()
+
+    @staticmethod
+    def turn_completed(
+        turn_id: str,
+        intent: str,
+        artifact_type: str,
+        *,
+        document_id: Optional[str] = None,
+        status: str = "success",
+        answer_chars: int = 0,
+        citations_count: int = 0,
+        structured_edits_count: int = 0,
+    ) -> str:
+        return TurnCompletedEvent(
+            turn_id=turn_id,
+            intent=intent,  # type: ignore[arg-type]
+            artifact_type=artifact_type,  # type: ignore[arg-type]
+            document_id=document_id,
+            status=status,  # type: ignore[arg-type]
+            answer_chars=answer_chars,
+            citations_count=citations_count,
+            structured_edits_count=structured_edits_count,
+        ).to_sse()
+
+    @staticmethod
+    def content_sync(content: str, *, turn_id: Optional[str] = None, intent: Optional[str] = None) -> str:
+        return ContentSyncEvent(content=content, turn_id=turn_id, intent=intent).to_sse()
+
     @staticmethod
     def text_delta(text: str) -> str:
         """Быстрый метод для text delta"""
@@ -476,7 +574,17 @@ class SSESerializer:
     @staticmethod
     def structured_edits(edits: List[Dict[str, Any]]) -> str:
         """Быстрый метод для structured_edits из dict"""
-        edit_objects = [StructuredEdit(**e) for e in edits]
+        import uuid as _uuid
+        edit_objects = []
+        for e in edits:
+            if not isinstance(e, dict):
+                continue
+            payload = dict(e)
+            if not payload.get("id"):
+                payload["id"] = f"edit-{_uuid.uuid4().hex[:8]}"
+            if payload.get("new_text") is None:
+                payload["new_text"] = ""
+            edit_objects.append(StructuredEdit(**payload))
         return StructuredEditsEvent(edits=edit_objects).to_sse()
     
     @staticmethod

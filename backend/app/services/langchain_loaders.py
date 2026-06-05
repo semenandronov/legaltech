@@ -86,55 +86,16 @@ class DocumentLoaderService:
     @staticmethod
     def load_pdf(content: bytes, filename: str) -> List[Document]:
         """
-        Load PDF using Yandex Vision OCR first (for all PDFs), with safe fallbacks.
+        Load PDF.
+
+        Important:
+        - Prefer the native text layer first (fast, deterministic, no OCR costs).
+        - Use OCR (Yandex Vision) only when the PDF is scanned / has no extractable text.
         """
         try:
-            use_yandex = getattr(config, "PDF_OCR_PREFER_YANDEX", True)
-            yandex_rate_limited = False
-            if use_yandex:
-                try:
-                    from app.services.yandex_vision_ocr import (
-                        vision_api_configured,
-                        yandex_vision_ocr_pdf_documents_for_langchain,
-                    )
-
-                    if vision_api_configured():
-                        # Use new OCR API (model="page") — HTTP-based, 10 MB limit vs old gRPC 4 MB
-                        yandex_docs = yandex_vision_ocr_pdf_documents_for_langchain(
-                            content, filename, model="page"
-                        )
-                        if yandex_docs and DocumentLoaderService._pdf_text_quality_ok(yandex_docs):
-                            logger.info(
-                                "PDF %s: Yandex Vision OCR успешно, %s страниц",
-                                filename,
-                                len(yandex_docs),
-                            )
-                            return yandex_docs
-                        logger.warning(
-                            "PDF %s: Yandex OCR вернул мало текста (%s docs), переключаемся на fallback.",
-                            filename,
-                            len(yandex_docs or []),
-                        )
-                    else:
-                        logger.warning(
-                            "PDF %s: Yandex OCR не сконфигурирован, используем fallback.",
-                            filename,
-                        )
-                except Exception as yv_err:
-                    from app.services.yandex_vision_ocr import (
-                        yandex_ocr_is_temporary,
-                        yandex_ocr_quota_or_temporary_message,
-                    )
-                    yandex_rate_limited = yandex_ocr_is_temporary(yv_err)
-                    logger.warning(
-                        "PDF %s: Yandex OCR не удался (%s), используем fallback.",
-                        filename,
-                        yv_err,
-                    )
-                    if yandex_rate_limited:
-                        logger.warning("PDF %s: %s", filename, yandex_ocr_quota_or_temporary_message(yv_err))
-
             # Fallback #1: native text layer via PyPDF
+            yandex_rate_limited = False
+            yandex_op_failed = False
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
                 tmp_file.write(content)
                 tmp_path = tmp_file.name
@@ -143,6 +104,8 @@ class DocumentLoaderService:
                 documents = loader.load()
                 for doc in documents:
                     doc.metadata["source_file"] = filename
+                    doc.metadata["extraction_source"] = "native_text"
+                    doc.metadata["ocr"] = False
                     source = doc.metadata.get("source", "")
                     if source and "page" in source.lower():
                         try:
@@ -152,21 +115,112 @@ class DocumentLoaderService:
                         except Exception as e:
                             logger.debug("Could not extract page number from source '%s': %s", source, e)
                 total_text = "".join((d.page_content or "").strip() for d in documents)
-                if documents and total_text.strip():
-                    logger.info("PDF %s: fallback PyPDFLoader, %s pages", filename, len(documents))
+                if documents and total_text.strip() and DocumentLoaderService._pdf_text_quality_ok(documents):
+                    logger.info(
+                        "PDF %s: native text layer (PyPDFLoader), %s pages — chunker will use Docling AST without OCR",
+                        filename,
+                        len(documents),
+                    )
                     return documents
             finally:
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
 
-            # Fallback #2: local Tesseract OCR
+            # OCR path (scanned PDF): Yandex Vision OCR (new API: model=page + bbox).
+            use_yandex = getattr(config, "PDF_OCR_PREFER_YANDEX", True)
+            if use_yandex:
+                try:
+                    from app.services.yandex_vision_ocr import (
+                        vision_api_configured,
+                        yandex_vision_ocr_pdf_documents_for_langchain,
+                    )
+                    if vision_api_configured():
+                        yandex_docs = yandex_vision_ocr_pdf_documents_for_langchain(
+                            content, filename, use_structured=True
+                        )
+                        if yandex_docs and DocumentLoaderService._pdf_text_quality_ok(yandex_docs):
+                            logger.info(
+                                "PDF %s: Yandex Vision OCR успешно, %s страниц",
+                                filename,
+                                len(yandex_docs),
+                            )
+                            return yandex_docs
+                        logger.warning(
+                            "PDF %s: Yandex OCR вернул мало текста (%s docs), переключаемся на локальный OCR fallback.",
+                            filename,
+                            len(yandex_docs or []),
+                        )
+                    else:
+                        logger.warning(
+                            "PDF %s: Yandex OCR не сконфигурирован, используем локальный OCR fallback.",
+                            filename,
+                        )
+                except Exception as yv_err:
+                    from app.services.yandex_vision_ocr import (
+                        YandexOcrOperationFailedError,
+                        yandex_ocr_is_temporary,
+                        yandex_ocr_operation_failed_message,
+                        yandex_ocr_quota_or_temporary_message,
+                    )
+                    yandex_rate_limited = yandex_ocr_is_temporary(yv_err)
+                    yandex_op_failed = isinstance(yv_err, YandexOcrOperationFailedError)
+                    logger.warning(
+                        "PDF %s: Yandex OCR не удался (%s), используем локальный OCR fallback.",
+                        filename,
+                        yv_err,
+                    )
+                    if yandex_rate_limited:
+                        logger.warning("PDF %s: %s", filename, yandex_ocr_quota_or_temporary_message(yv_err))
+
+            # Fallback: local OCR (Tesseract или Docling+EasyOCR только если явно задано в env)
+            scan_engine = str(getattr(config, "PDF_SCAN_OCR_ENGINE", "tesseract") or "tesseract").strip().lower()
+            if scan_engine in ("docling_easyocr", "docling", "easyocr"):
+                try:
+                    from app.services.document_converter_service import DocumentConverterService
+
+                    md_text = DocumentConverterService.extract_pdf_text_via_docling(content, filename)
+                    if md_text.strip():
+                        pre_docs = [
+                            Document(
+                                page_content=md_text,
+                                metadata={
+                                    "source_file": filename,
+                                    "source_page": 1,
+                                    "docling_scan_preflight": True,
+                                },
+                            )
+                        ]
+                        if DocumentLoaderService._pdf_text_quality_ok(pre_docs):
+                            logger.info(
+                                "PDF %s: Docling preflight OCR (%s), %s символов (второй проход Docling — в чанкере)",
+                                filename,
+                                scan_engine,
+                                len(md_text),
+                            )
+                            return pre_docs
+                    logger.warning(
+                        "PDF %s: Docling preflight вернул мало текста, переключаемся на Tesseract.",
+                        filename,
+                    )
+                except Exception as doc_exc:
+                    logger.warning(
+                        "PDF %s: Docling preflight OCR не удался (%s), переключаемся на Tesseract.",
+                        filename,
+                        doc_exc,
+                    )
+
             ocr_docs = DocumentLoaderService._ocr_pdf(content, filename)
             if ocr_docs:
                 return ocr_docs
+            if yandex_op_failed:
+                raise ValueError(
+                    yandex_ocr_operation_failed_message(yv_err)
+                    + " Локальный OCR fallback не дал результата."
+                )
             if yandex_rate_limited:
                 raise ValueError(
-                    "OCR временно недоступен из-за лимитов Yandex (429), а локальный OCR не настроен. "
-                    "Повторите попытку позже или установите pytesseract/pymupdf."
+                    yandex_ocr_quota_or_temporary_message(yv_err)
+                    + " Локальный OCR fallback не настроен (pytesseract/pymupdf)."
                 )
             raise ValueError(
                 "Не удалось извлечь текст из PDF: отсутствует текстовый слой и OCR не дал результата."

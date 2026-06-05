@@ -1,6 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
 import { X, Upload, Trash2, Loader2 } from 'lucide-react'
 import { addFilesToCase, deleteFileFromCase, getCaseFiles, UploadedFile } from '../../services/api'
+import {
+  GoogleDriveImportButton,
+  mergeUploadedFiles,
+} from './GoogleDriveImportButton'
 
 interface DocumentUploadModalProps {
   isOpen: boolean
@@ -300,6 +304,23 @@ const DocumentUploadModal = ({ isOpen, onClose, caseId, onUploadComplete }: Docu
                 PDF, DOCX, TXT, XLSX, CSV, изображения (PNG, JPEG, WebP…) • Максимальный размер: {MAX_FILE_SIZE_MB} МБ
               </p>
             </div>
+          </div>
+
+          <div className="flex items-center gap-3 my-5">
+            <div className="flex-1 h-px bg-gray-200" />
+            <span className="text-xs text-gray-500">или</span>
+            <div className="flex-1 h-px bg-gray-200" />
+          </div>
+
+          <div className="flex justify-center">
+            <GoogleDriveImportButton
+              caseId={caseId}
+              disabled={isUploading}
+              onImportComplete={(response) => {
+                setUploadedFiles((prev) => mergeUploadedFiles(prev, response))
+                onUploadComplete()
+              }}
+            />
           </div>
 
           {/* Per-file upload progress */}

@@ -114,24 +114,37 @@ class DocumentConverterService:
             return self._convert_pdf_pypdf(file_content)
 
     @staticmethod
-    def _build_docling_pdf_converter() -> Optional[Any]:
+    def _build_pdf_pipeline_options(*, do_ocr: bool = True) -> Optional[Any]:
         """
-        Build tuned Docling converter for PDF->HTML editor rendering.
-        Falls back to default converter if advanced options are unavailable.
+        Единые PdfPipelineOptions для HTML-редактора, LegalChunkerV2 и preflight OCR в DocumentLoaderService.
+
+        do_ocr=False: только текстовый слой PDF + layout/таблицы (для PDF с native text, без повторного OCR).
         """
         try:
-            from docling.datamodel.base_models import InputFormat
-            from docling.datamodel.pipeline_options import PdfPipelineOptions, TableFormerMode
-            from docling.document_converter import DocumentConverter, PdfFormatOption
-        except Exception:
+            from docling.datamodel.pipeline_options import (
+                PdfPipelineOptions,
+                TableFormerMode,
+                EasyOcrOptions,
+                TesseractCliOcrOptions,
+            )
+        except Exception as exc:
+            logger.debug("Docling PdfPipelineOptions import failed: %s", exc)
             return None
 
         pipeline_options = PdfPipelineOptions(
             do_table_structure=bool(getattr(config, "DOCLING_PDF_TABLE_STRUCTURE", True)),
-            enable_remote_services=bool(
-                getattr(config, "DOCLING_ENABLE_REMOTE_SERVICES", False)
-            ),
+            do_ocr=bool(do_ocr),
+            enable_remote_services=bool(getattr(config, "DOCLING_ENABLE_REMOTE_SERVICES", False)),
         )
+        if not do_ocr:
+            artifacts_path = str(getattr(config, "DOCLING_ARTIFACTS_PATH", "") or "").strip()
+            if artifacts_path:
+                pipeline_options.artifacts_path = artifacts_path
+            return pipeline_options
+
+        engine = str(getattr(config, "DOCLING_PDF_OCR_ENGINE", "auto") or "auto").strip().lower()
+        if engine in ("docling_easyocr",):
+            engine = "easyocr"
         table_opts = getattr(pipeline_options, "table_structure_options", None)
         if table_opts is not None:
             table_opts.do_cell_matching = bool(
@@ -141,21 +154,105 @@ class DocumentConverterService:
             if hasattr(TableFormerMode, mode_name):
                 table_opts.mode = getattr(TableFormerMode, mode_name)
 
-        ocr_opts = getattr(pipeline_options, "ocr_options", None)
-        if ocr_opts is not None:
-            ocr_opts.force_full_page_ocr = bool(
-                getattr(config, "DOCLING_OCR_FORCE_FULL_PAGE", False)
+        force_fp = bool(getattr(config, "DOCLING_OCR_FORCE_FULL_PAGE", False))
+        bitmap_thr = float(getattr(config, "DOCLING_OCR_BITMAP_AREA_THRESHOLD", 0.05) or 0.05)
+
+        if engine == "easyocr":
+            raw = str(getattr(config, "DOCLING_OCR_EASYOCR_LANGS", "ru,en") or "ru,en")
+            ez_langs = [p.strip() for p in raw.split(",") if p.strip()]
+            if not ez_langs:
+                ez_langs = ["ru", "en"]
+            pipeline_options.ocr_options = EasyOcrOptions(
+                lang=ez_langs,
+                force_full_page_ocr=force_fp,
+                bitmap_area_threshold=bitmap_thr,
             )
-            ocr_opts.bitmap_area_threshold = float(
-                getattr(config, "DOCLING_OCR_BITMAP_AREA_THRESHOLD", 0.05)
+        elif engine in ("tesseract_cli", "tesseract"):
+            raw = str(getattr(config, "DOCLING_OCR_TESSERACT_LANGS", "rus,eng") or "rus,eng")
+            tess_langs = [p.strip() for p in raw.replace("+", ",").split(",") if p.strip()]
+            if not tess_langs:
+                tess_langs = ["rus", "eng"]
+            pipeline_options.ocr_options = TesseractCliOcrOptions(
+                lang=tess_langs,
+                force_full_page_ocr=force_fp,
+                bitmap_area_threshold=bitmap_thr,
             )
-            langs = list(getattr(config, "DOCLING_OCR_LANGUAGES", []) or [])
-            if langs:
-                ocr_opts.lang = langs
+        else:
+            ocr_opts = getattr(pipeline_options, "ocr_options", None)
+            if ocr_opts is not None:
+                ocr_opts.force_full_page_ocr = force_fp
+                ocr_opts.bitmap_area_threshold = bitmap_thr
+                langs = list(getattr(config, "DOCLING_OCR_LANGUAGES", []) or [])
+                if langs:
+                    try:
+                        ocr_opts.lang = langs
+                    except Exception:
+                        logger.debug("DOCLING_OCR_LANGUAGES не применимы к текущему auto OCR", exc_info=True)
 
         artifacts_path = str(getattr(config, "DOCLING_ARTIFACTS_PATH", "") or "").strip()
         if artifacts_path:
             pipeline_options.artifacts_path = artifacts_path
+
+        return pipeline_options
+
+    @staticmethod
+    def extract_pdf_text_via_docling(content: bytes, filename: str) -> str:
+        """
+        Один проход Docling по PDF → markdown для паспорта/БД.
+        Без metadata ocr:true — дальше LegalChunkerV2 снова конвертирует PDF и получает prov/bbox.
+        """
+        pipeline_options = DocumentConverterService._build_pdf_pipeline_options(do_ocr=True)
+        if pipeline_options is None:
+            raise RuntimeError("Docling недоступен (импорт pipeline_options)")
+
+        from docling.datamodel.base_models import InputFormat, DocumentStream
+        from docling.document_converter import DocumentConverter, PdfFormatOption
+
+        converter = DocumentConverter(
+            format_options={
+                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
+            }
+        )
+        safe_name = (filename or "document.pdf").replace("\\", "/").split("/")[-1] or "document.pdf"
+        source = DocumentStream(name=safe_name, stream=BytesIO(content))
+        max_pages = max(1, int(getattr(config, "DOCLING_MAX_PAGES_PER_DOC", 2000) or 2000))
+        max_file_size = max(
+            1,
+            int(getattr(config, "DOCLING_MAX_FILE_SIZE_BYTES", 60 * 1024 * 1024) or 60 * 1024 * 1024),
+        )
+        try:
+            logger.info(
+                "Docling PDF preflight OCR start (%s bytes, engine=%s); затем чанкер выполнит второй проход Docling",
+                len(content or b""),
+                str(getattr(config, "DOCLING_PDF_OCR_ENGINE", "auto") or "auto"),
+            )
+            result = converter.convert(
+                source=source,
+                max_num_pages=max_pages,
+                max_file_size=max_file_size,
+            )
+            doc = result.document
+            exporter = getattr(doc, "export_to_markdown", None)
+            md = exporter() if callable(exporter) else ""
+            return (md or "").strip()
+        finally:
+            source.stream.close()
+
+    @staticmethod
+    def _build_docling_pdf_converter(*, do_ocr: bool = True) -> Optional[Any]:
+        """
+        Build tuned Docling converter for PDF->HTML editor rendering.
+        Falls back to default converter if advanced options are unavailable.
+        """
+        try:
+            from docling.datamodel.base_models import InputFormat
+            from docling.document_converter import DocumentConverter, PdfFormatOption
+        except Exception:
+            return None
+
+        pipeline_options = DocumentConverterService._build_pdf_pipeline_options(do_ocr=do_ocr)
+        if pipeline_options is None:
+            return None
 
         return DocumentConverter(
             format_options={

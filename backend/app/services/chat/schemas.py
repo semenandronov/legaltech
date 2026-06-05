@@ -154,11 +154,14 @@ class DocumentCreatedResponse(BaseModel):
 class StructuredEditResponse(BaseModel):
     """Структурированное изменение"""
     id: str = Field(..., description="ID изменения")
-    original_text: str = Field(..., description="Исходный текст")
     new_text: str = Field(..., description="Новый текст")
+    original_text: Optional[str] = Field(None, description="Исходный текст")
+    node_id: Optional[str] = Field(None, description="TipTap block id")
+    selection_range: Optional[Dict[str, int]] = Field(None, description="ProseMirror range")
     context_before: Optional[str] = Field(None, description="Контекст до")
     context_after: Optional[str] = Field(None, description="Контекст после")
     found_in_document: bool = Field(True, description="Найден ли текст в документе")
+    replace_all: bool = Field(False, description="Replace all occurrences")
 
 
 class StructuredEditsResponse(BaseModel):

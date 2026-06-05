@@ -15,7 +15,14 @@ from langchain_core.documents import Document
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
+from app.services.chat.citation_file_identity import (
+    CaseCitationFileIndex,
+    is_synthetic_doc_label,
+    parse_passport_filename,
+    resolve_citation_file_identity,
+)
 from app.services.chat.retrieval_dc_labels import compute_retrieval_dc_labels
+from app.services.prov_span_utils import narrow_char_span_to_quote
 from app.services.rag_service import RAGService
 
 logger = logging.getLogger(__name__)
@@ -108,11 +115,9 @@ def _as_int(value: Any) -> Optional[int]:
 
 def _as_page(meta: Dict[str, Any]) -> Optional[int]:
     """
-    STRICT: return 1-based page number ONLY from Docling provenance.
+    STRICT: return 1-based page number ONLY from Docling provenance (dl_meta).
 
-    We intentionally do not fall back to other keys or heuristics because:
-    - chunk indices are not pages (this previously produced page=29 for a 6-page PDF)
-    - page guessing causes incorrect navigation/highlights
+    Used as the first-tier source in resolve_citation_page_from_metadata().
     """
 
     # Docling LangChain: dl_meta.doc_items[].prov[].page_no is the ONLY reliable page.
@@ -149,6 +154,66 @@ def _as_page(meta: Dict[str, Any]) -> Optional[int]:
                 return min_pno
 
     return None
+
+
+def resolve_citation_page_from_metadata(meta: Optional[Dict[str, Any]]) -> Optional[int]:
+    """
+    Unified 1-based page for citations / PDF navigation.
+
+    1. Docling dl_meta provenance (_as_page) — highest fidelity.
+    2. LegalChunkerV2: page_start / page_end (from Docling segment prov when present).
+       These are deliberately NOT chunk indices (see _as_page docstring history).
+    3. Legacy source_page / loader hints (often 1-based for PDF pages).
+    """
+    if not isinstance(meta, dict):
+        return None
+    p_dl = _as_page(meta)
+    if p_dl is not None:
+        return p_dl
+
+    for key in ("page_start", "page_end"):
+        v = _as_int(meta.get(key))
+        if v is None:
+            continue
+        if v == 0:
+            return 1
+        if v >= 1:
+            return v
+        return v + 1
+
+    src = _as_int(meta.get("source_page"))
+    if src is not None:
+        if src == 0:
+            return 1
+        if src >= 1:
+            return src
+        return src + 1
+
+    return None
+
+
+def _citation_bbox_char_span(
+    *,
+    original: Optional[str],
+    char_start: Optional[int],
+    char_end: Optional[int],
+    quote_anchor: Optional[str],
+    quote: Optional[str],
+) -> Tuple[Optional[int], Optional[int]]:
+    """Document char span used to filter prov/bbox for a single citation highlight."""
+    if char_start is None or char_end is None or char_end <= char_start:
+        return None, None
+    hs, he = int(char_start), int(char_end)
+    if original:
+        anchor = (quote_anchor or quote or "").strip()
+        if anchor:
+            hs, he = narrow_char_span_to_quote(
+                original=original,
+                span_start=hs,
+                span_end=he,
+                quote_anchor=anchor,
+            )
+    return hs, he
 
 
 def _is_dev_env() -> bool:
@@ -250,6 +315,32 @@ def _align_offsets_to_original(
     return char_start, char_end, None, meta
 
 
+def fetch_originals_for_citation_docs(
+    db: Session,
+    case_id: str,
+    docs: List[Document],
+) -> Dict[str, str]:
+    """Load original_text only for files resolved from retrieval docs (not doc_N placeholders)."""
+    from app.services.chat.citation_file_identity import (
+        CaseCitationFileIndex,
+        collect_resolved_file_ids_for_originals,
+    )
+    from app.services.chat.retrieval_dc_labels import compute_retrieval_dc_labels
+
+    if not db or not case_id or not docs:
+        return {}
+    try:
+        index = CaseCitationFileIndex.from_db(db, str(case_id))
+    except Exception as exc:
+        logger.warning("[citations] originals index failed case=%s: %s", case_id, exc)
+        return fetch_original_text_map_for_case(db, case_id)
+    dc = compute_retrieval_dc_labels(docs)
+    file_ids = collect_resolved_file_ids_for_originals(docs, dc, index=index)
+    if file_ids:
+        return fetch_original_text_map_for_case(db, case_id, file_ids=file_ids)
+    return fetch_original_text_map_for_case(db, case_id)
+
+
 def build_retrieval_citations(
     docs: List[Document],
     *,
@@ -257,24 +348,84 @@ def build_retrieval_citations(
     quote_max_len: int = 260,
     anchor_max_len: int = 800,
     source_type: str = "document",
+    case_id: Optional[str] = None,
+    db: Optional[Session] = None,
+    case_file_index: Optional[CaseCitationFileIndex] = None,
 ) -> List[Dict[str, Any]]:
     """
     Строит список dict, совместимых с Citation (events.py) и SSESerializer.
 
     quote_anchor: подстрока для DOM-поиска; при наличии original_text и валидных
     char_start/char_end — срез из original_text, иначе из page_content.
+
+    source_id всегда стремится быть File.id дела (UUID), никогда doc_1 / D-метки.
     """
     out: List[Dict[str, Any]] = []
-    originals = original_text_by_file_id or {}
+    originals = dict(original_text_by_file_id or {})
     dc_labels = compute_retrieval_dc_labels(docs)
+
+    index: Optional[CaseCitationFileIndex] = case_file_index
+    if index is None and source_type == "document" and db and case_id:
+        try:
+            index = CaseCitationFileIndex.from_db(db, str(case_id))
+        except Exception as exc:
+            logger.warning(
+                "[citations] case file index load failed case=%s: %s",
+                case_id,
+                exc,
+            )
+            index = None
+
+    d_to_file_id: Dict[int, str] = {}
+    if index and source_type == "document":
+        for doc, (retrieval_d, _retrieval_c) in zip(docs, dc_labels):
+            meta = dict(doc.metadata or {})
+            pc = str(doc.page_content or "")
+            fid, _ = resolve_citation_file_identity(
+                meta,
+                pc,
+                retrieval_d=retrieval_d,
+                index=index,
+                d_to_file_id=d_to_file_id,
+            )
+            if fid and retrieval_d not in d_to_file_id:
+                d_to_file_id[retrieval_d] = fid
 
     for doc, (retrieval_d, retrieval_c) in zip(docs, dc_labels):
         meta = dict(doc.metadata or {})
         pc = str(doc.page_content or "")
 
-        source_id = str(meta.get("file_id") or meta.get("doc_id") or "unknown")
-        file_name = str(meta.get("source_file") or meta.get("filename") or "Документ")
-        page = _as_page(meta)
+        if source_type == "document" and index is not None:
+            source_id, file_name = resolve_citation_file_identity(
+                meta,
+                pc,
+                retrieval_d=retrieval_d,
+                index=index,
+                d_to_file_id=d_to_file_id,
+            )
+            if not source_id:
+                logger.warning(
+                    "[citations] unresolved file identity d=%s meta_keys=%s has_passport_line=%s",
+                    retrieval_d,
+                    list(meta.keys())[:8],
+                    bool(parse_passport_filename(pc)),
+                )
+                source_id_str = ""
+            else:
+                source_id_str = source_id
+        elif source_type == "document":
+            raw = str(meta.get("file_id") or meta.get("doc_id") or "").strip()
+            source_id_str = "" if is_synthetic_doc_label(raw) else (raw or "")
+            file_name = str(meta.get("source_file") or meta.get("filename") or "Документ")
+            if is_synthetic_doc_label(file_name):
+                file_name = parse_passport_filename(pc) or "Документ"
+        else:
+            source_id_str = str(
+                meta.get("file_id") or meta.get("doc_id") or meta.get("source_id") or ""
+            )
+            file_name = str(meta.get("source_file") or meta.get("filename") or "Документ")
+
+        page = resolve_citation_page_from_metadata(meta)
 
         char_start = _as_int(meta.get("char_start"))
         if char_start is None:
@@ -287,12 +438,9 @@ def build_retrieval_citations(
         if chunk_id is not None:
             chunk_id = str(chunk_id)
 
-        bbox_regions, page_bbox = RAGService._extract_bbox_regions(meta)
-        bbox = bbox_regions[0] if bbox_regions else None
-
         quote = (pc[:quote_max_len] + ("..." if len(pc) > quote_max_len else "")) if pc else ""
 
-        original = originals.get(source_id) if originals else None
+        original = originals.get(source_id_str) if (originals and source_id_str) else None
         if original is not None:
             char_start, char_end, aligned_anchor, align_meta = _align_offsets_to_original(
                 original=original,
@@ -303,7 +451,7 @@ def build_retrieval_citations(
             if align_meta.get("aligned"):
                 logger.debug(
                     "[citations] aligned offsets file=%s chunk=%s method=%s",
-                    source_id,
+                    source_id_str,
                     chunk_id or "-",
                     align_meta.get("method"),
                 )
@@ -323,24 +471,38 @@ def build_retrieval_citations(
                 if not (0 <= char_start <= char_end <= len(original)):
                     logger.debug(
                         "[citations] invalid offsets file=%s start=%s end=%s olen=%s",
-                        source_id,
+                        source_id_str,
                         char_start,
                         char_end,
                         len(original),
                     )
+
+        bbox_hs, bbox_he = _citation_bbox_char_span(
+            original=original,
+            char_start=char_start,
+            char_end=char_end,
+            quote_anchor=quote_anchor,
+            quote=quote,
+        )
+        bbox_regions, page_bbox = RAGService._extract_bbox_regions(
+            meta,
+            char_start=bbox_hs,
+            char_end=bbox_he,
+        )
+        bbox = bbox_regions[0] if bbox_regions else None
 
         # Полный текст чанка для UI (поиск в PDF как на /chunk-lab); лимит на размер SSE.
         text_preview_full = (pc[:20000] + ("…" if len(pc) > 20000 else "")) if pc else None
 
         payload: Dict[str, Any] = {
             "citation_id": _make_citation_id(
-                source_id=source_id,
+                source_id=source_id_str or file_name,
                 chunk_id=chunk_id,
                 char_start=char_start,
                 char_end=char_end,
                 page=page,
             ),
-            "source_id": source_id,
+            "source_id": source_id_str,
             "file_name": file_name,
             "page": page,
             "quote": quote if quote else None,
@@ -428,6 +590,9 @@ def enrich_structured_citations(
     originals: Dict[str, str],
     *,
     anchor_max_len: int = 800,
+    case_id: Optional[str] = None,
+    db: Optional[Session] = None,
+    case_file_index: Optional[CaseCitationFileIndex] = None,
 ) -> List[Dict[str, Any]]:
     """
     Приводит citations из generate_with_structured_citations к SSE-полям:
@@ -439,23 +604,37 @@ def enrich_structured_citations(
         if cid is not None:
             chunk_to_doc[str(cid)] = d
 
+    index: Optional[CaseCitationFileIndex] = case_file_index
+    if index is None and db and case_id:
+        try:
+            index = CaseCitationFileIndex.from_db(db, str(case_id))
+        except Exception as exc:
+            logger.warning("[citations] enrich index load failed case=%s: %s", case_id, exc)
+
     out: List[Dict[str, Any]] = []
     for raw in citation_dicts:
         ec = dict(raw)
         chunk_id = ec.get("chunk_id")
         doc = chunk_to_doc.get(str(chunk_id)) if chunk_id is not None else None
         meta = dict(doc.metadata or {}) if doc else {}
-        source_id = str(meta.get("file_id") or ec.get("source_id") or "unknown")
-        file_name = str(ec.get("file_name") or meta.get("source_file") or "Документ")
-        # STRICT: never trust model-provided page numbers here.
-        # Page and bbox must come from Docling provenance only (dl_meta...), otherwise None.
-        page = _as_page(meta)
-        bbox_regions, page_bbox = RAGService._extract_bbox_regions(meta)
-        bbox = bbox_regions[0] if bbox_regions else None
+        pc = str(getattr(doc, "page_content", "") or "") if doc else ""
+        if index is not None:
+            source_id, file_name = resolve_citation_file_identity(meta, pc, index=index)
+            source_id = source_id or ""
+        else:
+            raw_sid = str(meta.get("file_id") or ec.get("source_id") or "").strip()
+            source_id = "" if is_synthetic_doc_label(raw_sid) else raw_sid
+            file_name = str(
+                ec.get("file_name") or meta.get("source_file") or meta.get("source_filename") or "Документ"
+            )
+            if is_synthetic_doc_label(file_name):
+                file_name = parse_passport_filename(pc) or "Документ"
+        # Page from metadata only (dl_meta, LegalChunker page_*, loader source_page — not model guesses).
+        page = resolve_citation_page_from_metadata(meta)
 
         char_start = _as_int(ec.get("char_start"))
         char_end = _as_int(ec.get("char_end"))
-        original = originals.get(source_id) if originals else None
+        original = originals.get(source_id) if (originals and source_id) else None
         quote_anchor: Optional[str] = None
         if original is not None:
             char_start, char_end, aligned_anchor, _ = _align_offsets_to_original(
@@ -476,6 +655,20 @@ def enrich_structured_citations(
                 quote_anchor = (ec.get("quote") or "")[:anchor_max_len] or None
         else:
             quote_anchor = (ec.get("quote") or "")[:anchor_max_len] or None
+
+        bbox_hs, bbox_he = _citation_bbox_char_span(
+            original=original,
+            char_start=char_start,
+            char_end=char_end,
+            quote_anchor=quote_anchor,
+            quote=str(ec.get("quote") or "") or None,
+        )
+        bbox_regions, page_bbox = RAGService._extract_bbox_regions(
+            meta,
+            char_start=bbox_hs,
+            char_end=bbox_he,
+        )
+        bbox = bbox_regions[0] if bbox_regions else None
 
         pc_struct = str(getattr(doc, "page_content", "") or "") if doc else ""
         text_preview_struct = (
@@ -500,7 +693,7 @@ def enrich_structured_citations(
             "char_end": char_end,
             "context_before": ec.get("context_before"),
             "context_after": ec.get("context_after"),
-            "source_type": "document",
+            "source_type": meta.get("source_type", "document"),
             "bbox": bbox,
             "page_bbox": page_bbox,
         }

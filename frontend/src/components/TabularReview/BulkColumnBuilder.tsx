@@ -19,6 +19,7 @@ import { tabularReviewApi } from "@/services/tabularReviewApi"
 
 const COLUMN_TYPES = [
   { value: "text", label: "Свободный ответ", icon: "≡" },
+  { value: "document_type", label: "Тип документа", icon: "📋" },
   { value: "number", label: "Длительность", icon: "🕐" },
   { value: "currency", label: "Валюта", icon: "$" },
   { value: "yes_no", label: "Классификация", icon: "☑" },
@@ -201,8 +202,8 @@ export function BulkColumnBuilder({
         />
         <div className="flex items-center justify-between gap-4">
           <p className="text-sm text-muted-foreground flex-1">
-            Для наилучших результатов укажите тип документа, который вы просматриваете, и ключевую
-            информацию, которую вы хотите извлечь.
+            Формулируйте конкретные вопросы по тексту файла (даты, стороны, тип документа, суммы).
+            Для категории документа используйте тип колонки «Тип документа».
           </p>
           <Button
             onClick={handleGenerate}

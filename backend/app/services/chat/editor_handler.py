@@ -49,7 +49,11 @@ class EditorHandler:
         document_id: str,
         document_context: str,
         selected_text: Optional[str] = None,
-        editor_mode_hint: Optional[str] = None
+        editor_mode_hint: Optional[str] = None,
+        attached_file_ids: Optional[List[str]] = None,
+        deep_think: bool = False,
+        legal_research: bool = False,
+        session_id: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         """
         Обработать запрос в контексте документа
@@ -66,8 +70,14 @@ class EditorHandler:
             SSE события
         """
         try:
-            logger.info(f"[EditorHandler] Processing request for document {document_id}")
-            logger.info(f"[EditorHandler] Document length: {len(document_context)}, selected: {len(selected_text) if selected_text else 0}")
+            logger.info(
+                "[EditorHandler] request document_id=%s mode_hint=%s doc_chars=%s selected_chars=%s attached=%s",
+                document_id,
+                editor_mode_hint,
+                len(document_context or ""),
+                len(selected_text or ""),
+                len(attached_file_ids or []),
+            )
             
             # Важно: НЕ смешиваем инструкции/данные документа с user-сообщением.
             # Документ и выделение передаются отдельными полями (document_context/selected_text),
@@ -84,6 +94,15 @@ class EditorHandler:
             chat_service = get_chat_graph_service(self.db, self.rag_service)
             
             # Вызываем stream_response с document_context
+            from app.services.chat.editor_session import resolve_editor_chat_session_id
+
+            stable_session = resolve_editor_chat_session_id(
+                user_id=str(current_user.id),
+                case_id=case_id,
+                document_id=document_id or "new",
+                requested_session_id=session_id,
+            )
+
             async for event in chat_service.stream_response(
                 case_id=case_id,
                 question=enhanced_question,
@@ -91,10 +110,13 @@ class EditorHandler:
                 document_context=document_context,
                 document_id=document_id,
                 selected_text=selected_text,
-                deep_think=False,
-                legal_research=False,
+                deep_think=deep_think,
+                legal_research=legal_research,
                 draft_mode=False,
-                editor_mode_hint=editor_mode_hint
+                editor_mode_hint=editor_mode_hint,
+                attached_file_ids=attached_file_ids,
+                session_id=stable_session,
+                persist_history=False,
             ):
                 # Обрабатываем SSE события, включая structured_edits
                 # structured_edits теперь приходят из графа через SSE

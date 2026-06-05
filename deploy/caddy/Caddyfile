@@ -1,0 +1,2 @@
+# Template reference — vm-setup-https.sh generates /etc/caddy/Caddyfile on the VM.
+# Do not edit placeholders here; use scripts/vm-setup-https.sh

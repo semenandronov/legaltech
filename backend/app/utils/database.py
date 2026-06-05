@@ -9,6 +9,7 @@ from app.models.analysis import AnalysisResult, Discrepancy, TimelineEvent, Docu
 from app.models.tabular_review import TabularReview, TabularColumn, TabularCell, TabularColumnTemplate, TabularDocumentStatus, CellComment  # Import tabular review models to register them
 from app.models.document_editor import Document, DocumentVersion  # Import document editor models to register them
 from app.models.document_template import DocumentTemplate  # Import document template model to register it
+from app.models.draft_template_field_catalog import DraftTemplateFieldCatalog  # Draft template field catalog
 import logging
 
 logger = logging.getLogger(__name__)
@@ -156,6 +157,48 @@ def ensure_schema():
                 logger.info("✅ Added chat_messages.reasoning_steps")
         except Exception as e:
             logger.warning(f"Could not add reasoning_steps to chat_messages: {e}")
+
+        # evidence bundle for server-owned recap (JSON)
+        try:
+            cols = {c["name"] for c in inspector.get_columns("chat_messages")}
+            if "evidence" not in cols:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE chat_messages "
+                            "ADD COLUMN IF NOT EXISTS evidence JSONB"
+                        )
+                    )
+                logger.info("✅ Added chat_messages.evidence")
+        except Exception as e:
+            logger.warning(f"Could not add evidence to chat_messages: {e}")
+
+    # Ensure global_assistant_messages schema (evidence bundle for server-owned recap)
+    if "global_assistant_messages" in inspector.get_table_names():
+        try:
+            cols = {c["name"] for c in inspector.get_columns("global_assistant_messages")}
+            if "evidence" not in cols:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE global_assistant_messages "
+                            "ADD COLUMN IF NOT EXISTS evidence JSONB"
+                        )
+                    )
+                logger.info("✅ Added global_assistant_messages.evidence")
+        except Exception as e:
+            logger.warning(f"Could not add evidence to global_assistant_messages: {e}")
+
+    # Session context tables (thread state + per-message index)
+    try:
+        from app.services.chat.session_message_index import _ensure_schema as _ensure_session_msg_index
+        from app.services.chat.session_thread_state import _ensure_schema as _ensure_session_thread
+
+        _ensure_session_thread()
+        _ensure_session_msg_index()
+        logger.info("✅ Ensured chat_session_context / chat_session_message_index tables")
+    except Exception as e:
+        logger.warning(f"Could not ensure session context tables: {e}")
     
     # Ensure cases table has yandex fields
     if "cases" in inspector.get_table_names():
@@ -189,6 +232,16 @@ def ensure_schema():
             if "summary_content_hash" not in file_columns:
                 conn.execute(
                     text("ALTER TABLE files ADD COLUMN IF NOT EXISTS summary_content_hash VARCHAR(64)")
+                )
+            if "structured_text" not in file_columns:
+                conn.execute(
+                    text("ALTER TABLE files ADD COLUMN IF NOT EXISTS structured_text TEXT")
+                )
+            if "structured_text_format" not in file_columns:
+                conn.execute(
+                    text(
+                        "ALTER TABLE files ADD COLUMN IF NOT EXISTS structured_text_format VARCHAR(32)"
+                    )
                 )
     
     # Create pgvector indexes for optimization
@@ -432,16 +485,43 @@ def ensure_schema():
                     ))
                     logger.info("✅ Added processing_started_at column to files table")
 
-            # Reset stuck files (pending/processing) left over from a crashed/restarted process
+            # Reset stuck files (pending/processing) left over from a crashed/restarted process.
+            # В serverless несколько инстансов: см. RESET_STUCK_FILES_ON_STARTUP и STUCK_FILE_RESET_MIN_AGE_MINUTES в config.
             try:
-                with engine.begin() as conn:
-                    result = conn.execute(text(
-                        "UPDATE files SET processing_status = 'error', "
-                        "processing_error = 'Обработка прервана при перезапуске сервера. Загрузите файл снова.' "
-                        "WHERE processing_status IN ('pending', 'processing')"
-                    ))
-                    if result.rowcount:
-                        logger.warning(f"⚠️  Reset {result.rowcount} stuck files to 'error' on startup")
+                if not getattr(config, "RESET_STUCK_FILES_ON_STARTUP", True):
+                    logger.info(
+                        "RESET_STUCK_FILES_ON_STARTUP=false — пропуск сброса зависших файлов при старте"
+                    )
+                else:
+                    min_age = max(0, int(getattr(config, "STUCK_FILE_RESET_MIN_AGE_MINUTES", 0) or 0))
+                    err_txt = "Обработка прервана при перезапуске сервера. Загрузите файл снова."
+                    with engine.begin() as conn:
+                        if min_age <= 0:
+                            result = conn.execute(
+                                text(
+                                    "UPDATE files SET processing_status = 'error', "
+                                    "processing_error = :msg "
+                                    "WHERE processing_status IN ('pending', 'processing')"
+                                ),
+                                {"msg": err_txt},
+                            )
+                        else:
+                            result = conn.execute(
+                                text(
+                                    "UPDATE files SET processing_status = 'error', "
+                                    "processing_error = :msg "
+                                    "WHERE processing_status IN ('pending', 'processing') "
+                                    "AND COALESCE(processing_started_at, created_at) < "
+                                    " (NOW() - (CAST(:mins AS INTEGER) * INTERVAL '1 minute'))"
+                                ),
+                                {"msg": err_txt, "mins": min_age},
+                            )
+                        if result.rowcount:
+                            logger.warning(
+                                "⚠️  Reset %s stuck files to 'error' on startup (min_age_minutes=%s)",
+                                result.rowcount,
+                                min_age if min_age > 0 else "all",
+                            )
             except Exception as e:
                 logger.error(f"Error resetting stuck files on startup: {e}", exc_info=True)
     except Exception as e:
@@ -843,6 +923,54 @@ def init_db():
             logger.info("✅ document_templates table already exists")
     except Exception as e:
         logger.warning(f"Could not apply document_templates migration: {e}", exc_info=True)
+
+    # Apply draft_template_field_catalog migration if needed
+    try:
+        inspector = inspect(engine)
+        if "draft_template_field_catalog" not in inspector.get_table_names():
+            logger.info("Applying migration: creating draft_template_field_catalog table")
+            try:
+                with engine.begin() as conn:
+                    from pathlib import Path
+
+                    migration_path = (
+                        Path(__file__).parent.parent / "migrations" / "025_add_draft_template_field_catalog.sql"
+                    )
+                    if migration_path.exists():
+                        with open(migration_path, "r", encoding="utf-8") as f:
+                            migration_sql = f.read()
+                        for statement in migration_sql.split(";"):
+                            statement = statement.strip()
+                            if statement and not statement.startswith("--"):
+                                try:
+                                    conn.execute(text(statement))
+                                except Exception as stmt_error:
+                                    if "already exists" not in str(stmt_error).lower():
+                                        logger.warning(
+                                            "Migration statement error (may be expected): %s", stmt_error
+                                        )
+                        logger.info("Migration applied: draft_template_field_catalog table created")
+                    else:
+                        Base.metadata.create_all(
+                            bind=engine, tables=[DraftTemplateFieldCatalog.__table__]
+                        )
+                        logger.info("draft_template_field_catalog table created via SQLAlchemy")
+            except Exception as mig_error:
+                logger.error(
+                    "Failed to apply draft_template_field_catalog migration: %s",
+                    mig_error,
+                    exc_info=True,
+                )
+                try:
+                    Base.metadata.create_all(
+                        bind=engine, tables=[DraftTemplateFieldCatalog.__table__]
+                    )
+                except Exception:
+                    pass
+        else:
+            logger.info("draft_template_field_catalog table already exists")
+    except Exception as e:
+        logger.warning(f"Could not apply draft_template_field_catalog migration: {e}", exc_info=True)
     
     # Check if documents table has case_id column, add if missing
     try:
@@ -904,6 +1032,29 @@ def init_db():
         setup_checkpointer()
     except Exception as e:
         logger.warning(f"Failed to setup LangGraph checkpointer: {e}. Will use fallback.")
+
+
+def ensure_db_session_live(db: Session) -> None:
+    """
+    Ensure the ORM session can run the next query after a long idle period (LLM, rerank, etc.).
+
+    pool_pre_ping only runs on pool checkout; a session that already holds a connection may
+    have it closed by Neon/serverless Postgres while the request waits on external APIs.
+    """
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception:
+        logger.warning(
+            "DB connection stale after long operation — invalidating and resetting session"
+        )
+        try:
+            db.connection().invalidate()
+        except Exception:
+            pass
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
 
 def get_db() -> Session:

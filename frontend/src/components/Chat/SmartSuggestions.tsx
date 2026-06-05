@@ -59,7 +59,7 @@ export const SmartSuggestions: React.FC<SmartSuggestionsProps> = ({
         getApiUrl(`/api/cases/${caseId}/suggestions?${params.toString()}`),
         {
           headers: {
-            'Authorization': `Bearer ${token}`,
+            'X-Access-Token': token || '',
             'Content-Type': 'application/json'
           }
         }

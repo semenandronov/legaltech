@@ -7,6 +7,7 @@ import { loadChatHistory, normalizeReasoningStepsFromApi, parseStoredSourceRefer
 import { uploadTemplateFile } from '@/services/documentEditorApi'
 import { Conversation, ConversationContent } from '../ai-elements/conversation'
 import { UserMessage, AssistantMessage } from '../ai-elements/message'
+import { caseAssistantLegacyCitationsEnabled } from '../../utils/caseAssistantCitations'
 import { PlanApprovalCard } from './PlanApprovalCard'
 import { AgentStep } from './AgentStepsView'
 import { EnhancedAgentStepsView } from './EnhancedAgentStepsView'
@@ -20,6 +21,8 @@ import { PlaybookCheckCard, type PlaybookCheckData } from './PlaybookCheckCard'
 const PlaybookCheckCardLazy = ({ check }: { check: PlaybookCheckData }) => (
   <PlaybookCheckCard check={check} />
 )
+import { effectiveEditorChatMode } from '../../lib/chatInstrumentPolicy'
+import { useChatInstrumentSettings } from '../../hooks/useChatInstrumentSettings'
 import { SettingsPanel } from './SettingsPanel'
 
 const QUICK_ACTIONS = [
@@ -60,14 +63,7 @@ function detectMessageType(content: string): MessageType {
 }
 
 function makeLocalMessageId(prefix: 'user' | 'assistant'): string {
-  try {
-    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-      return `${prefix}-${crypto.randomUUID()}`
-    }
-  } catch {
-    // ignore
-  }
-  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`
+  return `${prefix}-${crypto.randomUUID()}`
 }
 
 function stripInlineCitationMarkers(text: string): string {
@@ -363,11 +359,11 @@ interface PromptInputWithDropProps {
   selectedText?: string
   documentEditorMode?: boolean
   editorChatMode?: 'edit' | 'ask'
-  deepThink: boolean
   legalResearch: boolean
+  courtPractice: boolean
   draftMode: boolean
-  onDeepThinkChange: (value: boolean) => void
   onLegalResearchChange: (value: boolean) => void
+  onCourtPracticeChange: (value: boolean) => void
   onDraftModeChange: (value: boolean) => void
   systemTemplates?: SystemDocumentTemplate[]
   systemTemplateId?: string
@@ -436,12 +432,12 @@ const PromptInputWithDrop = ({
   selectedText: _selectedText,
   documentEditorMode,
   editorChatMode = 'edit',
-  deepThink,
   legalResearch,
+  courtPractice,
   draftMode,
-  onDeepThinkChange,
-  onLegalResearchChange,
-  onDraftModeChange,
+  onLegalResearchChange: setLegalResearchProp,
+  onCourtPracticeChange: setCourtPracticeProp,
+  onDraftModeChange: setDraftModeProp,
   systemTemplates = [],
   systemTemplateId = '',
   onSystemTemplateIdChange,
@@ -675,13 +671,13 @@ const PromptInputWithDrop = ({
               <div className="flex items-center gap-0.5">
                 <SettingsPanel
                   webSearch={false}
-                  deepThink={deepThink}
                   legalResearch={legalResearch}
+                  courtPractice={courtPractice}
                   draftMode={draftMode}
                   onWebSearchChange={() => {}}
-                  onDeepThinkChange={onDeepThinkChange}
-                  onLegalResearchChange={onLegalResearchChange}
-                  onDraftModeChange={onDraftModeChange}
+                  onLegalResearchChange={setLegalResearchProp}
+                  onCourtPracticeChange={setCourtPracticeProp}
+                  onDraftModeChange={setDraftModeProp}
                   variant="compact"
                   hideDraft={documentEditorMode}
                   className="bg-white/80 border border-[#E7EAF0] rounded-xl px-1.5 py-1"
@@ -826,10 +822,15 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [isLoadingHistory, setIsLoadingHistory] = useState(true)
-  // Веб-поиск отключен - всегда передаем false в SettingsPanel
-  const [legalResearch, setLegalResearch] = useState(false)
-  const [deepThink, setDeepThink] = useState(false)
-  const [draftMode, setDraftMode] = useState(false)
+  const {
+    legalResearch,
+    courtPractice,
+    draftMode,
+    setLegalResearch,
+    setCourtPractice,
+    setDraftMode,
+    reset: resetChatInstruments,
+  } = useChatInstrumentSettings()
   const [systemTemplates, setSystemTemplates] = useState<SystemDocumentTemplate[]>([])
   const [systemTemplateId, setSystemTemplateId] = useState('')
   const [globalSessionId, setGlobalSessionId] = useState<string | null>(null)
@@ -847,6 +848,10 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
   // Реальный attachments находится в PromptInputWithDrop (внутри Provider).
   // Очистка поля ввода происходит автоматически в prompt-input.tsx после успешного onSubmit.
   const attachments = useOptionalProviderAttachments()
+
+  useEffect(() => {
+    resetChatInstruments()
+  }, [actualCaseId, resetChatInstruments])
 
   // Load chat history on mount
   useEffect(() => {
@@ -891,7 +896,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
     ;(async () => {
       try {
         const res = await fetch(getApiUrl('/api/v2/assistant/document-templates'), {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { 'X-Access-Token': token },
         })
         if (!res.ok) return
         const data = await res.json()
@@ -962,13 +967,11 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
           content: m.content,
         })),
         web_search: false, // Веб-поиск отключен
-        legal_research: legalResearch,
-        deep_think: deepThink,
+        legal_research: draftMode ? false : legalResearch,
+        use_legal_corpus: draftMode ? false : legalResearch,
+        court_practice: draftMode ? false : courtPractice,
         draft_mode: draftMode,
-        trace_id:
-          typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-            ? crypto.randomUUID()
-            : `trace-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        trace_id: crypto.randomUUID(),
       }
       if (globalMode && globalSessionId) {
         requestBody.session_id = globalSessionId
@@ -1023,7 +1026,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
           requestBody.selected_text = selectedText
         }
         // Передаём hint режима от пользователя (edit/ask)
-        requestBody.editor_mode_hint = editorChatMode
+        requestBody.editor_mode_hint = effectiveEditorChatMode(legalResearch, editorChatMode, courtPractice)
       }
 
       // Обработка прикрепленных файлов для обычных сообщений (не draft_mode)
@@ -1057,7 +1060,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
+          'X-Access-Token': token || '',
         },
         body: JSON.stringify(
           globalMode
@@ -1066,6 +1069,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                 session_id: requestBody.session_id,
                 draft_mode: requestBody.draft_mode,
                 legal_research: requestBody.legal_research,
+                use_legal_corpus: legalResearch,
                 deep_think: requestBody.deep_think,
                 trace_id: requestBody.trace_id,
               }
@@ -1103,6 +1107,15 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                   prev.map((msg) =>
                     msg.id === assistantMsgId
                       ? { ...msg, content: msg.content + data.textDelta }
+                      : msg
+                  )
+                )
+              }
+              if (data.type === 'content_sync' && typeof data.content === 'string') {
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMsgId
+                      ? { ...msg, content: data.content }
                       : msg
                   )
                 )
@@ -1458,7 +1471,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
         })
       }
     }
-  }, [actualCaseId, isLoading, messages, legalResearch, deepThink, draftMode, documentEditorMode, currentDocumentContent, currentDocumentId, selectedText, systemTemplateId, editorChatMode])
+  }, [actualCaseId, isLoading, messages, legalResearch, courtPractice, draftMode, documentEditorMode, currentDocumentContent, currentDocumentId, selectedText, systemTemplateId, editorChatMode])
 
   // Auto-submit: when autoSubmit=true, fire initialQuery once after mount
   const autoSubmittedRef = useRef(false)
@@ -1476,7 +1489,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
       const response = await fetch(getApiUrl(`/api/plan/${planId}/stream`), {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${token}`,
+          'X-Access-Token': token || '',
         },
       })
 
@@ -1753,11 +1766,11 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
               selectedText={selectedText}
               documentEditorMode={documentEditorMode}
               editorChatMode={editorChatMode}
-              deepThink={deepThink}
               legalResearch={legalResearch}
+              courtPractice={courtPractice}
               draftMode={draftMode}
-              onDeepThinkChange={setDeepThink}
               onLegalResearchChange={setLegalResearch}
+              onCourtPracticeChange={setCourtPractice}
               onDraftModeChange={setDraftMode}
               systemTemplates={systemTemplates}
               systemTemplateId={systemTemplateId}
@@ -1850,6 +1863,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
               sources={message.sources}
               citations={message.citations}
               answerBlocks={message.answerBlocks}
+              preferLegacyCitations={caseAssistantLegacyCitationsEnabled()}
               isStreaming={isLoading && message.id === messages[messages.length - 1]?.id}
               onSourceClick={(source) => {
                 // External sources (pravo.gov.ru) — always open in new tab, never local preview
@@ -1861,26 +1875,12 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                   return  // stop here even if URL is empty — never open local preview
                 }
                 if (source.file) {
-                  // Открываем документ справа в панели предпросмотра с подсветкой
+                  // Поля цитаты (bbox_regions, text_preview) должны сохраняться с inline-линкера — см. AssistantMessage.
                   const sourceInfo: SourceInfo = {
+                    ...source,
                     file: source.file || source.title || '',
                     title: source.title || source.file || '',
-                    page: source.page,
-                    citation_id: (source as any).citation_id,
-                    text_preview: (source as any).text_preview || source.quote,
-                    char_start: source.char_start,
-                    char_end: source.char_end,
-                    quote: source.quote,
-                    quote_anchor: (source as any).quote_anchor,
-                    source_id: source.source_id,
-                    chunk_id: (source as any).chunk_id,
-                    context_before: (source as any).context_before,
-                    context_after: (source as any).context_after,
-                    bbox: (source as any).bbox,
-                    bbox_regions: (source as any).bbox_regions,
-                    page_bbox: (source as any).page_bbox,
-                    url: source.url,
-                    source_type: (source as any).source_type,
+                    text_preview: source.text_preview ?? source.quote,
                   }
                   setPreviewSource(sourceInfo)
                   setPreviewOpen(true)
@@ -1892,7 +1892,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                         title: c.file_name,
                         page: c.page,
                         citation_id: (c as any).citation_id,
-                        text_preview: c.quote,
+                        text_preview: c.text_preview || c.quote,
                         char_start: c.char_start,
                         char_end: c.char_end,
                         quote: c.quote,
@@ -2089,13 +2089,15 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                 <EditSuggestionsList
                   edits={message.structuredEdits as StructuredEdit[]}
                   onApply={(edit) => {
+                    if (!edit.original_text) return
                     const success = onReplaceTextInDocument(edit.original_text, edit.new_text)
                     if (success) {
                       setAppliedEdits(prev => new Set(prev).add(edit.id))
                       // Auto-skip other edits whose original_text overlaps with this one
                       message.structuredEdits?.forEach(other => {
+                        if (!other.original_text) return
                         if (other.id !== edit.id && !appliedEdits.has(other.id) && !skippedEdits.has(other.id)) {
-                          if (edit.original_text.includes(other.original_text) || other.original_text.includes(edit.original_text)) {
+                          if (edit.original_text!.includes(other.original_text) || other.original_text.includes(edit.original_text!)) {
                             setSkippedEdits(prev => new Set(prev).add(other.id))
                           }
                         }
@@ -2118,10 +2120,12 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
 
                     // Используем пакетную замену если доступна
                     if (onReplaceMultipleTexts && pendingEdits.length > 1) {
-                      const replacements = pendingEdits.map(edit => ({
-                        originalText: edit.original_text,
-                        newText: edit.new_text,
-                      }))
+                      const replacements = pendingEdits
+                        .filter(edit => Boolean(edit.original_text))
+                        .map(edit => ({
+                          originalText: edit.original_text!,
+                          newText: edit.new_text,
+                        }))
                       const applied = onReplaceMultipleTexts(replacements)
                       if (applied > 0) {
                         const newApplied = new Set(appliedEdits)
@@ -2131,6 +2135,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                     } else {
                       // Fallback: по одной замене
                       pendingEdits.forEach(edit => {
+                        if (!edit.original_text) return
                         const success = onReplaceTextInDocument(edit.original_text, edit.new_text)
                         if (success) {
                           setAppliedEdits(prev => new Set(prev).add(edit.id))
@@ -2203,11 +2208,11 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
               selectedText={selectedText}
               documentEditorMode={documentEditorMode}
               editorChatMode={editorChatMode}
-              deepThink={deepThink}
               legalResearch={legalResearch}
+              courtPractice={courtPractice}
               draftMode={draftMode}
-              onDeepThinkChange={setDeepThink}
               onLegalResearchChange={setLegalResearch}
+              onCourtPracticeChange={setCourtPractice}
               onDraftModeChange={setDraftMode}
               systemTemplates={systemTemplates}
               systemTemplateId={systemTemplateId}

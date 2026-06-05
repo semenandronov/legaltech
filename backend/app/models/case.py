@@ -52,6 +52,7 @@ class ChatMessage(Base):
     role = Column(String(20), nullable=False)  # "user" or "assistant"
     content = Column(Text, nullable=False)
     source_references = Column(JSON, nullable=True)  # List of source file names
+    evidence = Column(JSON, nullable=True)  # Canonical evidence bundle (citations[], retrieval_metadata, etc.)
     reasoning_steps = Column(JSON, nullable=True)  # [{phase, step, totalSteps, content}, ...]
     session_id = Column(String, name="sessionId", nullable=True)  # Session ID for chat (optional, defaults to case_id). DB column is "sessionId"
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -86,6 +87,7 @@ class GlobalAssistantMessage(Base):
     role = Column(String(20), nullable=False)   # "user" or "assistant"
     content = Column(Text, nullable=False)
     reasoning_steps = Column(JSON, nullable=True)  # [{phase, step, totalSteps, content}, ...]
+    evidence = Column(JSON, nullable=True)  # Canonical evidence bundle (citations[], retrieval_metadata, etc.)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     session = relationship("GlobalAssistantSession", back_populates="messages")
@@ -135,6 +137,8 @@ class File(Base):
     processing_status = Column(String(50), default="ready")  # pending, processing, ready, error, cancelled
     processing_error = Column(Text, nullable=True)
     processing_started_at = Column(DateTime, nullable=True)
+    structured_text = Column(Text, nullable=True)
+    structured_text_format = Column(String(32), nullable=True)
     doc_summary_short = Column(Text, nullable=True)
     doc_key_points = Column(JSON, nullable=True)
     summary_version = Column(String(32), nullable=True)

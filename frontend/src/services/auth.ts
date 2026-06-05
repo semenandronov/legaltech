@@ -61,7 +61,7 @@ export const logout = async (): Promise<void> => {
         {},
         {
           headers: {
-            Authorization: `Bearer ${token}`,
+            'X-Access-Token': token,
           },
         }
       )
@@ -82,7 +82,7 @@ export const getMe = async (): Promise<UserResponse> => {
 
   const response = await axios.get(getApiUrl('/api/auth/me'), {
     headers: {
-      Authorization: `Bearer ${token}`,
+      'X-Access-Token': token,
     },
   })
   return response.data

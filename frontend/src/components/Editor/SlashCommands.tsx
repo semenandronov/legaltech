@@ -6,6 +6,23 @@ import tippy, { Instance as TippyInstance } from 'tippy.js'
 import { FileText, List, Table, Sparkles, AlertTriangle, Wand2, Quote, Strikethrough, Code } from 'lucide-react'
 import { aiAssist, RiskItem } from '../../services/documentEditorApi'
 import { toast } from 'sonner'
+import { getWordRangeAtPos } from '@/utils/docTextPosition'
+import type { Editor } from '@tiptap/react'
+
+function toggleMarkOnWordAfterSlash(
+  editor: Editor,
+  range: { from: number; to: number },
+  applyMark: (chain: ReturnType<Editor['chain']>) => ReturnType<Editor['chain']>,
+) {
+  editor.chain().focus().deleteRange(range).run()
+  const pos = editor.state.selection.from
+  const word = getWordRangeAtPos(editor.state.doc, pos)
+  let chain = editor.chain().focus()
+  if (word) {
+    chain = chain.setTextSelection(word)
+  }
+  applyMark(chain).run()
+}
 
 interface SlashCommandsOptions {
   caseId?: string
@@ -232,12 +249,7 @@ export const getSuggestionItems = ({
       description: 'Применить зачеркивание',
       icon: Strikethrough,
       command: ({ editor, range }: any) => {
-        editor
-          .chain()
-          .focus()
-          .deleteRange(range)
-          .toggleStrike()
-          .run()
+        toggleMarkOnWordAfterSlash(editor, range, (c) => c.toggleStrike())
       },
     },
     {
@@ -245,12 +257,7 @@ export const getSuggestionItems = ({
       description: 'Применить форматирование кода',
       icon: Code,
       command: ({ editor, range }: any) => {
-        editor
-          .chain()
-          .focus()
-          .deleteRange(range)
-          .toggleCode()
-          .run()
+        toggleMarkOnWordAfterSlash(editor, range, (c) => c.toggleCode())
       },
     },
   ]

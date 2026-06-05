@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef, Fragment } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useState, useEffect, useRef, Fragment, useCallback } from 'react'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import {
   MessageSquare, FolderOpen, FileText, FileEdit, Table, BookOpen, Workflow,
-  Search, Upload, Plus, ChevronRight, File, Loader2,
+  Search, Upload, Plus, ChevronRight, File, Loader2, Cloud,
   MoreHorizontal, Trash2, ArrowRight, Check, X, Pencil, AlertCircle,
 } from 'lucide-react'
 import { Drawer } from '@mui/material'
@@ -10,14 +10,29 @@ import { toast } from 'sonner'
 import {
   getCase, getDocuments, getChatSessionsForCase, addFilesToCase, createFolder, getCaseFolders,
   moveFileToFolder, deleteFileFromCase, deleteFolder, renameFolder,
-  getProcessingStatus, cancelFileProcessing,
-  CaseResponse, FolderItem,
+  cancelFileProcessing,
+  CaseResponse, FolderItem, FilesResponse, UploadedFile,
 } from '../services/api'
+import { useCaseProcessingPoll } from '../hooks/useCaseProcessingPoll'
+import {
+  uploadStagedFilesToCase,
+  type CaseOverviewLocationState,
+} from '../lib/casePostCreateUpload'
+import {
+  buildPostCreatePendingRows,
+  clearPostCreatePendingSession,
+  formatCaseDocumentCountLabel,
+  readPostCreatePendingFromSession,
+  removePendingRowsForUploads,
+  writePostCreatePendingToSession,
+  type PostCreatePendingRow,
+} from '../lib/postCreatePendingFiles'
 import { createDocumentFromFile } from '../services/documentEditorApi'
 import { tabularReviewApi } from '../services/tabularReviewApi'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import DocumentViewer from '../components/Documents/DocumentViewer'
 import { DocumentWithMetadata } from '../components/Documents/DocumentsList'
+import { GoogleDriveImportButton } from '../components/Documents/GoogleDriveImportButton'
 
 interface DocumentFile {
   id: string
@@ -102,7 +117,23 @@ const PRESETS = [
 const CaseOverviewPage = () => {
   const { caseId } = useParams<{ caseId: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const [postCreatePendingRows, setPostCreatePendingRows] = useState<PostCreatePendingRow[]>(
+    () => {
+      const fromNav = buildPostCreatePendingRows(
+        (location.state as CaseOverviewLocationState | null)?.postCreateUpload,
+      )
+      if (fromNav.length > 0) return fromNav
+      if (caseId) return readPostCreatePendingFromSession(caseId)
+      return []
+    },
+  )
+  const [postCreateUploading, setPostCreateUploading] = useState(
+    () => postCreatePendingRows.some((r) => r.status === 'uploading'),
+  )
+  const [postCreateUploadStatus, setPostCreateUploadStatus] = useState('')
 
   const [caseData, setCaseData] = useState<CaseResponse | null>(null)
   const [files, setFiles] = useState<DocumentFile[]>([])
@@ -159,12 +190,18 @@ const CaseOverviewPage = () => {
   const [renameTarget, setRenameTarget] = useState<FolderItem | null>(null)
   const [renameName, setRenameName] = useState('')
 
-  // Per-file processing status (fileId → status string)
-  const [processingMap, setProcessingMap] = useState<Record<string, string>>({})
-  const processingPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const processingStartedAtRef = useRef<number | null>(null)
+
+  const reloadFiles = useCallback(() => {
+    if (!caseId) return
+    getDocuments(caseId).then((d) => setFiles(mapCaseDocuments(d.documents || [])))
+  }, [caseId])
+
+  const { processingMap, ingestUploadResponse, fetchStatus } = useCaseProcessingPoll(caseId ?? null, {
+    onAllDone: reloadFiles,
+  })
 
   const [showAllActions, setShowAllActions] = useState(false)
 
@@ -180,65 +217,36 @@ const CaseOverviewPage = () => {
     loadAll()
   }, [caseId])
 
-  // Poll processing status while any files are pending/processing
+  const anyFileProcessing = Object.values(processingMap).some(
+    (s) => s === 'pending' || s === 'processing',
+  )
+
   useEffect(() => {
-    if (!caseId) return
-
-    const checkAndSchedule = async () => {
-      try {
-        const status = await getProcessingStatus(caseId)
-        const map: Record<string, string> = {}
-        status.files.forEach(f => { map[f.id] = f.status })
-        setProcessingMap(map)
-
-        if (status.any_processing) {
-          // Start elapsed timer — use earliest processing_started_at from backend if available
-          if (!elapsedTimerRef.current) {
-            const startedAts = status.files
-              .filter(f => f.processing_started_at)
-              .map(f => new Date(f.processing_started_at!).getTime())
-            const earliest = startedAts.length > 0 ? Math.min(...startedAts) : Date.now()
-            processingStartedAtRef.current = earliest
-            setElapsedSeconds(Math.floor((Date.now() - earliest) / 1000))
-            elapsedTimerRef.current = setInterval(() => {
-              const secs = Math.floor((Date.now() - (processingStartedAtRef.current ?? Date.now())) / 1000)
-              setElapsedSeconds(secs)
-            }, 1000)
-          }
-          // Start polling if not already running
-          if (!processingPollRef.current) {
-            processingPollRef.current = setInterval(async () => {
-              try {
-                const s = await getProcessingStatus(caseId)
-                const m: Record<string, string> = {}
-                s.files.forEach(f => { m[f.id] = f.status })
-                setProcessingMap(m)
-                if (s.all_done) {
-                  clearInterval(processingPollRef.current!)
-                  processingPollRef.current = null
-                  clearInterval(elapsedTimerRef.current!)
-                  elapsedTimerRef.current = null
-                  reloadFiles()
-                }
-              } catch { /* ignore */ }
-            }, 4000)
-          }
-        }
-      } catch { /* ignore */ }
-    }
-
-    checkAndSchedule()
-    return () => {
-      if (processingPollRef.current) {
-        clearInterval(processingPollRef.current)
-        processingPollRef.current = null
+    if (!anyFileProcessing) {
+      if (elapsedTimerRef.current) {
+        clearInterval(elapsedTimerRef.current)
+        elapsedTimerRef.current = null
       }
+      processingStartedAtRef.current = null
+      return
+    }
+    if (!elapsedTimerRef.current) {
+      processingStartedAtRef.current = Date.now()
+      setElapsedSeconds(0)
+      elapsedTimerRef.current = setInterval(() => {
+        const secs = Math.floor(
+          (Date.now() - (processingStartedAtRef.current ?? Date.now())) / 1000,
+        )
+        setElapsedSeconds(secs)
+      }, 1000)
+    }
+    return () => {
       if (elapsedTimerRef.current) {
         clearInterval(elapsedTimerRef.current)
         elapsedTimerRef.current = null
       }
     }
-  }, [caseId]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [anyFileProcessing])
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -306,6 +314,92 @@ const CaseOverviewPage = () => {
     }
   }
 
+  const mergeUploadedIntoList = (uploaded: UploadedFile[]) => {
+    if (!uploaded.length) return
+    setFiles((prev) => {
+      const ids = new Set(prev.map((f) => f.id))
+      const mapped: DocumentFile[] = uploaded.map((f) => ({
+        id: f.id,
+        filename: f.filename,
+        file_type: f.file_type,
+        created_at: f.created_at,
+        size: f.size,
+        folder_id: f.folder_id ?? null,
+      }))
+      return [...prev, ...mapped.filter((m) => !ids.has(m.id))]
+    })
+  }
+
+  const handleFilesAdded = (result: FilesResponse) => {
+    mergeUploadedIntoList(result.files ?? [])
+    setPostCreatePendingRows((prev) => {
+      const next = removePendingRowsForUploads(prev, result.files ?? [])
+      if (caseId) writePostCreatePendingToSession(caseId, next)
+      return next
+    })
+    setCaseData((prev) =>
+      prev ? { ...prev, num_documents: result.total ?? prev.num_documents } : prev,
+    )
+    ingestUploadResponse(result)
+  }
+
+  useEffect(() => {
+    if (!caseId) return
+    const payload = (location.state as CaseOverviewLocationState | null)?.postCreateUpload
+    if (!payload || (payload.locals.length === 0 && payload.drives.length === 0)) return
+
+    const storageKey = `legalai:postCreateUpload:${caseId}`
+    if (sessionStorage.getItem(storageKey)) {
+      navigate({ pathname: location.pathname, search: location.search }, { replace: true, state: {} })
+      const restored = readPostCreatePendingFromSession(caseId)
+      if (restored.length > 0) {
+        setPostCreatePendingRows(restored)
+        setPostCreateUploading(restored.some((r) => r.status === 'uploading'))
+      }
+      return
+    }
+    sessionStorage.setItem(storageKey, '1')
+
+    navigate({ pathname: location.pathname, search: location.search }, { replace: true, state: {} })
+
+    const fileCount = payload.locals.length + payload.drives.length
+    const pendingRows = buildPostCreatePendingRows(payload)
+    setPostCreatePendingRows(pendingRows)
+    writePostCreatePendingToSession(caseId, pendingRows)
+    setPostCreateUploading(true)
+    setPostCreateUploadStatus(
+      fileCount === 1 ? 'Загрузка файла…' : `Загрузка файлов (0 из ${fileCount})…`,
+    )
+
+    void (async () => {
+      try {
+        const { responses, driveErrors } = await uploadStagedFilesToCase(caseId, payload, {
+          onStep: (message) => setPostCreateUploadStatus(message),
+        })
+        for (const res of responses) {
+          handleFilesAdded(res)
+        }
+        if (driveErrors.length > 0) {
+          toast.error(driveErrors.join('; '))
+        } else if (responses.length > 0) {
+          toast.success(
+            fileCount === 1
+              ? 'Файл добавлен, идёт обработка'
+              : `Добавлено файлов: ${fileCount}, идёт обработка`,
+          )
+        }
+      } catch {
+        toast.error('Не удалось загрузить файлы в дело')
+      } finally {
+        setPostCreateUploading(false)
+        setPostCreateUploadStatus('')
+        setPostCreatePendingRows([])
+        clearPostCreatePendingSession(caseId)
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- один раз при переходе с /cases/new
+  }, [caseId])
+
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!caseId || !e.target.files || e.target.files.length === 0) return
     const filesToUpload = Array.from(e.target.files)
@@ -313,8 +407,14 @@ const CaseOverviewPage = () => {
     setUploading(true)
     try {
       const result = await addFilesToCase(caseId, filesToUpload)
-      setCaseData(prev => prev ? { ...prev, num_documents: result.total } : prev)
-      reloadFiles()
+      handleFilesAdded(result)
+      toast.success(
+        filesToUpload.length === 1
+          ? 'Файл добавлен, идёт обработка'
+          : `Добавлено файлов: ${filesToUpload.length}`,
+      )
+    } catch {
+      toast.error('Не удалось загрузить файлы')
     } finally {
       setUploading(false)
     }
@@ -334,11 +434,6 @@ const CaseOverviewPage = () => {
     setMoveDestFolderId(undefined)
     setShowMoveModal(true)
     setActiveMenu(null)
-  }
-
-  const reloadFiles = () => {
-    if (!caseId) return
-    getDocuments(caseId).then(d => setFiles(mapCaseDocuments(d.documents || [])))
   }
 
   const handleMoveFiles = async () => {
@@ -367,7 +462,7 @@ const CaseOverviewPage = () => {
     try {
       await cancelFileProcessing(caseId, fileId)
       setActiveMenu(null)
-      setProcessingMap(prev => ({ ...prev, [fileId]: 'cancelled' }))
+      await fetchStatus()
     } catch { toast.error('Не удалось отменить обработку') }
   }
 
@@ -453,6 +548,20 @@ const CaseOverviewPage = () => {
     f.filename.toLowerCase().includes(fileSearch.toLowerCase())
   )
 
+  const filteredPendingRows = postCreatePendingRows.filter((row) =>
+    row.filename.toLowerCase().includes(fileSearch.toLowerCase()),
+  )
+
+  const hasVisibleFileSection =
+    postCreatePendingRows.length > 0 || files.length > 0 || folders.length > 0
+
+  const documentCountLabel = formatCaseDocumentCountLabel(
+    caseData?.num_documents ?? 0,
+    files.length,
+    postCreatePendingRows,
+    postCreateUploading,
+  )
+
   const getFilesInFolder = (folderId: string) =>
     files.filter(f =>
       f.folder_id === folderId &&
@@ -506,7 +615,7 @@ const CaseOverviewPage = () => {
                   {caseData?.title || 'Без названия'}
                 </h1>
                 <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-                  {caseData?.num_documents ?? 0} документов
+                  {documentCountLabel}
                 </p>
               </div>
             )}
@@ -668,7 +777,22 @@ const CaseOverviewPage = () => {
 
             {/* Project files section */}
             <section>
-              {/* Processing banner */}
+              {/* Upload / processing banner */}
+              {postCreateUploading && (
+                <div
+                  className="flex items-center gap-2 px-4 py-2.5 mb-3 rounded-lg text-sm"
+                  style={{
+                    backgroundColor: 'var(--color-bg-elevated)',
+                    border: '1px solid var(--color-border)',
+                    color: 'var(--color-text-secondary)',
+                  }}
+                >
+                  <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />
+                  <span>
+                    {postCreateUploadStatus || 'Загрузка файлов в дело…'}
+                  </span>
+                </div>
+              )}
               {(() => {
                 const pendingFiles = files.filter(f => {
                   const s = processingMap[f.id]
@@ -676,7 +800,7 @@ const CaseOverviewPage = () => {
                 })
                 const ready = Object.values(processingMap).filter(s => s === 'ready').length
                 const total = Object.values(processingMap).length
-                if (total === 0 || pendingFiles.length === 0) return null
+                if (postCreateUploading || total === 0 || pendingFiles.length === 0) return null
 
                 // Recalculate estimate from remaining pending files
                 const estimatedSecs = pendingFiles.reduce((sum, f) => sum + estimateFileSecs(f.filename, f.size), 0)
@@ -823,10 +947,23 @@ const CaseOverviewPage = () => {
                     }
                     Загрузить файлы
                   </button>
+                  {caseId && (
+                    <GoogleDriveImportButton
+                      caseId={caseId}
+                      disabled={uploading}
+                      onImportStarted={() => setUploading(true)}
+                      onImportComplete={(response) => {
+                        handleFilesAdded(response)
+                        getCase(caseId).then((d) => setCaseData(d))
+                        setUploading(false)
+                      }}
+                      onImportFailed={() => setUploading(false)}
+                    />
+                  )}
                 </div>
               </div>
 
-              {loadingFiles ? (
+              {loadingFiles && !hasVisibleFileSection ? (
                 <div className="space-y-2">
                   {[...Array(4)].map((_, i) => (
                     <div
@@ -836,7 +973,7 @@ const CaseOverviewPage = () => {
                     />
                   ))}
                 </div>
-              ) : files.length === 0 && folders.length === 0 ? (
+              ) : !hasVisibleFileSection ? (
                 <div
                   className="rounded-lg border-2 border-dashed flex flex-col items-center justify-center py-12"
                   style={{ borderColor: 'var(--color-border)' }}
@@ -856,6 +993,18 @@ const CaseOverviewPage = () => {
                     <Upload className="w-4 h-4" />
                     Загрузить файлы
                   </button>
+                  {caseId && (
+                    <GoogleDriveImportButton
+                      caseId={caseId}
+                      onImportStarted={() => setUploading(true)}
+                      onImportComplete={(response) => {
+                        handleFilesAdded(response)
+                        getCase(caseId).then((d) => setCaseData(d))
+                        setUploading(false)
+                      }}
+                      onImportFailed={() => setUploading(false)}
+                    />
+                  )}
                 </div>
               ) : (() => {
                 const filteredFolders = folders.filter(f => f.name.toLowerCase().includes(fileSearch.toLowerCase()))
@@ -1102,6 +1251,64 @@ const CaseOverviewPage = () => {
                       </Fragment>
                     )
                   })}
+
+                  {/* Pending rows (сразу после «Создать дело», до ответа API) */}
+                  {filteredPendingRows.map((row) => (
+                    <div
+                      key={`pending-${row.stagingKey}`}
+                      className="grid items-center px-2 py-2.5"
+                      style={{
+                        gridTemplateColumns: '28px 1fr 120px 100px 80px 32px',
+                        borderBottom: '1px solid var(--color-border)',
+                        opacity: 0.85,
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        disabled
+                        className="rounded cursor-not-allowed opacity-40"
+                      />
+                      <div className="flex items-center gap-2.5 min-w-0 pl-2">
+                        <Loader2
+                          className="w-3.5 h-3.5 flex-shrink-0 animate-spin"
+                          style={{ color: 'var(--color-text-muted)' }}
+                        />
+                        {row.source === 'drive' ? (
+                          <Cloud
+                            className="w-3.5 h-3.5 flex-shrink-0"
+                            style={{ color: 'var(--color-text-muted)' }}
+                          />
+                        ) : (
+                          <File
+                            className="w-3.5 h-3.5 flex-shrink-0"
+                            style={{ color: 'var(--color-text-muted)' }}
+                          />
+                        )}
+                        <span
+                          className="text-sm truncate"
+                          style={{ color: 'var(--color-text-primary)' }}
+                        >
+                          {row.filename}
+                        </span>
+                        <span
+                          className="text-xs flex-shrink-0"
+                          style={{ color: 'var(--color-text-muted)' }}
+                        >
+                          {row.status === 'error' ? 'Ошибка загрузки' : 'Загрузка…'}
+                        </span>
+                      </div>
+                      <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                        —
+                      </span>
+                      <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                        —
+                      </span>
+                      <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                        —
+                      </span>
+                      <span />
+                    </div>
+                  ))}
 
                   {/* File rows */}
                   {filteredFiles.map((file) => {

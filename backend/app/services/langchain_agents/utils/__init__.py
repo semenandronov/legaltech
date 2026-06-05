@@ -15,6 +15,7 @@ from app.services.langchain_agents.utils.reducers import (
     sort_by_confidence_reducer,
     append_errors_reducer,
     merge_citations_reducer,
+    citations_state_reducer,
 )
 
 from app.services.langchain_agents.utils.message_utils import (
@@ -87,6 +88,7 @@ __all__ = [
     "sort_by_confidence_reducer",
     "append_errors_reducer",
     "merge_citations_reducer",
+    "citations_state_reducer",
     # Message utils
     "filter_messages_by_count",
     "trim_messages_by_tokens",

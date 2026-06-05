@@ -10,14 +10,6 @@
         "enable_memory_management": true
       }
     },
-    "tabular": {
-      "path": "app/services/langchain_agents/graphs/tabular_graph.py:create_tabular_graph",
-      "description": "Tabular extraction graph for document data extraction",
-      "config": {
-        "use_checkpointing": true,
-        "use_send_api": true
-      }
-    },
     "workflow": {
       "path": "app/services/langchain_agents/graphs/workflow_graph.py:create_workflow_graph",
       "description": "Workflow orchestration graph for complex multi-step tasks",
@@ -55,15 +47,6 @@
         "enable_garant": false
       }
     },
-    "tabular-extractor": {
-      "graph": "tabular",
-      "name": "Tabular Data Extractor",
-      "description": "Extract structured data from documents into tables",
-      "metadata": {
-        "confidence_threshold": 0.8,
-        "enable_hitl": true
-      }
-    },
     "workflow-orchestrator": {
       "graph": "workflow",
       "name": "Workflow Orchestrator",
@@ -89,4 +72,3 @@
   "python_version": "3.11",
   "dockerfile": "Dockerfile.langgraph"
 }
-

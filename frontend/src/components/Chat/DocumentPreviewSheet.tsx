@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import {
   Drawer,
   Box,
@@ -21,7 +21,12 @@ import {
   Close as CloseIcon,
 } from '@mui/icons-material'
 import { SourceInfo } from '@/services/api'
-import PDFViewer from '@/components/Documents/PDFViewer'
+import {
+  filePreviewFromCitation,
+  shouldOpenOriginalByCitationId,
+} from '@/lib/caseCitationViewer'
+import { buildChunkLabViewerCellData } from '@/utils/chunkLabViewerCellData'
+import { TabularDocumentViewer } from '@/components/TabularReview/TabularDocumentViewer'
 import { DocumentHighlighter } from '@/components/Documents/DocumentHighlighter'
 import { TextHighlighter } from '@/components/TabularReview/TextHighlighter'
 
@@ -33,7 +38,7 @@ const htmlContentCache = new Map<string, string>()
 const binaryContentCache = new Map<string, Blob>()
 
 const authHeaders = () => ({
-  'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+  'X-Access-Token': localStorage.getItem('access_token') || ''
 })
 
 const extToType = (name?: string): string => {
@@ -109,6 +114,25 @@ const prefetchSourceContent = async (apiBase: string, fileId: string, fileType: 
 }
 
 export const prefetchGlobalCitationSource = async (source: SourceInfo): Promise<void> => {
+  if (source.source_type === 'court_practice') {
+    const chunkId = source.chunk_id || source.source_id
+    if (!chunkId) return
+    const cacheKey = `court-practice:${chunkId}`
+    if (textContentCache.has(cacheKey)) return
+    try {
+      const res = await fetch(
+        `/api/v2/court-practice-preview?chunk_id=${encodeURIComponent(chunkId)}`,
+        { headers: authHeaders() },
+      )
+      if (res.ok) {
+        const data = (await res.json()) as { content?: string }
+        textContentCache.set(cacheKey, data.content || '')
+      }
+    } catch {
+      /* best effort */
+    }
+    return
+  }
   const apiBase = source.source_type === 'legal_corpus'
     ? '/api/v2/legal-corpus-preview'
     : '/api/v2/assistant'
@@ -138,7 +162,10 @@ interface DocumentPreviewSheetProps {
   onNavigate?: (source: SourceInfo) => void
   /** Override the API base used for file loading. Defaults to /api/cases/{caseId}. */
   filesApiBase?: string
-  /** Global assistant flow: render immediately, network in background. */
+  /**
+   * @deprecated Case/assistant citations open by source_id automatically.
+   * Kept for backward compatibility with GlobalAssistantPage.
+   */
   instantOpen?: boolean
 }
 
@@ -150,7 +177,7 @@ const DocumentPreviewSheet = ({
   allSources = [],
   onNavigate,
   filesApiBase,
-  instantOpen = false,
+  instantOpen: _instantOpen = false,
 }: DocumentPreviewSheetProps) => {
   // Compute API base: custom override or default case-based path
   const apiBase = filesApiBase ?? `/api/cases/${caseId}`
@@ -195,12 +222,22 @@ const DocumentPreviewSheet = ({
   
   // Состояние для найденных позиций цитаты в документе
   const [foundHighlights, setFoundHighlights] = useState<Array<{char_start: number; char_end: number}>>([])
-  /** Та же логика, что ChunkLabPage: якорь → краткая цитата → полный текст чанка. */
-  const anchorText =
-    (source?.quote_anchor && String(source.quote_anchor).trim()) ||
-    (source?.quote && String(source.quote).trim()) ||
-    (source?.text_preview && String(source.text_preview).trim()) ||
-    ''
+  const chunkLabCitationCellData = useMemo(() => {
+    if (!source) return null
+    return buildChunkLabViewerCellData({
+      quote_anchor: source.quote_anchor,
+      quote: source.quote,
+      text_preview: source.text_preview,
+      page: source.page ?? null,
+      bbox: source.bbox,
+      bbox_regions: source.bbox_regions,
+      page_bbox: source.page_bbox,
+    })
+  }, [source])
+
+  const anchorText = chunkLabCitationCellData?.verbatimExtract
+    ? String(chunkLabCitationCellData.verbatimExtract)
+    : ''
 
   const startHighlightLoad = (fileId: string, fileType: string, src: SourceInfo, delayMs = 0) => {
     if (delayedHighlightTimerRef.current !== null) {
@@ -219,15 +256,16 @@ const DocumentPreviewSheet = ({
   
   /**
    * Подсветка: приоритет char_start/char_end в чанке, иначе поиск quote в documentText.
-   * PDF: PDFViewer — приоритет bbox_regions (Docling), иначе text layer по quote.
+   * PDF: тот же TabularDocumentViewer + cellData, что ChunkLabPage (verbatim, sourcePageBasis one, bbox).
    */
   useEffect(() => {
+    // Раньше требовали span > 10 символов — короткие чанки (например, номер статьи)
+    // никогда не подсвечивались, хотя страница и координаты верны.
     const hasExactCoordinates =
       source?.char_start !== undefined &&
       source?.char_end !== undefined &&
       source.char_start >= 0 &&
-      source.char_end > source.char_start &&
-      source.char_end - source.char_start > 10
+      source.char_end > source.char_start
 
     if (hasExactCoordinates) {
       const chunkStart = source!.char_start!
@@ -317,9 +355,75 @@ const DocumentPreviewSheet = ({
     }
   }, [source, isOpen])
 
+  const enrichCitationFileFromCatalog = useCallback(
+    async (
+      base: string,
+      src: SourceInfo,
+      target: { id: string; file_type: string; filename: string },
+    ) => {
+      try {
+        const documents = await getFileListCached(base)
+        const row = documents.find((f: { id: string }) => f.id === target.id)
+        if (!row) return
+        const resolvedType = row.file_type || extToType(row.filename) || target.file_type
+        setFileInfo({
+          id: row.id,
+          file_type: resolvedType,
+          filename: row.filename,
+          legacy_fallback: Boolean(row.legacy_fallback),
+        })
+        if (resolvedType !== 'pdf' && resolvedType !== target.file_type) {
+          startHighlightLoad(row.id, resolvedType, src)
+        }
+      } catch {
+        /* catalog is best-effort; viewer uses citation source_id + /content */
+      }
+    },
+    [],
+  )
 
   const loadDocumentInfo = async () => {
     if (!source) return
+
+    if (source.source_type === 'court_practice') {
+      const chunkId = source.chunk_id || source.source_id
+      if (!chunkId) {
+        setDocumentContent(source.text_preview || 'Фрагмент не найден')
+        setLoading(false)
+        return
+      }
+      setLoading(true)
+      setFileInfo(null)
+      setDocumentContent(null)
+      setDocumentText(null)
+      setDocumentHtml(null)
+      try {
+        const cacheKey = `court-practice:${chunkId}`
+        const cached = textContentCache.get(cacheKey)
+        let content = cached
+        if (content === undefined) {
+          const res = await fetch(
+            `/api/v2/court-practice-preview?chunk_id=${encodeURIComponent(chunkId)}`,
+            { headers: authHeaders() },
+          )
+          if (!res.ok) throw new Error('preview failed')
+          const data = (await res.json()) as { content?: string; metadata?: Record<string, unknown> }
+          content = data.content || ''
+          textContentCache.set(cacheKey, content)
+        }
+        setDocumentText(content)
+        setFileInfo({
+          id: chunkId,
+          file_type: 'txt',
+          filename: source.file || source.title || 'Судебный акт',
+        })
+      } catch {
+        setDocumentContent(source.text_preview || source.quote || 'Не удалось загрузить фрагмент')
+      } finally {
+        setLoading(false)
+      }
+      return
+    }
 
     // External sources (pravo.gov.ru, etc.) — don't try to load from case files
     if (source.url && source.url.startsWith('http')) {
@@ -329,62 +433,52 @@ const DocumentPreviewSheet = ({
       return
     }
 
-    const sourceId = (source as any).source_id as string | undefined
-    const inferredType = extToType(source.file || source.title)
+    const citationTarget = shouldOpenOriginalByCitationId(source, apiBase)
+      ? filePreviewFromCitation(source, extToType)
+      : null
 
-    // Instant path for Global Assistant: render viewer immediately from known citation id.
-    const useInstantPath = instantOpen && !!sourceId
-    const didStartInstantHighlight = useInstantPath && inferredType !== 'pdf' && apiBase !== '/api/v2/legal-corpus-preview'
-    if (useInstantPath) {
-      setFileInfo({
-        id: sourceId,
-        file_type: inferredType,
-        filename: source.file || source.title || 'Документ',
-      })
-      setLoading(false)
-      // Start highlight/content loading in background for non-PDF.
-      if (didStartInstantHighlight) {
-        startHighlightLoad(sourceId, inferredType, source)
-      }
-    } else {
-      setLoading(true)
-      setFileInfo(null)
-    }
     setDocumentContent(null)
     setDocumentText(null)
     setDocumentHtml(null)
 
+    if (citationTarget) {
+      setFileInfo(citationTarget)
+      setLoading(false)
+      if (citationTarget.file_type !== 'pdf') {
+        startHighlightLoad(citationTarget.id, citationTarget.file_type, source)
+      }
+      void enrichCitationFileFromCatalog(apiBase, source, citationTarget)
+      return
+    }
+
+    setLoading(true)
+    setFileInfo(null)
+
     try {
       const documents = await getFileListCached(apiBase)
-      
-      // Try to find file: first by source_id (if available), then by filename, then by id
       let file = null
-      if ((source as any).source_id) {
-        file = documents.find((f: any) => f.id === (source as any).source_id)
+      if (source.file) {
+        file = documents.find(
+          (f: any) => f.filename === source.file || f.id === source.file,
+        )
       }
-      if (!file && source.file) {
-        file = documents.find((f: any) => f.filename === source.file || f.id === source.file)
-      }
-      
+
       if (file) {
-        // Found file - open it completely, just like on Documents page
+        const resolvedType = file.file_type || extToType(file.filename)
         setFileInfo({
           id: file.id,
-          file_type: file.file_type || 'txt',
+          file_type: resolvedType,
           filename: file.filename,
           legacy_fallback: Boolean(file.legacy_fallback),
         })
-
-        // Загружаем подсветку в фоне. Для PDF подсветка работает через text layer в PDFViewer.
-        const resolvedType = file.file_type || 'txt'
-        const shouldStartNow =
-          !didStartInstantHighlight || file.id !== sourceId || resolvedType !== inferredType
-        if (shouldStartNow && resolvedType !== 'pdf') {
+        if (resolvedType !== 'pdf') {
           startHighlightLoad(file.id, resolvedType, source)
         }
       } else {
-        // File not found - show preview text if available
-        setDocumentContent(source.text_preview || 'Документ не найден')
+        setDocumentContent(
+          source.text_preview ||
+            'Документ не найден. У цитаты должен быть id файла в деле — обновите ответ ассистента.',
+        )
       }
     } catch (error) {
       console.error('Error loading document:', error)
@@ -393,7 +487,7 @@ const DocumentPreviewSheet = ({
       setLoading(false)
     }
   }
-  
+
   // Загрузка контента документа для подсветки
   const loadDocumentContentForHighlight = async (
     fileId: string, 
@@ -501,7 +595,7 @@ const DocumentPreviewSheet = ({
 
   useEffect(() => {
     // Загружаем файл и создаем blob URL только для файлов без специализированного рендерера.
-    // PDF → PDFViewer, DOCX → HTML via getFileHtml. Остальные — blob URL + <object>.
+    // PDF → TabularDocumentViewer (как chunk-lab), DOCX → HTML via getFileHtml. Остальные — blob URL + <object>.
     if (isOpen && fileInfo && fileInfo.file_type !== 'pdf' && fileInfo.file_type !== 'docx' && fileInfo.id && (caseId || filesApiBase)) {
       const loadFile = async () => {
         try {
@@ -582,8 +676,6 @@ const DocumentPreviewSheet = ({
       mark.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }
   }, [documentHtml])
-
-  if (!source) return null
 
   /**
    * Highlight a quote inside an HTML string using DOM text-node traversal.
@@ -676,6 +768,12 @@ const DocumentPreviewSheet = ({
     }
   }
 
+  if (!isOpen) return null
+
+  const displayFileName = source?.file || source?.title || 'Документ'
+  const navTotal = allSources.length > 0 ? allSources.length : 1
+  const navIndex = currentIndex >= 0 ? currentIndex + 1 : 1
+
   return (
     <Drawer
       anchor="right"
@@ -708,118 +806,153 @@ const DocumentPreviewSheet = ({
           height: '100%',
         }}
       >
-        {/* Header */}
+        {/* Header — sticky, крестик всегда виден */}
         <Box
           sx={{
-            p: 2,
+            position: 'sticky',
+            top: 0,
+            zIndex: 10,
+            flexShrink: 0,
             borderBottom: '1px solid',
             borderColor: 'divider',
-            bgcolor: 'action.hover',
+            bgcolor: 'background.paper',
           }}
         >
-          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, mb: 2 }}>
-            <DescriptionIcon color="primary" sx={{ mt: 0.5 }} />
-            <Box sx={{ flex: 1, minWidth: 0 }}>
-              <Typography
-                variant="h6"
-                sx={{
-                  fontWeight: 600,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {source.file}
-              </Typography>
-              <Stack direction="row" spacing={1} sx={{ mt: 1, flexWrap: 'wrap' }}>
-                {source.page != null && (
-                  <Chip
-                    label={`Стр. ${normalizeCitationPageForViewer(source.page) ?? 1}`}
-                    size="small"
-                    variant="outlined"
-                  />
-                )}
-                {source.similarity_score !== undefined && (
-                  <Chip
-                    label={`${Math.round(source.similarity_score * 100)}% релевантность`}
-                    size="small"
-                    color={source.similarity_score > 0.7 ? 'primary' : 'default'}
-                    variant="outlined"
-                  />
-                )}
-              </Stack>
-            </Box>
-          </Box>
-          
-          {/* Navigation & Actions */}
-          <Divider sx={{ my: 1.5 }} />
           <Box
             sx={{
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'space-between',
+              gap: 1,
+              px: 2,
+              pt: 1.5,
+              pb: 1,
             }}
           >
-            <Stack direction="row" spacing={0.5} alignItems="center">
+            <DescriptionIcon color="primary" sx={{ flexShrink: 0 }} />
+            <Typography
+              variant="subtitle1"
+              sx={{
+                flex: 1,
+                minWidth: 0,
+                fontWeight: 600,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {displayFileName}
+            </Typography>
+            <Tooltip title="Закрыть">
               <IconButton
                 size="small"
-                onClick={handlePrev}
-                disabled={!hasPrev}
+                onClick={onClose}
+                aria-label="Закрыть документ"
+                sx={{ flexShrink: 0, ml: 0.5 }}
               >
-                <ChevronLeftIcon />
+                <CloseIcon />
               </IconButton>
-              <Typography variant="caption" color="text.secondary" sx={{ px: 1 }}>
-                {currentIndex + 1} / {allSources.length}
-              </Typography>
-              <IconButton
-                size="small"
-                onClick={handleNext}
-                disabled={!hasNext}
-              >
-                <ChevronRightIcon />
-              </IconButton>
-            </Stack>
-
-            <Stack direction="row" spacing={0.5}>
-              <Tooltip title="Копировать">
-                <IconButton size="small" onClick={handleCopy}>
-                  {copied ? (
-                    <CheckIcon color="success" fontSize="small" />
-                  ) : (
-                    <CopyIcon fontSize="small" />
-                  )}
-                </IconButton>
-              </Tooltip>
-              <Tooltip title="Скачать">
-                <IconButton
-                  size="small"
-                  component="a"
-                  href={fileInfo ? `${apiBase}/files/${fileInfo.id}/download` : `#`}
-                  download
-                >
-                  <DownloadIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
-              {!filesApiBase && (
-                <Tooltip title="Открыть в полном окне">
-                  <IconButton
-                    size="small"
-                    component="a"
-                    href={`/cases/${caseId}/chat?file=${encodeURIComponent(source.file)}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    <MaximizeIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-              )}
-              <Tooltip title="Закрыть">
-                <IconButton size="small" onClick={onClose}>
-                  <CloseIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
-            </Stack>
+            </Tooltip>
           </Box>
+
+          {source && (
+            <>
+              <Box sx={{ px: 2, pb: 1 }}>
+                <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
+                  {source.page != null && (
+                    <Chip
+                      label={`Стр. ${normalizeCitationPageForViewer(source.page) ?? 1}`}
+                      size="small"
+                      variant="outlined"
+                    />
+                  )}
+                  {source.similarity_score !== undefined && (
+                    <Chip
+                      label={`${Math.round(source.similarity_score * 100)}% релевантность`}
+                      size="small"
+                      color={source.similarity_score > 0.7 ? 'primary' : 'default'}
+                      variant="outlined"
+                    />
+                  )}
+                </Stack>
+              </Box>
+
+              <Divider />
+
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  px: 2,
+                  py: 1,
+                  bgcolor: 'action.hover',
+                }}
+              >
+                {allSources.length > 1 ? (
+                  <Stack direction="row" spacing={0.5} alignItems="center">
+                    <IconButton
+                      size="small"
+                      onClick={handlePrev}
+                      disabled={!hasPrev}
+                      aria-label="Предыдущий источник"
+                    >
+                      <ChevronLeftIcon />
+                    </IconButton>
+                    <Typography variant="caption" color="text.secondary" sx={{ px: 1 }}>
+                      {navIndex} / {navTotal}
+                    </Typography>
+                    <IconButton
+                      size="small"
+                      onClick={handleNext}
+                      disabled={!hasNext}
+                      aria-label="Следующий источник"
+                    >
+                      <ChevronRightIcon />
+                    </IconButton>
+                  </Stack>
+                ) : (
+                  <Box />
+                )}
+
+                <Stack direction="row" spacing={0.5}>
+                  <Tooltip title="Копировать">
+                    <IconButton size="small" onClick={handleCopy} aria-label="Копировать">
+                      {copied ? (
+                        <CheckIcon color="success" fontSize="small" />
+                      ) : (
+                        <CopyIcon fontSize="small" />
+                      )}
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="Скачать">
+                    <IconButton
+                      size="small"
+                      component="a"
+                      href={fileInfo ? `${apiBase}/files/${fileInfo.id}/download` : `#`}
+                      download
+                      aria-label="Скачать"
+                    >
+                      <DownloadIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                  {!filesApiBase && (
+                    <Tooltip title="Открыть в полном окне">
+                      <IconButton
+                        size="small"
+                        component="a"
+                        href={`/cases/${caseId}/chat?file=${encodeURIComponent(displayFileName)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label="Открыть в полном окне"
+                      >
+                        <MaximizeIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                </Stack>
+              </Box>
+            </>
+          )}
         </Box>
 
         {/* Content */}
@@ -834,7 +967,8 @@ const DocumentPreviewSheet = ({
           {fileInfo?.legacy_fallback && (
             <Box sx={{ px: 2, py: 1, bgcolor: 'warning.light', borderBottom: '1px solid', borderColor: 'warning.main' }}>
               <Typography variant="caption" color="warning.dark">
-                Legacy-режим: оригинальный файл не сохранен, показан восстановленный текст из индекса.
+                Оригинал на диске не сохранён — показан только извлечённый текст. Перезагрузите документ в дело,
+                чтобы открывать PDF/DOCX по цитатам.
               </Typography>
             </Box>
           )}
@@ -865,30 +999,18 @@ const DocumentPreviewSheet = ({
               </a>
             </Box>
           ) : fileInfo && fileInfo.file_type === 'pdf' ? (
-            // PDF viewer - render immediately once file id is known
-            <Box sx={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-              <Box sx={{ flex: 1, overflow: 'hidden' }}>
-                <PDFViewer
+            // Как ChunkLabPage: TabularDocumentViewer + тот же cellData (verbatim, page basis one, bbox).
+            <Box sx={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+              <Box sx={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
+                <TabularDocumentViewer
+                  key={`preview-pdf:${fileInfo.id}:${source?.source_id ?? ''}:${source?.chunk_id ?? ''}:${String(source?.page ?? '')}`}
                   fileId={fileInfo.id}
                   caseId={caseId}
-                  filename={fileInfo.filename}
+                  fileType="pdf"
+                  fileName={fileInfo.filename}
+                  cellData={chunkLabCitationCellData ?? undefined}
                   fileApiBase={filesApiBase}
-                  initialPage={normalizeCitationPageForViewer(source.page) ?? 1}
-                  highlightPage={normalizeCitationPageForViewer(source.page)}
-                  highlightText={
-                    (() => {
-                      const t = anchorText
-                        .replace(/\u2026/g, '...')
-                        .replace(/(\.{3}|…)\s*$/u, '')
-                        .trim()
-                      return t.length >= 2 ? t : undefined
-                    })()
-                  }
-                  highlightBBox={source.bbox}
-                  highlightBBoxRegions={source.bbox_regions}
-                  highlightPageBBox={source.page_bbox}
-                  showTabs={false}
-                  showAbout={false}
+                  citationPreview
                 />
               </Box>
             </Box>
@@ -912,7 +1034,7 @@ const DocumentPreviewSheet = ({
                 sx={{ fontSize: '0.875rem', fontFamily: 'inherit' }}
               />
             </Box>
-          ) : fileInfo && documentText && ['txt', 'html', 'md', 'json', 'xml', 'csv'].includes(fileInfo.file_type.toLowerCase()) ? (
+          ) : fileInfo && documentText && (source?.source_type === 'court_practice' || ['txt', 'html', 'md', 'json', 'xml', 'csv'].includes(fileInfo.file_type.toLowerCase())) ? (
             // Текстовые документы - отображаем с подсветкой по координатам или по найденной цитате
             <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
               {highlights.length > 0 ? (

@@ -117,21 +117,25 @@ export interface AssistantMessageProps {
     quote_anchor?: string
     text_preview?: string
     chunk_id?: string
-    char_start: number
-    char_end: number
+    char_start?: number
+    char_end?: number
     context_before?: string
     context_after?: string
     bbox?: { x0?: number; y0?: number; x1?: number; y1?: number }
+    bbox_regions?: Array<{ x0?: number; y0?: number; x1?: number; y1?: number }>
     page_bbox?: { width?: number; height?: number }
     url?: string
     source_type?: string
   }>
   /** Phase 2: блоки для чипов цитат; при уже набранном тексте ответа не подменяют markdown — только для линкера/MessageContent */
   answerBlocks?: AnswerBlockItem[]
+  /** Как у глобального ассистента: цитаты без linkCitationsInline (внутренний ассистент по делу). */
+  preferLegacyCitations?: boolean
   isStreaming?: boolean
   workflowProgressPercent?: number
   workflowStatus?: "running" | "completed" | "failed"
-  onSourceClick?: (source: { title?: string; url?: string; page?: number; file?: string; source_id?: string; char_start?: number; char_end?: number; quote?: string; source_type?: string }) => void
+  /** Полный SourceInfo из inline-цитаты / блоков — не сужать, иначе теряются bbox_regions и текст для PDF. */
+  onSourceClick?: (source: SourceInfo) => void
   className?: string
   children?: React.ReactNode
 }
@@ -145,6 +149,7 @@ export const AssistantMessage = React.memo(function AssistantMessage({
   sources,
   citations,
   answerBlocks,
+  preferLegacyCitations = false,
   isStreaming = false,
   workflowProgressPercent,
   workflowStatus,
@@ -171,6 +176,7 @@ export const AssistantMessage = React.memo(function AssistantMessage({
         context_before: citation.context_before,
         context_after: citation.context_after,
         bbox: citation.bbox,
+        bbox_regions: citation.bbox_regions,
         page_bbox: citation.page_bbox,
         url: citation.url,
         source_type: citation.source_type,
@@ -213,6 +219,7 @@ export const AssistantMessage = React.memo(function AssistantMessage({
       context_before: c.context_before,
       context_after: c.context_after,
       bbox: c.bbox,
+      bbox_regions: c.bbox_regions,
       page_bbox: c.page_bbox,
       url: c.url,
       source_type: c.source_type,
@@ -257,24 +264,7 @@ export const AssistantMessage = React.memo(function AssistantMessage({
               citations={citeForBlocks}
               isStreaming={isStreaming}
               onCitationClick={(source) => {
-                if (onSourceClick) {
-                  onSourceClick({
-                    file: source.file,
-                    title: source.file || source.title,
-                    page: source.page,
-                    source_id: source.source_id,
-                    chunk_id: source.chunk_id,
-                    char_start: source.char_start,
-                    char_end: source.char_end,
-                    bbox: source.bbox,
-                    page_bbox: source.page_bbox,
-                    quote: source.quote,
-                    quote_anchor: source.quote_anchor,
-                    citation_id: source.citation_id,
-                    url: source.url,
-                    source_type: source.source_type,
-                  } as any)
-                }
+                if (onSourceClick) onSourceClick(source)
               }}
             />
           </div>
@@ -287,25 +277,9 @@ export const AssistantMessage = React.memo(function AssistantMessage({
                   content={content}
                   sources={effectiveSources}
                   answerBlocks={answerBlocks}
+                  preferLegacyCitations={preferLegacyCitations}
                   onCitationClick={(source) => {
-                    if (onSourceClick) {
-                      onSourceClick({
-                        file: source.file,
-                        title: source.file || source.title,
-                        page: source.page,
-                        source_id: source.source_id,
-                        chunk_id: source.chunk_id,
-                        char_start: source.char_start,
-                        char_end: source.char_end,
-                        bbox: source.bbox,
-                        page_bbox: source.page_bbox,
-                        quote: source.quote,
-                        quote_anchor: source.quote_anchor,
-                        citation_id: source.citation_id,
-                        url: source.url,
-                        source_type: source.source_type,
-                      } as any)
-                    }
+                    if (onSourceClick) onSourceClick(source)
                   }}
                   isStreaming={isStreaming}
                 />
@@ -319,25 +293,9 @@ export const AssistantMessage = React.memo(function AssistantMessage({
                   content={response}
                   sources={effectiveSources}
                   answerBlocks={answerBlocks}
+                  preferLegacyCitations={preferLegacyCitations}
                   onCitationClick={(source) => {
-                    if (onSourceClick) {
-                      onSourceClick({
-                        file: source.file,
-                        title: source.file || source.title,
-                        page: source.page,
-                        source_id: source.source_id,
-                        chunk_id: source.chunk_id,
-                        char_start: source.char_start,
-                        char_end: source.char_end,
-                        bbox: source.bbox,
-                        page_bbox: source.page_bbox,
-                        quote: source.quote,
-                        quote_anchor: source.quote_anchor,
-                        citation_id: source.citation_id,
-                        url: source.url,
-                        source_type: source.source_type,
-                      } as any)
-                    }
+                    if (onSourceClick) onSourceClick(source)
                   }}
                   isStreaming={isStreaming}
                 />

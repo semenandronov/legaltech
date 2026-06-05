@@ -7,7 +7,7 @@
 - Формат structured_edits
 """
 import pytest
-from unittest.mock import Mock, patch, AsyncMock
+from unittest.mock import Mock, patch, MagicMock
 from app.services.chat.editor_handler import EditorHandler
 from app.services.langchain_agents.chat_graph_service import ChatGraphService
 
@@ -21,9 +21,16 @@ class TestEditorWorkflow:
         handler = EditorHandler(rag_service=Mock(), db=Mock())
         
         # Проверяем что handle вызывает ChatGraphService
-        with patch('app.services.chat.editor_handler.get_chat_graph_service') as mock_service:
-            mock_service.return_value.stream_response = AsyncMock(return_value=iter([]))
-            
+        async def empty_stream(*args, **kwargs):
+            if False:
+                yield ""
+
+        mock_chat = MagicMock()
+        mock_chat.stream_response = MagicMock(return_value=empty_stream())
+
+        with patch('app.services.langchain_agents.chat_graph_service.get_chat_graph_service') as mock_service:
+            mock_service.return_value = mock_chat
+
             async for _ in handler.handle(
                 case_id="test",
                 question="Тест",
@@ -33,9 +40,8 @@ class TestEditorWorkflow:
                 selected_text=None
             ):
                 pass
-            
-            # Проверяем что stream_response был вызван
-            mock_service.return_value.stream_response.assert_called_once()
+
+            mock_chat.stream_response.assert_called_once()
     
     @pytest.mark.asyncio
     async def test_structured_edits_in_sse_events(self):
@@ -48,8 +54,15 @@ class TestEditorWorkflow:
             'data: {"structured_edits": [{"id": "edit-1", "original_text": "текст", "new_text": "новый"}]}\n\n'
         ]
         
-        with patch('app.services.chat.editor_handler.get_chat_graph_service') as mock_service:
-            mock_service.return_value.stream_response = AsyncMock(return_value=iter(mock_events))
+        async def events_stream(*args, **kwargs):
+            for event in mock_events:
+                yield event
+
+        mock_chat = MagicMock()
+        mock_chat.stream_response = MagicMock(return_value=events_stream())
+
+        with patch('app.services.langchain_agents.chat_graph_service.get_chat_graph_service') as mock_service:
+            mock_service.return_value = mock_chat
             
             events = []
             async for event in handler.handle(
@@ -91,4 +104,20 @@ class TestEditorWorkflow:
         
         # Проверяем что запрос на проверку рисков маршрутизируется правильно
         assert result == "check_risks"
+
+    def test_editor_mode_hint_edit(self):
+        from app.services.langchain_agents.graphs.chat_graph import route_editor_mode
+
+        assert route_editor_mode({
+            "editor_mode_hint": "edit",
+            "question": "улучши формулировку",
+        }) == "generate_edits"
+
+    def test_editor_mode_hint_draft(self):
+        from app.services.langchain_agents.graphs.chat_graph import route_editor_mode
+
+        assert route_editor_mode({
+            "editor_mode_hint": "draft",
+            "question": "добавь пункт о форс-мажоре",
+        }) == "generate_editor_snippet"
 

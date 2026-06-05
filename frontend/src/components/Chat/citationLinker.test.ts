@@ -3,6 +3,7 @@ import type { SourceInfo } from '@/services/api'
 import {
   encodeCitationMarker,
   encodeLegacyCitationMarker,
+  hasEmbeddedCitationMarkers,
   lastIndicesPerConsecutiveRuns,
   linkCitationsInline,
   segmentPlainTextForCitations,
@@ -13,6 +14,13 @@ import {
 describe('stripBracketCitationNumbers', () => {
   it('удаляет числовые сноски', () => {
     expect(stripBracketCitationNumbers('Тезис [1] и ещё [2].')).toBe('Тезис  и ещё .')
+  })
+})
+
+describe('hasEmbeddedCitationMarkers', () => {
+  it('true если бэкенд уже вставил CITE-маркер', () => {
+    const m = encodeCitationMarker('cit_abcdef012345', 1)
+    expect(hasEmbeddedCitationMarkers(`Текст ${m} далее.`)).toBe(true)
   })
 })
 

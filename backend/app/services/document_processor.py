@@ -1,9 +1,9 @@
 """Document processor service using LangChain."""
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Literal
 import threading
 from langchain_core.documents import Document
 from app.config import config
-from app.services.yandex_embeddings import YandexEmbeddings
+from app.services.yandex_embeddings import get_yandex_embeddings
 from app.services.chunk_ids import generate_chunk_id
 from app.services.bm25_retriever import BM25Retriever
 from sqlalchemy.orm import Session
@@ -33,8 +33,8 @@ class DocumentProcessor:
             )
         
         try:
-            self.embeddings = YandexEmbeddings()
-            logger.info("✅ Using Yandex embeddings")
+            self.embeddings = get_yandex_embeddings()
+            logger.info("✅ Using Yandex embeddings (shared instance)")
         except Exception as e:
             logger.error(f"Failed to initialize Yandex embeddings: {e}")
             raise ValueError(f"Ошибка инициализации Yandex embeddings: {str(e)}")
@@ -58,12 +58,17 @@ class DocumentProcessor:
         metadata: Dict[str, Any] = None,
         file_id: Optional[str] = None,
         langchain_docs: Optional[List[Document]] = None,
+        content_bytes: Optional[bytes] = None,
     ) -> List[Document]:
         """
         Build vector-ready chunks directly from Docling/LangChain loader output.
 
-        Strict mode: ingestion requires pre-chunked `langchain_docs` from DocumentLoaderService
-        (Docling integration). Legacy re-chunking and dual-segmentation are disabled.
+        Modes:
+            * `LEGAL_CHUNKING_DUAL_ENABLED=True` (по умолчанию): сначала пытаемся
+              разрезать документ через `LegalChunkerV2` (Docling AST → macro/micro,
+              контракт v2.1). При любой ошибке — fallback на strict docling-direct-v1
+              из `langchain_docs`.
+            * Иначе: strict mode из `langchain_docs` (контракт docling-direct-v1).
 
         Returns:
             List of Document objects with deterministic chunk ids and character offsets.
@@ -82,37 +87,105 @@ class DocumentProcessor:
         if file_id:
             doc_metadata["file_id"] = file_id
 
-        if not langchain_docs:
-            raise ValueError(
-                "Direct Docling ingestion requires loader chunks; plain-text re-chunking is disabled."
-            )
         documents: List[Document] = []
-        offset = 0
-        sep_len = 2  # "\n\n" joiner used by ingestion text reconstruction
 
-        for idx, src_doc in enumerate(langchain_docs):
-            chunk_text = str((src_doc.page_content or "")).strip()
-            if not chunk_text:
-                continue
-            source_meta = dict(src_doc.metadata or {})
-            char_start = offset
-            char_end = char_start + len(chunk_text)
-            chunk_id = generate_chunk_id(str(doc_id), idx, char_start)
+        dual_enabled = bool(getattr(config, "LEGAL_CHUNKING_DUAL_ENABLED", True))
+        if dual_enabled:
+            try:
+                from app.services.legal_chunker import LegalChunkerV2
 
-            chunk_meta: Dict[str, Any] = {
-                **doc_metadata,
-                **source_meta,
-                "source_file": filename,
-                "chunk_id": chunk_id,
-                "chunk_index": idx,
-                "char_start": char_start,
-                "char_end": char_end,
-                "chunk_level": "docling",
-                "chunking_contract_version": "docling-direct-v1",
-            }
+                # Скан → loader OCR (Yandex): skip Docling, chunk OCR markdown/text.
+                # Native PDF text (PyPDF) → Docling AST with do_ocr=False (structure only).
+                loader_did_ocr = False
+                loader_native_text = False
+                if langchain_docs:
+                    for ld in langchain_docs:
+                        try:
+                            md = getattr(ld, "metadata", None) or {}
+                            if md.get("ocr") is True or str(md.get("ocr_engine") or "").strip():
+                                loader_did_ocr = True
+                                loader_native_text = False
+                                break
+                            if str(md.get("extraction_source") or "").strip() == "native_text":
+                                loader_native_text = True
+                        except Exception:
+                            continue
 
-            documents.append(Document(page_content=chunk_text, metadata=chunk_meta))
-            offset = char_end + sep_len
+                fallback_for_chunker = text
+                if loader_did_ocr and langchain_docs:
+                    md_parts = []
+                    for ld in langchain_docs:
+                        meta = getattr(ld, "metadata", None) or {}
+                        piece = meta.get("yandex_markdown") or ld.page_content or ""
+                        if str(piece).strip():
+                            md_parts.append(str(piece).strip())
+                    if md_parts:
+                        fallback_for_chunker = "\n\n".join(md_parts)
+
+                chunker = LegalChunkerV2()
+                v2_documents = chunker.chunk(
+                    content_bytes=content_bytes,
+                    filename=filename,
+                    base_metadata=doc_metadata,
+                    doc_type=str(doc_metadata.get("doc_type") or "").strip(),
+                    case_id=str(doc_metadata.get("case_id") or "").strip() or None,
+                    fallback_text=fallback_for_chunker,
+                    loader_did_ocr=loader_did_ocr,
+                    loader_native_text=loader_native_text and not loader_did_ocr,
+                    loader_documents=langchain_docs if loader_did_ocr else None,
+                )
+                if v2_documents:
+                    macro_n = sum(1 for d in v2_documents if d.metadata.get("chunk_level") == "macro")
+                    micro_n = sum(1 for d in v2_documents if d.metadata.get("chunk_level") == "micro")
+                    logger.info(
+                        "[LegalChunkerV2] %s: produced %s chunks (macro=%s, micro=%s, profile=%s, preseg=%s)",
+                        filename,
+                        len(v2_documents),
+                        macro_n,
+                        micro_n,
+                        v2_documents[0].metadata.get("chunk_profile") if v2_documents else "?",
+                        v2_documents[0].metadata.get("preseg_strategy") if v2_documents else "?",
+                    )
+                    documents = v2_documents
+            except Exception as e:
+                logger.warning(
+                    "[LegalChunkerV2] failed for %s: %s — fallback to docling-direct-v1",
+                    filename,
+                    e,
+                    exc_info=True,
+                )
+
+        if not documents:
+            if not langchain_docs:
+                raise ValueError(
+                    "Direct Docling ingestion requires loader chunks; plain-text re-chunking is disabled."
+                )
+            offset = 0
+            sep_len = 2  # "\n\n" joiner used by ingestion text reconstruction
+
+            for idx, src_doc in enumerate(langchain_docs):
+                chunk_text = str((src_doc.page_content or "")).strip()
+                if not chunk_text:
+                    continue
+                source_meta = dict(src_doc.metadata or {})
+                char_start = offset
+                char_end = char_start + len(chunk_text)
+                chunk_id = generate_chunk_id(str(doc_id), idx, char_start)
+
+                chunk_meta: Dict[str, Any] = {
+                    **doc_metadata,
+                    **source_meta,
+                    "source_file": filename,
+                    "chunk_id": chunk_id,
+                    "chunk_index": idx,
+                    "char_start": char_start,
+                    "char_end": char_end,
+                    "chunk_level": "docling",
+                    "chunking_contract_version": "docling-direct-v1",
+                }
+
+                documents.append(Document(page_content=chunk_text, metadata=chunk_meta))
+                offset = char_end + sep_len
 
         if not documents:
             raise ValueError(
@@ -140,6 +213,16 @@ class DocumentProcessor:
                 )
                 documents = documents[:max_chunks]
 
+        warn_threshold = int(getattr(config, "LEGAL_CHUNK_COUNT_WARN_THRESHOLD", 2000) or 2000)
+        if warn_threshold > 0 and len(documents) > warn_threshold:
+            logger.warning(
+                "Anomalous chunk count for %s: %s chunks (threshold=%s). "
+                "Check parser output or sharding.",
+                filename,
+                len(documents),
+                warn_threshold,
+            )
+
         return documents
 
     def create_embeddings(self, documents: List[Document], batch_size: int = 100) -> List[List[float]]:
@@ -153,8 +236,15 @@ class DocumentProcessor:
         Returns:
             List of embedding vectors
         """
-        texts = [doc.page_content for doc in documents]
-        
+        texts: List[str] = []
+        for doc in documents:
+            md = doc.metadata or {}
+            et = md.get("embedding_text")
+            if isinstance(et, str) and et.strip():
+                texts.append(et.strip())
+            else:
+                texts.append(doc.page_content or "")
+
         # Process in batches to avoid memory issues and rate limits
         all_embeddings = []
         for i in range(0, len(texts), batch_size):
@@ -170,7 +260,9 @@ class DocumentProcessor:
         case_id: str,
         documents: List[Document],
         db: Session,
-        original_files: Dict[str, bytes] = None
+        original_files: Dict[str, bytes] = None,
+        *,
+        bm25_after_store: Literal["schedule", "invalidate_only"] = "schedule",
     ) -> str:
         """
         Store documents in PGVector database
@@ -193,10 +285,31 @@ class DocumentProcessor:
             # Add case_id to all document metadata for multi-tenant filtering
             for doc in documents:
                 doc.metadata["case_id"] = case_id
-            
+
+            # Re-index same file_id: remove previous vectors so partial retries do not duplicate rows.
+            file_ids = {str(d.metadata.get("file_id") or "") for d in documents if d.metadata.get("file_id")}
+            for fid in file_ids:
+                if fid:
+                    self.vector_store.delete_file_vectors(fid)
+
             # Store documents in PGVector
             ids = self.vector_store.add_documents(documents, case_id=case_id)
             logger.info(f"✅ Stored {len(ids)} documents in PGVector for case {case_id}")
+
+            if getattr(config, "CASE_BM25_PREWARM_ENABLED", True):
+                try:
+                    from app.services.bm25_case_prewarm import invalidate_bm25_index, schedule_bm25_prewarm
+
+                    invalidate_bm25_index(case_id, self)
+                    if bm25_after_store == "schedule":
+                        schedule_bm25_prewarm(case_id, force_rebuild=True)
+                except Exception as bm25_exc:
+                    logger.warning(
+                        "BM25 after store failed case=%s mode=%s: %s",
+                        case_id,
+                        bm25_after_store,
+                        bm25_exc,
+                    )
             
             # Return collection name as identifier
             return self.vector_store.collection_name
@@ -231,8 +344,7 @@ class DocumentProcessor:
 
         docs_for_index = documents or []
         if not docs_for_index:
-            logger.warning("BM25 prewarm skipped for case %s: no documents provided", case_id)
-            return self.bm25_retriever.has_index(case_id)
+            return self.prewarm_bm25_from_store(case_id, force_rebuild=force_rebuild)
 
         try:
             if force_rebuild and self.bm25_retriever.has_index(case_id):
@@ -248,6 +360,33 @@ class DocumentProcessor:
         except Exception as e:
             logger.warning("BM25 prewarm failed for case %s: %s", case_id, e, exc_info=True)
             return False
+
+    def prewarm_bm25_from_store(
+        self,
+        case_id: str,
+        *,
+        force_rebuild: bool = False,
+        chunk_levels: Optional[List[str]] = None,
+    ) -> bool:
+        """Построить BM25 из чанков PGVector (источник истины для дела)."""
+        if not self.bm25_retriever.available:
+            return False
+        if self.bm25_retriever.has_index(case_id) and not force_rebuild:
+            return True
+        max_chunks = max(100, int(getattr(config, "CASE_BM25_MAX_CHUNKS", 2500) or 2500))
+        docs = self.vector_store.list_case_chunks(
+            case_id,
+            limit=max_chunks,
+            chunk_levels=chunk_levels,
+        )
+        if not docs:
+            logger.info("BM25 prewarm: no PGVector chunks for case %s", case_id)
+            return False
+        return self.prewarm_bm25_index(
+            case_id,
+            documents=docs,
+            force_rebuild=force_rebuild,
+        )
     
     def retrieve_relevant_chunks(
         self,
@@ -334,37 +473,82 @@ class DocumentProcessor:
             List of relevant Document objects with combined scores
         """
         try:
-            # 1. Dense search (semantic search via PGVector)
-            dense_docs = self.retrieve_relevant_chunks(
-                case_id=case_id,
-                query=query,
-                k=k * 2,  # Get more documents for better ranking
-                db=db,
-                chunk_levels=chunk_levels,
-                metadata_filter=metadata_filter,
-            )
-            
-            # 2. Sparse search: prefer native PostgreSQL FTS (persistent), fallback to BM25.
-            filter_payload = self._build_search_filter(chunk_levels=chunk_levels, metadata_filter=metadata_filter)
-            sparse_docs = self.vector_store.keyword_search(
-                query=query,
-                case_id=case_id,
-                k=k * 2,
-                filter=filter_payload,
+            from app.services.bm25_case_prewarm import ensure_bm25_index, schedule_bm25_prewarm
+            from app.services.observability.case_assistant_langfuse_tracing import (
+                case_assistant_detailed_tracing_enabled,
+                case_assistant_span,
+                summarize_metadata_filter,
             )
 
+            _trace_hybrid = case_assistant_detailed_tracing_enabled()
+            _chunk_label = (
+                ",".join(str(x) for x in (chunk_levels or [])) if chunk_levels else "default"
+            )
+            _hybrid_meta = {
+                "case_id": case_id,
+                "chunk_levels": _chunk_label,
+                "alpha": alpha,
+                "k": k,
+            }
+
+            if self.bm25_retriever.available:
+                if bool(getattr(config, "CASE_BM25_SYNC_ON_HYBRID_SEARCH", True)):
+                    ensure_bm25_index(self, case_id)
+                elif not self.bm25_retriever.has_index(case_id):
+                    schedule_bm25_prewarm(case_id)
+
+            filter_payload = self._build_search_filter(
+                chunk_levels=chunk_levels, metadata_filter=metadata_filter
+            )
+            _scope = summarize_metadata_filter(metadata_filter)
+
+            def _hybrid_step(step: str):
+                if not _trace_hybrid:
+                    from contextlib import nullcontext
+
+                    return nullcontext()
+                return case_assistant_span(
+                    f"hybrid_search.{step}",
+                    metadata={**_hybrid_meta, "scope": _scope},
+                )
+
+            # 1. Dense search (semantic search via PGVector)
+            with _hybrid_step("dense") as dense_out:
+                dense_docs = self.retrieve_relevant_chunks(
+                    case_id=case_id,
+                    query=query,
+                    k=k * 2,
+                    db=db,
+                    chunk_levels=chunk_levels,
+                    metadata_filter=metadata_filter,
+                )
+                if isinstance(dense_out, dict):
+                    dense_out["docs_count"] = len(dense_docs or [])
+
+            # 2. Sparse search: prefer native PostgreSQL FTS (persistent), fallback to BM25.
+            with _hybrid_step("fts") as fts_out:
+                sparse_docs = self.vector_store.keyword_search(
+                    query=query,
+                    case_id=case_id,
+                    k=k * 2,
+                    filter=filter_payload,
+                )
+                if isinstance(fts_out, dict):
+                    fts_out["docs_count"] = len(sparse_docs or [])
+
             # Product requirement: address/anchor queries (e.g. "пункт 6.8") must have deterministic recall.
-            # We therefore run anchor substring search whenever the query contains a numeric dotted anchor,
-            # even if FTS already returned something (FTS can miss or de-prioritize numeric anchors).
             anchor_docs: List[Document] = []
             if hasattr(self.vector_store, "anchor_substring_search"):
                 try:
-                    anchor_docs = self.vector_store.anchor_substring_search(
-                        query=query,
-                        case_id=case_id,
-                        k=k * 2,
-                        filter=filter_payload,
-                    )
+                    with _hybrid_step("anchor") as anchor_out:
+                        anchor_docs = self.vector_store.anchor_substring_search(
+                            query=query,
+                            case_id=case_id,
+                            k=k * 2,
+                            filter=filter_payload,
+                        )
+                        if isinstance(anchor_out, dict):
+                            anchor_out["docs_count"] = len(anchor_docs or [])
                     if anchor_docs:
                         logger.info(
                             "Anchor substring search hit for case %s (returned %s docs)",
@@ -372,11 +556,11 @@ class DocumentProcessor:
                             len(anchor_docs),
                         )
                 except Exception as e:
-                    logger.warning("Anchor substring search failed for case %s: %s", case_id, e, exc_info=True)
+                    logger.warning(
+                        "Anchor substring search failed for case %s: %s", case_id, e, exc_info=True
+                    )
 
             if anchor_docs:
-                # Merge anchor hits first (higher priority), then FTS hits.
-                # Deduplicate by DocumentProcessor's doc id heuristic so RRF sees anchor hits early.
                 merged_sparse: List[Document] = []
                 seen_ids = set()
                 for doc in anchor_docs + (sparse_docs or []):
@@ -391,87 +575,61 @@ class DocumentProcessor:
                     merged_sparse.append(doc)
                 sparse_docs = merged_sparse
 
-            if not sparse_docs:
-                allow_request_build = bool(
-                    getattr(config, "CASE_ASSISTANT_ALLOW_REQUEST_TIME_BM25_BUILD", False)
-                )
-                if self.bm25_retriever.has_index(case_id):
+            if not sparse_docs and self.bm25_retriever.has_index(case_id):
+                with _hybrid_step("bm25_fallback") as bm25_out:
                     sparse_docs = self.bm25_retriever.retrieve(case_id, query, k=k * 2)
-                elif allow_request_build:
-                    logger.info(f"BM25 index not found for case {case_id}, building index in request path...")
-                    try:
-                        all_docs = self.retrieve_relevant_chunks(
-                            case_id=case_id,
-                            query="",
-                            k=1000,
-                            db=db,
-                            chunk_levels=chunk_levels,
-                            metadata_filter=metadata_filter,
+                    if isinstance(bm25_out, dict):
+                        bm25_out["docs_count"] = len(sparse_docs or [])
+                        bm25_out["unscoped_index"] = True
+
+            with _hybrid_step("rrf") as rrf_out:
+                rrf_scores: Dict[str, float] = {}
+                rrf_docs: Dict[str, Document] = {}
+
+                for rank, doc in enumerate(dense_docs, start=1):
+                    doc_id = self._get_doc_id(doc)
+                    rrf_score = alpha * (1.0 / (60 + rank))
+                    if doc_id not in rrf_scores:
+                        rrf_scores[doc_id] = 0.0
+                        rrf_docs[doc_id] = doc
+                    rrf_scores[doc_id] += rrf_score
+                    if hasattr(doc, "metadata") and "similarity_score" not in doc.metadata:
+                        doc.metadata["similarity_score"] = 1.0 - (
+                            rank / max(len(dense_docs), 1)
                         )
-                        if all_docs:
-                            if len(all_docs) < 10:
-                                all_docs = dense_docs
-                            self.bm25_retriever.build_index(case_id, all_docs)
-                            sparse_docs = self.bm25_retriever.retrieve(case_id, query, k=k * 2)
-                    except Exception as e:
-                        logger.warning(f"Could not build BM25 index for case {case_id}: {e}")
-                else:
-                    logger.info(
-                        "BM25 index absent for case %s: skipping request-time build (use ingestion/reindex prewarm)",
-                        case_id,
-                    )
-            
-            # 3. Reciprocal Rank Fusion (RRF) для объединения результатов
-            # RRF score = sum(1 / (k + rank)) для каждого ранга документа
-            rrf_scores: Dict[str, float] = {}
-            rrf_docs: Dict[str, Document] = {}
-            
-            # Добавляем документы из dense search
-            for rank, doc in enumerate(dense_docs, start=1):
-                doc_id = self._get_doc_id(doc)
-                # RRF: alpha weight для dense search
-                rrf_score = alpha * (1.0 / (60 + rank))  # k=60 для RRF
-                if doc_id not in rrf_scores:
-                    rrf_scores[doc_id] = 0.0
-                    rrf_docs[doc_id] = doc
-                rrf_scores[doc_id] += rrf_score
-                
-                # Сохраняем similarity_score если есть
-                if hasattr(doc, 'metadata') and 'similarity_score' not in doc.metadata:
-                    doc.metadata['similarity_score'] = 1.0 - (rank / len(dense_docs))
-            
-            # Добавляем документы из sparse search
-            for rank, doc in enumerate(sparse_docs, start=1):
-                doc_id = self._get_doc_id(doc)
-                # RRF: (1-alpha) weight для sparse search
-                rrf_score = (1.0 - alpha) * (1.0 / (60 + rank))
-                if doc_id not in rrf_scores:
-                    rrf_scores[doc_id] = 0.0
-                    rrf_docs[doc_id] = doc
-                rrf_scores[doc_id] += rrf_score
-                
-                # Сохраняем bm25_score если есть
-                if hasattr(doc, 'metadata') and 'bm25_score' not in doc.metadata:
-                    doc.metadata['bm25_score'] = 0.0
-            
-            # Сортируем по RRF score (по убыванию)
-            sorted_docs = sorted(
-                rrf_docs.items(),
-                key=lambda x: rrf_scores[x[0]],
-                reverse=True
+
+                for rank, doc in enumerate(sparse_docs, start=1):
+                    doc_id = self._get_doc_id(doc)
+                    rrf_score = (1.0 - alpha) * (1.0 / (60 + rank))
+                    if doc_id not in rrf_scores:
+                        rrf_scores[doc_id] = 0.0
+                        rrf_docs[doc_id] = doc
+                    rrf_scores[doc_id] += rrf_score
+                    if hasattr(doc, "metadata") and "bm25_score" not in doc.metadata:
+                        doc.metadata["bm25_score"] = 0.0
+
+                sorted_docs = sorted(
+                    rrf_docs.items(),
+                    key=lambda x: rrf_scores[x[0]],
+                    reverse=True,
+                )
+                result_docs = [doc for doc_id, doc in sorted_docs[:k]]
+                for doc_id, doc in sorted_docs[:k]:
+                    if hasattr(doc, "metadata"):
+                        doc.metadata["combined_score"] = float(rrf_scores[doc_id])
+                    else:
+                        doc.metadata = {"combined_score": float(rrf_scores[doc_id])}
+                if isinstance(rrf_out, dict):
+                    rrf_out["dense_in"] = len(dense_docs or [])
+                    rrf_out["sparse_in"] = len(sparse_docs or [])
+                    rrf_out["docs_out"] = len(result_docs)
+
+            logger.info(
+                "Hybrid search for case %s returned %s documents (alpha=%s)",
+                case_id,
+                len(result_docs),
+                alpha,
             )
-            
-            # Возвращаем top-k документов
-            result_docs = [doc for doc_id, doc in sorted_docs[:k]]
-            
-            # Добавляем combined_score в metadata
-            for i, (doc_id, doc) in enumerate(sorted_docs[:k]):
-                if hasattr(doc, 'metadata'):
-                    doc.metadata['combined_score'] = float(rrf_scores[doc_id])
-                else:
-                    doc.metadata = {'combined_score': float(rrf_scores[doc_id])}
-            
-            logger.info(f"Hybrid search for case {case_id} returned {len(result_docs)} documents (alpha={alpha})")
             return result_docs
             
         except Exception as e:

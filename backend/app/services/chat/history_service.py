@@ -10,13 +10,22 @@ Chat History Service - Управление историей чата
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import uuid
 import logging
 
 from app.models.case import ChatMessage
+from app.services.chat.editor_session import is_editor_session_id
 
 logger = logging.getLogger(__name__)
+
+
+def _exclude_editor_sessions(query):
+    """Case assistant history must not include document-editor threads."""
+    return query.filter(
+        (ChatMessage.session_id.is_(None))
+        | (~ChatMessage.session_id.like("editor:%"))
+    )
 
 
 class ChatHistoryService:
@@ -29,9 +38,6 @@ class ChatHistoryService:
     - Сохранение и загрузку истории
     """
     
-    # Таймаут сессии в минутах (новая сессия если прошло больше)
-    SESSION_TIMEOUT_MINUTES = 30
-    
     def __init__(self, db: Session):
         """
         Инициализация сервиса
@@ -43,47 +49,14 @@ class ChatHistoryService:
     
     def get_or_create_session(self, case_id: str) -> str:
         """
-        Получить текущую сессию или создать новую
-        
-        Логика:
-        - Если есть сообщение в последние 30 минут → продолжаем сессию
-        - Иначе → создаём новую
-        
-        Args:
-            case_id: ID дела
-            
-        Returns:
-            session_id
+        Mint a new chat session when the caller did not pass session_id.
+
+        Thread identity is client-authoritative (see case_chat_session.resolve_case_chat_session_id).
         """
-        try:
-            last_message = self.db.query(ChatMessage).filter(
-                ChatMessage.case_id == case_id,
-                ChatMessage.content.isnot(None),
-                ChatMessage.content != ""
-            ).order_by(ChatMessage.created_at.desc()).first()
-            
-            if last_message and last_message.created_at:
-                now_utc = datetime.now(timezone.utc)
-                last_created = last_message.created_at
-                if last_created.tzinfo is None:
-                    # Legacy rows are stored as naive UTC timestamps.
-                    last_created = last_created.replace(tzinfo=timezone.utc)
-                else:
-                    last_created = last_created.astimezone(timezone.utc)
-                time_diff = now_utc - last_created
-                if time_diff < timedelta(minutes=self.SESSION_TIMEOUT_MINUTES):
-                    if last_message.session_id:
-                        logger.debug(f"Continuing session {last_message.session_id} for case {case_id}")
-                        return last_message.session_id
-            
-            # Создаём новую сессию
-            new_session_id = str(uuid.uuid4())
-            logger.info(f"Creating new session {new_session_id} for case {case_id}")
-            return new_session_id
-            
-        except Exception as e:
-            logger.warning(f"Error getting session: {e}, creating new one")
-            return str(uuid.uuid4())
+        _ = case_id
+        new_session_id = str(uuid.uuid4())
+        logger.info("Creating new session %s for case %s", new_session_id, case_id)
+        return new_session_id
     
     def save_user_message(
         self,
@@ -160,6 +133,7 @@ class ChatHistoryService:
         message_id: str,
         content: str,
         source_references: Optional[Any] = None,
+        evidence: Optional[Any] = None,
         reasoning_steps: Optional[List[Dict[str, Any]]] = None,
     ) -> bool:
         """
@@ -186,6 +160,8 @@ class ChatHistoryService:
             message.content = content
             if source_references:
                 message.source_references = source_references
+            if evidence is not None:
+                message.evidence = evidence if evidence else None
             if reasoning_steps is not None:
                 message.reasoning_steps = reasoning_steps if reasoning_steps else None
             
@@ -203,7 +179,8 @@ class ChatHistoryService:
         case_id: str,
         content: str,
         session_id: str,
-        source_references: Optional[List[Dict[str, Any]]] = None
+        source_references: Optional[List[Dict[str, Any]]] = None,
+        evidence: Optional[Any] = None,
     ) -> ChatMessage:
         """
         Сохранить полное сообщение ассистента (без placeholder)
@@ -224,6 +201,7 @@ class ChatHistoryService:
             role="assistant",
             content=content,
             source_references=source_references,
+            evidence=evidence if evidence else None,
             reasoning_steps=None,
             session_id=session_id
         )
@@ -256,9 +234,11 @@ class ChatHistoryService:
             ChatMessage.content.isnot(None),
             ChatMessage.content != ""
         )
-        
+
         if session_id:
             query = query.filter(ChatMessage.session_id == session_id)
+        else:
+            query = _exclude_editor_sessions(query)
         
         query = query.order_by(ChatMessage.created_at.asc())
         
@@ -329,16 +309,18 @@ class ChatHistoryService:
         Returns:
             Список сессий с метаданными
         """
-        sessions_query = self.db.query(
-            ChatMessage.session_id,
-            func.min(ChatMessage.created_at).label('first_message_at'),
-            func.max(ChatMessage.created_at).label('last_message_at'),
-            func.count(ChatMessage.id).label('message_count')
-        ).filter(
-            ChatMessage.case_id == case_id,
-            ChatMessage.content.isnot(None),
-            ChatMessage.content != "",
-            ChatMessage.session_id.isnot(None)
+        sessions_query = _exclude_editor_sessions(
+            self.db.query(
+                ChatMessage.session_id,
+                func.min(ChatMessage.created_at).label('first_message_at'),
+                func.max(ChatMessage.created_at).label('last_message_at'),
+                func.count(ChatMessage.id).label('message_count'),
+            ).filter(
+                ChatMessage.case_id == case_id,
+                ChatMessage.content.isnot(None),
+                ChatMessage.content != "",
+                ChatMessage.session_id.isnot(None),
+            )
         ).group_by(ChatMessage.session_id).order_by(desc('last_message_at')).all()
         
         if not sessions_query:

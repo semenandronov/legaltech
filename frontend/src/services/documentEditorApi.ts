@@ -1,4 +1,4 @@
-import apiClient, { extractErrorMessage } from './api'
+import apiClient, { extractErrorMessage, getApiUrl } from './api'
 
 const BASE_URL = import.meta.env.VITE_API_URL || ''
 
@@ -30,12 +30,19 @@ export interface AIAssistResponse {
   risks?: RiskItem[]
 }
 
+export interface SelectionRange {
+  from: number
+  to: number
+}
+
 export interface StructuredEdit {
   id: string
-  original_text: string
   new_text: string
-  context_before: string
-  context_after: string
+  original_text?: string
+  node_id?: string
+  selection_range?: SelectionRange
+  context_before?: string
+  context_after?: string
   found_in_document: boolean
   replace_all?: boolean
 }
@@ -255,23 +262,252 @@ export async function chatOverDocument(
     currentContent?: string
     mode?: 'ask' | 'edit' | 'draft'
     selectedText?: string
+    selectionRange?: SelectionRange | null
+    attachedFileIds?: string[]
   }
 ): Promise<DocumentChatResponse> {
   try {
     const response = await apiClient.post<DocumentChatResponse>(
       `${BASE_URL}/api/documents-editor/${documentId}/chat`,
-      {
-        question,
-        deep_think: options?.deepThink ?? false,
-        legal_research: options?.legalResearch ?? false,
-        current_content: options?.currentContent ?? null,
-        mode: options?.mode ?? 'ask',
-        selected_text: options?.selectedText ?? null,
-      }
+      buildChatRequestBody(question, options),
     )
     return response.data
   } catch (error) {
     throw new Error(extractErrorMessage(error))
+  }
+}
+
+export interface DocumentChatStreamCallbacks {
+  onTurnStarted?: (payload: {
+    turnId: string
+    intent: 'ask' | 'edit' | 'draft'
+  }) => void
+  onTurnCompleted?: (payload: {
+    turnId: string
+    intent: string
+    artifactType: string
+  }) => void
+  onTextDelta?: (delta: string) => void
+  /** Full answer replacement after sanitize (not append). */
+  onContentSync?: (content: string) => void
+  onStructuredEdits?: (edits: StructuredEdit[]) => void
+  onCitations?: (citations: Array<{ file: string; file_id: string }>) => void
+  onEditedContent?: (content: string) => void
+}
+
+export interface EditorChatWarmupResult {
+  ok: boolean
+  case_id: string
+  document_id: string
+  session_id: string
+  thread_id: string
+  checkpoint_has_values: boolean
+  warmup_ms: number
+  graph_compile_ms?: number
+}
+
+export async function warmupEditorChat(
+  documentId: string,
+  caseId: string,
+  sessionId?: string,
+): Promise<EditorChatWarmupResult> {
+  const token = localStorage.getItem('access_token')
+  const response = await fetch(
+    getApiUrl(`/api/documents-editor/${documentId}/chat/warmup`),
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Access-Token': token || '',
+      },
+      body: JSON.stringify({
+        case_id: caseId,
+        session_id: sessionId ?? null,
+      }),
+    },
+  )
+  if (!response.ok) {
+    throw new Error(`Editor warmup failed: ${response.status}`)
+  }
+  return response.json()
+}
+
+export async function createEditorChatSession(
+  documentId: string,
+  caseId: string,
+): Promise<{ session_id: string; document_id: string; case_id: string }> {
+  const token = localStorage.getItem('access_token')
+  const response = await fetch(
+    getApiUrl(`/api/documents-editor/${documentId}/chat/new-session`),
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Access-Token': token || '',
+      },
+      body: JSON.stringify({ case_id: caseId }),
+    },
+  )
+  if (!response.ok) {
+    throw new Error(`New editor session failed: ${response.status}`)
+  }
+  return response.json()
+}
+
+function buildChatRequestBody(
+  question: string,
+  options?: {
+    deepThink?: boolean
+    legalResearch?: boolean
+    currentContent?: string
+    mode?: 'ask' | 'edit' | 'draft'
+    selectedText?: string
+    selectionRange?: SelectionRange | null
+    attachedFileIds?: string[]
+    sessionId?: string
+  },
+) {
+  return {
+    question,
+    session_id: options?.sessionId ?? null,
+    deep_think: options?.deepThink ?? false,
+    legal_research: options?.legalResearch ?? false,
+    current_content: options?.currentContent ?? null,
+    mode: options?.mode ?? 'ask',
+    selected_text: options?.selectedText ?? null,
+    selection_range: options?.selectionRange ?? null,
+    attached_file_ids: options?.attachedFileIds?.length ? options.attachedFileIds : null,
+  }
+}
+
+/**
+ * SSE stream for document editor chat (LangGraph via EditorHandler).
+ */
+export async function streamDocumentChat(
+  documentId: string,
+  question: string,
+  options: {
+    deepThink?: boolean
+    legalResearch?: boolean
+    currentContent?: string
+    mode?: 'ask' | 'edit' | 'draft'
+    selectedText?: string
+    selectionRange?: SelectionRange | null
+    attachedFileIds?: string[]
+    sessionId?: string
+  } | undefined,
+  callbacks: DocumentChatStreamCallbacks,
+  signal?: AbortSignal,
+): Promise<DocumentChatResponse> {
+  const token = localStorage.getItem('access_token')
+  const response = await fetch(
+    getApiUrl(`/api/documents-editor/${documentId}/chat/stream`),
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Access-Token': token || '',
+      },
+      body: JSON.stringify(buildChatRequestBody(question, options)),
+      signal,
+    },
+  )
+
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`)
+  }
+
+  const reader = response.body?.getReader()
+  const decoder = new TextDecoder()
+  if (!reader) {
+    throw new Error('No response body')
+  }
+
+  let answer = ''
+  let structuredEdits: StructuredEdit[] = []
+  let citations: Array<{ file: string; file_id: string }> = []
+  let editedContent: string | undefined
+  let buffer = ''
+  const streamMode = options?.mode ?? 'ask'
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+
+    buffer += decoder.decode(value, { stream: true })
+    const chunks = buffer.split('\n\n')
+    buffer = chunks.pop() || ''
+
+    for (const chunk of chunks) {
+      for (const line of chunk.split('\n')) {
+        if (!line.startsWith('data: ')) continue
+        try {
+          const data = JSON.parse(line.slice(6))
+          if (data.error) {
+            throw new Error(String(data.error))
+          }
+          if (data.type === 'turn_started' && data.turn_id) {
+            callbacks.onTurnStarted?.({
+              turnId: String(data.turn_id),
+              intent: (data.intent as 'ask' | 'edit' | 'draft') || streamMode,
+            })
+            continue
+          }
+          if (data.type === 'turn_completed' && data.turn_id) {
+            callbacks.onTurnCompleted?.({
+              turnId: String(data.turn_id),
+              intent: String(data.intent ?? streamMode),
+              artifactType: String(data.artifact_type ?? 'answer'),
+            })
+            continue
+          }
+          if (data.type === 'content_sync' && typeof data.content === 'string') {
+            answer = data.content
+            callbacks.onContentSync?.(data.content)
+            continue
+          }
+          const delta = data.textDelta ?? data.text_delta
+          if (delta) {
+            answer += String(delta)
+            callbacks.onTextDelta?.(String(delta))
+          }
+          const patchIntent = (data.intent as string | undefined) ?? streamMode
+          if (data.structured_edits?.length && patchIntent === 'edit') {
+            structuredEdits = data.structured_edits
+            callbacks.onStructuredEdits?.(structuredEdits)
+          }
+          if (data.citations?.length) {
+            citations = data.citations
+            callbacks.onCitations?.(citations)
+          }
+          if (data.edited_content) {
+            const content = String(data.edited_content)
+            editedContent = content
+            callbacks.onEditedContent?.(content)
+          }
+        } catch (e) {
+          if (e instanceof SyntaxError) continue
+          throw e
+        }
+      }
+    }
+  }
+
+  const cleanAnswer = answer
+    .replace(/```(?:html|edit|)\s*\n[\s\S]*?\n?```/gi, '')
+    .replace(/```[\s\S]*?```/g, '')
+    .trim()
+
+  return {
+    answer:
+      cleanAnswer ||
+      (streamMode === 'edit' && structuredEdits.length
+        ? `Предлагаю ${structuredEdits.length} правку(-и).`
+        : 'Изменения готовы.'),
+    citations,
+    suggestions: streamMode === 'edit' && structuredEdits.length ? ['Применить все правки'] : [],
+    edited_content: editedContent,
+    structured_edits: streamMode === 'edit' ? structuredEdits : [],
   }
 }
 

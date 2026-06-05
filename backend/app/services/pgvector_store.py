@@ -1,5 +1,5 @@
 """PGVector Vector Store service for multi-tenant document storage using direct SQLAlchemy approach"""
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional, Sequence
 import threading
 import logging
 import json
@@ -13,7 +13,7 @@ from langchain_core.documents import Document
 from pgvector.sqlalchemy import Vector
 
 from app.config import config
-from app.services.yandex_embeddings import YandexEmbeddings
+from app.services.yandex_embeddings import get_yandex_embeddings
 from app.utils.database import engine as _shared_db_engine
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 # sockets — including LangGraph's AsyncPostgresSaver pool (OperationalError).
 _pgvector_schema_lock = threading.Lock()
 _pgvector_schema_ready = False
+_case_vector_store_lock = threading.Lock()
+_case_vector_store_singleton: Optional["CaseVectorStore"] = None
 
 # Base for vector store table
 VectorBase = declarative_base()
@@ -56,7 +58,7 @@ class CaseVectorStore:
             embeddings: Embeddings instance (defaults to YandexEmbeddings)
         """
         if embeddings is None:
-            self.embeddings = YandexEmbeddings()
+            self.embeddings = get_yandex_embeddings()
         else:
             self.embeddings = embeddings
 
@@ -71,88 +73,139 @@ class CaseVectorStore:
                 self._ensure_table_exists()
                 _pgvector_schema_ready = True
 
-        logger.info("✅ PGVector store ready (shared SQLAlchemy engine / single pool)")
+        if not getattr(CaseVectorStore, "_ready_logged", False):
+            logger.info("✅ PGVector store ready (shared SQLAlchemy engine / single pool)")
+            CaseVectorStore._ready_logged = True
     
     def _ensure_table_exists(self):
         """Ensure the vector embedding table exists"""
         try:
+            table = VectorEmbedding.__tablename__
+
+            # IMPORTANT:
+            # - Any SQL error inside a transaction marks it as "aborted" in Postgres.
+            # - Even if Python catches an exception, subsequent commands in the same transaction
+            #   will fail with InFailedSqlTransaction.
+            # Therefore we keep "must-succeed" DDL (table/columns/migration) in a transaction,
+            # and run "best-effort" index creation in independent AUTOCOMMIT statements.
             with self.engine.begin() as conn:
-                # Check if pgvector extension exists
                 conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-                
-                # Create table if it doesn't exist
-                conn.execute(text(f"""
-                    CREATE TABLE IF NOT EXISTS {VectorEmbedding.__tablename__} (
-                        uuid TEXT PRIMARY KEY,
-                        collection_id TEXT,
-                        case_id TEXT,
-                        embedding vector(256),
-                        document JSONB,
-                        custom_id TEXT
+
+                conn.execute(
+                    text(
+                        f"""
+                        CREATE TABLE IF NOT EXISTS {table} (
+                            uuid TEXT PRIMARY KEY,
+                            collection_id TEXT,
+                            case_id TEXT,
+                            embedding vector(256),
+                            document JSONB,
+                            custom_id TEXT
+                        )
+                        """
                     )
-                """))
-                
-                # Create index on collection_id for faster filtering
-                conn.execute(text(f"""
-                    CREATE INDEX IF NOT EXISTS idx_{VectorEmbedding.__tablename__}_collection_id 
-                    ON {VectorEmbedding.__tablename__}(collection_id)
-                """))
-                
-                # Add case_id column if it doesn't exist (migration for existing tables)
+                )
+
+                # Migration: earlier deployments created `document` as JSON (not JSONB).
                 try:
-                    conn.execute(text(f"""
-                        ALTER TABLE {VectorEmbedding.__tablename__} 
-                        ADD COLUMN IF NOT EXISTS case_id TEXT
-                    """))
-                    logger.info(f"✅ Ensured case_id column exists in {VectorEmbedding.__tablename__}")
+                    dt_row = conn.execute(
+                        text(
+                            """
+                            SELECT data_type
+                            FROM information_schema.columns
+                            WHERE table_name = :table_name
+                              AND column_name = 'document'
+                            """
+                        ),
+                        {"table_name": table},
+                    ).fetchone()
+                    data_type = (dt_row[0] if dt_row else None) if dt_row is not None else None
+                    if str(data_type).lower() == "json":
+                        conn.execute(
+                            text(
+                                f"""
+                                ALTER TABLE {table}
+                                ALTER COLUMN document TYPE JSONB
+                                USING document::jsonb
+                                """
+                            )
+                        )
+                        logger.info("✅ Migrated %s.document from JSON to JSONB", table)
                 except Exception as e:
-                    logger.debug(f"Could not add case_id column (may already exist): {e}")
-                
-                # Create index on case_id for faster filtering
+                    logger.warning("Could not verify/migrate %s.document JSON→JSONB: %s", table, e)
+
+                # Ensure case_id exists even on older schemas.
                 try:
-                    conn.execute(text(f"""
-                        CREATE INDEX IF NOT EXISTS idx_{VectorEmbedding.__tablename__}_case_id 
-                        ON {VectorEmbedding.__tablename__}(case_id)
-                    """))
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS case_id TEXT"))
+                    logger.info("✅ Ensured case_id column exists in %s", table)
                 except Exception as e:
-                    logger.debug(f"Could not create case_id index: {e}")
-                
-                # Check if embedding column has correct dimension (256)
-                # If table was created with wrong dimension (1536), we need to fix it
+                    logger.debug("Could not add case_id column (may already exist): %s", e)
+
+                # Non-risky B-tree indexes (keep in the transaction).
+                conn.execute(
+                    text(
+                        f"""
+                        CREATE INDEX IF NOT EXISTS idx_{table}_collection_id
+                        ON {table}(collection_id)
+                        """
+                    )
+                )
                 try:
-                    result = conn.execute(text(f"""
-                        SELECT atttypmod FROM pg_attribute 
-                        WHERE attrelid = '{VectorEmbedding.__tablename__}'::regclass 
-                        AND attname = 'embedding'
-                    """))
-                    row = result.fetchone()
-                    if row and row[0]:
-                        # atttypmod for vector(256) should be -1 (variable) or specific dimension
-                        # For vector(1536), atttypmod would be different
-                        # Check actual dimension by querying the column definition
-                        dim_result = conn.execute(text(f"""
-                            SELECT COUNT(*) FROM information_schema.columns 
-                            WHERE table_name = '{VectorEmbedding.__tablename__}' 
-                            AND column_name = 'embedding'
-                            AND data_type = 'USER-DEFINED'
-                        """))
-                        # If column exists with wrong dimension, we need to recreate table
-                        # This is a safety check - actual fix will happen on first insert attempt
-                        logger.debug(f"Embedding column exists in {VectorEmbedding.__tablename__}")
+                    conn.execute(
+                        text(
+                            f"""
+                            CREATE INDEX IF NOT EXISTS idx_{table}_case_id
+                            ON {table}(case_id)
+                            """
+                        )
+                    )
                 except Exception as e:
-                    logger.debug(f"Could not check embedding column dimension: {e}")
-                
-                # Create GIN index on document JSONB for metadata filtering
-                conn.execute(text(f"""
-                    CREATE INDEX IF NOT EXISTS idx_{VectorEmbedding.__tablename__}_document_gin 
-                    ON {VectorEmbedding.__tablename__} USING GIN (document)
-                """))
-                # Native PostgreSQL FTS index on document text for sparse keyword search.
-                conn.execute(text(f"""
-                    CREATE INDEX IF NOT EXISTS idx_{VectorEmbedding.__tablename__}_fts
-                    ON {VectorEmbedding.__tablename__}
-                    USING GIN (to_tsvector('russian', COALESCE(document->>'page_content', '')))
-                """))
+                    logger.debug("Could not create case_id index: %s", e)
+
+                # Optional: dimension sanity check (debug only).
+                try:
+                    conn.execute(
+                        text(
+                            f"""
+                            SELECT atttypmod
+                            FROM pg_attribute
+                            WHERE attrelid = '{table}'::regclass
+                              AND attname = 'embedding'
+                            """
+                        )
+                    ).fetchone()
+                except Exception as e:
+                    logger.debug("Could not check embedding column dimension: %s", e)
+
+            # Best-effort indexes: run outside the main transaction using AUTOCOMMIT.
+            try:
+                with self.engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+                    try:
+                        conn.execute(
+                            text(
+                                f"""
+                                CREATE INDEX IF NOT EXISTS idx_{table}_document_gin
+                                ON {table} USING GIN (document)
+                                """
+                            )
+                        )
+                    except Exception as e:
+                        logger.warning("Could not create document GIN index: %s", e, exc_info=True)
+
+                    try:
+                        conn.execute(
+                            text(
+                                f"""
+                                CREATE INDEX IF NOT EXISTS idx_{table}_fts
+                                ON {table}
+                                USING GIN (to_tsvector('russian', COALESCE(document->>'page_content', '')))
+                                """
+                            )
+                        )
+                    except Exception as e:
+                        logger.warning("Could not create FTS index: %s", e, exc_info=True)
+            except Exception as e:
+                logger.warning("Could not create PGVector best-effort indexes (autocommit): %s", e, exc_info=True)
                 
         except Exception as e:
             logger.error(f"Failed to ensure table exists: {e}", exc_info=True)
@@ -251,9 +304,19 @@ class CaseVectorStore:
             if "case_id" not in doc.metadata:
                 doc.metadata["case_id"] = case_id
         
-        # Create embeddings
-        texts = [doc.page_content for doc in documents]
-        embeddings = self.embeddings.embed_documents(texts)
+        # Create embeddings (optional Hidden Context: metadata["embedding_text"])
+        texts: List[str] = []
+        for doc in documents:
+            md = doc.metadata or {}
+            et = md.get("embedding_text")
+            if isinstance(et, str) and et.strip():
+                texts.append(et.strip())
+            else:
+                texts.append(doc.page_content or "")
+        from app.services.file_processing_concurrency import embedding_index_slot
+
+        with embedding_index_slot():
+            embeddings = self.embeddings.embed_documents(texts)
         
         # Fix vector dimension if needed (migration from 1536 to 256)
         self._fix_vector_dimension_if_needed()
@@ -332,7 +395,10 @@ class CaseVectorStore:
             meta["case_id"] = case_id
         
         # Create embeddings
-        embeddings = self.embeddings.embed_documents(texts)
+        from app.services.file_processing_concurrency import embedding_index_slot
+
+        with embedding_index_slot():
+            embeddings = self.embeddings.embed_documents(texts)
         
         if ids is None:
             ids = [str(uuid.uuid4()) for _ in texts]
@@ -803,6 +869,70 @@ class CaseVectorStore:
             logger.error("anchor_substring_search failed: %s", e, exc_info=True)
             return []
     
+    def list_case_chunks(
+        self,
+        case_id: str,
+        *,
+        limit: int = 2500,
+        chunk_levels: Optional[List[str]] = None,
+    ) -> List[Document]:
+        """
+        Все чанки дела из PGVector для построения in-memory BM25.
+
+        Порядок стабильный: file_id → chunk_index → uuid.
+        """
+        cid = str(case_id or "").strip()
+        if not cid:
+            return []
+        lim = max(1, min(int(limit or 2500), 10_000))
+        try:
+            table_name = VectorEmbedding.__tablename__
+            filter_conditions = ["collection_id = :collection_id", "case_id = :case_id"]
+            params: Dict[str, Any] = {
+                "collection_id": self.collection_name,
+                "case_id": cid,
+                "lim": lim,
+            }
+            if chunk_levels:
+                levels = [str(v).strip() for v in chunk_levels if str(v).strip()]
+                if levels:
+                    filter_conditions.append(
+                        "document->'metadata'->>'chunk_level' = ANY(:chunk_levels)"
+                    )
+                    params["chunk_levels"] = levels
+
+            where_sql = " AND ".join(filter_conditions)
+            sql = text(f"""
+                SELECT document
+                FROM {table_name}
+                WHERE {where_sql}
+                ORDER BY
+                    COALESCE(document->'metadata'->>'file_id', ''),
+                    COALESCE((document->'metadata'->>'chunk_index')::int, 2147483647),
+                    uuid
+                LIMIT :lim
+            """)
+            with self.engine.connect() as conn:
+                rows = conn.execute(sql, params).fetchall()
+            docs: List[Document] = []
+            for row in rows:
+                doc_data = row[0]
+                if isinstance(doc_data, str):
+                    doc_data = json.loads(doc_data)
+                elif not isinstance(doc_data, dict):
+                    continue
+                docs.append(
+                    Document(
+                        page_content=doc_data.get("page_content", "") or "",
+                        metadata=dict(doc_data.get("metadata") or {}),
+                    )
+                )
+            logger.debug("list_case_chunks case=%s count=%s", cid, len(docs))
+            return docs
+        except Exception as e:
+            logger.error("list_case_chunks failed case=%s: %s", cid, e, exc_info=True)
+            return []
+
     def list_chunks_by_file(self, case_id: str, file_id: str) -> List[Document]:
         """
         Все проиндексированные чанки файла в PGVector (порядок как при индексации: chunk_index, uuid).
@@ -848,6 +978,66 @@ class CaseVectorStore:
         except Exception as e:
             logger.error("list_chunks_by_file failed case=%s file=%s: %s", case_id, fid, e, exc_info=True)
             return []
+
+    def fetch_macro_chunks_by_macro_ids(
+        self,
+        case_id: str,
+        macro_ids: Sequence[str],
+    ) -> Dict[str, Document]:
+        """
+        Load macro (parent) chunks by stable macro_id for context resolution after micro rerank.
+
+        Returns mapping macro_id -> Document (chunk_level=macro).
+        """
+        cid = str(case_id or "").strip()
+        ids = list(dict.fromkeys(str(x).strip() for x in macro_ids if str(x).strip()))
+        if not cid or not ids:
+            return {}
+        try:
+            table_name = VectorEmbedding.__tablename__
+            sql = text(f"""
+                SELECT document
+                FROM {table_name}
+                WHERE collection_id = :collection_id
+                  AND case_id = :case_id
+                  AND document->'metadata'->>'chunk_level' = 'macro'
+                  AND document->'metadata'->>'macro_id' = ANY(:macro_ids)
+            """)
+            with self.engine.connect() as conn:
+                rows = conn.execute(
+                    sql,
+                    {
+                        "collection_id": self.collection_name,
+                        "case_id": cid,
+                        "macro_ids": ids,
+                    },
+                ).fetchall()
+            out: Dict[str, Document] = {}
+            for row in rows:
+                doc_data = row[0]
+                if isinstance(doc_data, str):
+                    doc_data = json.loads(doc_data)
+                elif not isinstance(doc_data, dict):
+                    continue
+                doc = Document(
+                    page_content=doc_data.get("page_content", "") or "",
+                    metadata=dict(doc_data.get("metadata") or {}),
+                )
+                mid = str((doc.metadata or {}).get("macro_id") or "").strip()
+                if mid and mid not in out:
+                    out[mid] = doc
+            logger.debug(
+                "fetch_macro_chunks_by_macro_ids case=%s requested=%s found=%s",
+                cid,
+                len(ids),
+                len(out),
+            )
+            return out
+        except Exception as e:
+            logger.error(
+                "fetch_macro_chunks_by_macro_ids failed case=%s: %s", cid, e, exc_info=True
+            )
+            return {}
 
     def delete_case_vectors(self, case_id: str) -> bool:
         """
@@ -897,3 +1087,19 @@ class CaseVectorStore:
         except Exception as e:
             logger.error(f"Failed to delete vectors for file {file_id}: {e}", exc_info=True)
             return False
+
+
+def get_case_vector_store(*, embeddings=None) -> CaseVectorStore:
+    """
+    Shared CaseVectorStore on the app-wide SQLAlchemy engine (single connection pool).
+
+    Legal corpus retrieval may issue many FTS lookups per request; reusing one store
+    avoids redundant schema checks and repeated pool setup.
+    """
+    global _case_vector_store_singleton
+    if embeddings is not None:
+        return CaseVectorStore(embeddings=embeddings)
+    with _case_vector_store_lock:
+        if _case_vector_store_singleton is None:
+            _case_vector_store_singleton = CaseVectorStore()
+        return _case_vector_store_singleton

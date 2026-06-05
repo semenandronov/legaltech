@@ -5,12 +5,14 @@ import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import {
   fetchLegalCorpusStatus,
   fetchLegalCorpusFiles,
+  fetchLegalCorpusInstruments,
   startLegalCorpusUploadJob,
   buildLegalCorpusJobSseUrl,
   deleteLegalCorpusFile,
   deleteAllLegalCorpusFiles,
   type LegalCorpusStatus,
   type LegalCorpusFileRow,
+  type LegalCorpusInstrument,
   extractErrorMessage,
 } from '../services/api'
 
@@ -24,6 +26,8 @@ const navItems = [
 const LegalCorpusManagePage = () => {
   const [status, setStatus] = useState<LegalCorpusStatus | null>(null)
   const [files, setFiles] = useState<LegalCorpusFileRow[]>([])
+  const [instruments, setInstruments] = useState<LegalCorpusInstrument[]>([])
+  const [selectedInstrumentId, setSelectedInstrumentId] = useState<string>('fz-127')
   const [loading, setLoading] = useState(true)
   const [filesLoading, setFilesLoading] = useState(false)
   const [statusError, setStatusError] = useState<string | null>(null)
@@ -42,6 +46,13 @@ const LegalCorpusManagePage = () => {
       setStatus(st)
       setLoading(false)
       if (st.is_uploader) {
+        try {
+          const inst = await fetchLegalCorpusInstruments()
+          setInstruments(inst.instruments || [])
+        } catch (err: unknown) {
+          toast.error(`Не удалось загрузить список актов: ${extractErrorMessage(err)}`)
+          setInstruments([])
+        }
         setFilesLoading(true)
         try {
           const response = await fetchLegalCorpusFiles()
@@ -74,7 +85,7 @@ const LegalCorpusManagePage = () => {
     setUploading(true)
     setJobProgress({ percent: 0, message: 'Создаю задачу индексации…' })
     try {
-      const start = await startLegalCorpusUploadJob(Array.from(list))
+      const start = await startLegalCorpusUploadJob(Array.from(list), selectedInstrumentId || null)
       const url = buildLegalCorpusJobSseUrl(start.job_id)
       jobStreamRef.current?.close()
       const es = new EventSource(url)
@@ -248,6 +259,23 @@ const LegalCorpusManagePage = () => {
 
                   <div>
                     <div className="flex items-center gap-2">
+                      <select
+                        className="px-3 py-2 rounded-lg text-sm border disabled:opacity-50"
+                        style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-primary)' }}
+                        value={selectedInstrumentId}
+                        onChange={(e) => setSelectedInstrumentId(e.target.value)}
+                        disabled={uploading || deletingAll}
+                        aria-label="Выбор акта для загрузки"
+                      >
+                        {(instruments.length
+                          ? instruments
+                          : ([{ instrument_id: 'fz-127', title: '127‑ФЗ (по умолчанию)', short_name: '127‑ФЗ' }] as any[])
+                        ).map((inst) => (
+                          <option key={inst.instrument_id} value={inst.instrument_id}>
+                            {inst.title || inst.short_name || inst.instrument_id}
+                          </option>
+                        ))}
+                      </select>
                       <input
                         ref={fileInputRef}
                         type="file"

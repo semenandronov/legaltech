@@ -14,6 +14,7 @@ from typing import Optional, Tuple
 from sqlalchemy.orm import Session
 
 from app.services.bankruptcy_templates import find_best_system_template_match, load_system_template_body
+from app.services.draft_template_keys import template_key_for_system_id
 
 logger = logging.getLogger(__name__)
 
@@ -62,8 +63,9 @@ def auto_pick_system_template_id(user_question: str, db: Optional[Session] = Non
 
     return select_system_template_id_via_llm(q, db)
 
-# Совместимо с прежним лимитом DraftHandler; при необходимости поднять
-MAX_USER_TEMPLATE_CHARS = 32000
+# Лимит снят: пользовательские/файловые шаблоны передаются целиком,
+# чтобы не ломать структуру HTML. Оставлено как 0 для обратной совместимости.
+MAX_USER_TEMPLATE_CHARS = 0  # 0 = без ограничения
 
 
 def resolve_draft_template_context(
@@ -82,14 +84,17 @@ def resolve_draft_template_context(
                автоподбор по user_question (если включён).
     """
     if template_system_id:
-        text, title = _load_template_body_unified(db, template_system_id.strip())
+        tid = template_system_id.strip()
+        text, title = _load_template_body_unified(db, tid)
         if text:
+            tkey = template_key_for_system_id(db, tid)
             logger.info(
-                "[draft_template_context] using system template id=%s title=%s",
+                "[draft_template_context] using system template id=%s title=%s key=%s",
                 template_system_id,
                 title,
+                tkey,
             )
-            return text, title
+            return text, title, tkey
         logger.warning(
             "[draft_template_context] system template not found or empty: %s",
             template_system_id,
@@ -97,7 +102,7 @@ def resolve_draft_template_context(
 
     if template_file_content and str(template_file_content).strip():
         raw = str(template_file_content).strip()
-        return raw[:MAX_USER_TEMPLATE_CHARS], None
+        return raw, None, None
 
     if template_file_id:
         try:
@@ -105,8 +110,7 @@ def resolve_draft_template_context(
 
             rec = db.query(FileModel).filter(FileModel.id == template_file_id).first()
             if rec and rec.original_text:
-                t = rec.original_text[:MAX_USER_TEMPLATE_CHARS]
-                return t, rec.filename or None
+                return rec.original_text, rec.filename or None, None
         except Exception as e:
             logger.warning("[draft_template_context] DB template load failed: %s", e)
 
@@ -132,6 +136,7 @@ def resolve_draft_template_context(
                     matched_id,
                     title,
                 )
-                return text, title
+                tkey = template_key_for_system_id(db, matched_id)
+                return text, title, tkey
 
-    return "", None
+    return "", None, None

@@ -21,12 +21,6 @@ def is_draft_template_admin(user: Optional[User]) -> bool:
     return bool(user and getattr(user, "id", None))
 
 
-def _max_template_chars() -> int:
-    from app.services.bankruptcy_templates import MAX_TEMPLATE_CHARS
-
-    return MAX_TEMPLATE_CHARS
-
-
 def list_admin_template_catalog_entries(db: Session) -> List[Dict[str, str]]:
     rows = (
         db.query(DocumentTemplate)
@@ -90,8 +84,7 @@ def load_admin_draft_template_body(db: Session, template_id: str) -> Tuple[Optio
     )
     if not rec or not (rec.content or "").strip():
         return None, None
-    cap = _max_template_chars()
-    return (rec.content or "")[:cap], rec.title
+    return (rec.content or ""), rec.title
 
 
 def _bytes_to_html(content: bytes, filename: str) -> str:
@@ -136,10 +129,6 @@ def create_admin_draft_template(
         )
 
     html = _bytes_to_html(file_content, filename)
-    cap = _max_template_chars()
-    if len(html) > cap:
-        html = html[:cap]
-        logger.warning("[draft_admin] template HTML truncated to %s chars", cap)
 
     ttitle = (title or "").strip() or filename.rsplit(".", 1)[0]
     rec = DocumentTemplate(
@@ -157,7 +146,73 @@ def create_admin_draft_template(
     db.commit()
     db.refresh(rec)
     logger.info("[draft_admin] created template id=%s title=%s", rec.id, rec.title)
+
+    try:
+        from app.config import config
+        from app.services.draft_template_keys import template_key_for_db_template
+        from app.services.draft_template_indexer import index_template_html
+
+        if bool(getattr(config, "DRAFT_TEMPLATE_INDEX_ON_UPLOAD", True)):
+            tkey = template_key_for_db_template(str(rec.id))
+            snap, status = index_template_html(
+                db,
+                template_key=tkey,
+                html=html,
+                template_title=ttitle,
+                force=True,
+            )
+            logger.info(
+                "[draft_admin] indexed template id=%s key=%s status=%s fields=%s",
+                rec.id,
+                tkey,
+                status,
+                len(snap.field_specs),
+            )
+    except Exception as idx_err:
+        logger.warning("[draft_admin] template field index failed id=%s: %s", rec.id, idx_err)
+
     return rec
+
+
+def reindex_admin_draft_template(db: Session, user: User, template_id: str) -> Dict[str, Any]:
+    if not is_draft_template_admin(user):
+        raise PermissionError("Требуется авторизация")
+    rec = db.query(DocumentTemplate).filter(DocumentTemplate.id == template_id).first()
+    if not rec or rec.source != ADMIN_DRAFT_SOURCE:
+        raise ValueError("Шаблон не найден")
+    from app.services.draft_template_keys import template_key_for_db_template
+    from app.services.draft_template_indexer import index_template_html
+
+    tkey = template_key_for_db_template(str(rec.id))
+    snap, status = index_template_html(
+        db,
+        template_key=tkey,
+        html=rec.content or "",
+        template_title=rec.title,
+        force=True,
+    )
+    return {
+        "template_key": tkey,
+        "index_status": status,
+        "fields_count": len(snap.field_specs),
+        "indexer_version": snap.indexer_version,
+    }
+
+
+def get_admin_template_fields(db: Session, template_id: str) -> Dict[str, Any]:
+    from app.services.draft_template_catalog import load_catalog_snapshot
+    from app.services.draft_template_keys import template_key_for_db_template
+
+    tkey = template_key_for_db_template(template_id)
+    snap = load_catalog_snapshot(db, tkey)
+    if not snap:
+        return {"template_key": tkey, "fields": [], "indexed_html_length": 0}
+    return {
+        "template_key": tkey,
+        "fields": [s.model_dump() for s in snap.field_specs],
+        "indexed_html_length": len(snap.indexed_html or ""),
+        "content_sha256": snap.content_sha256,
+    }
 
 
 def delete_admin_draft_template(db: Session, user: User, template_id: str) -> bool:
@@ -173,6 +228,13 @@ def delete_admin_draft_template(db: Session, user: User, template_id: str) -> bo
     )
     if not rec:
         return False
+    try:
+        from app.services.draft_template_catalog import delete_catalog
+        from app.services.draft_template_keys import template_key_for_db_template
+
+        delete_catalog(db, template_key_for_db_template(template_id))
+    except Exception as e:
+        logger.warning("[draft_admin] catalog delete failed: %s", e)
     db.delete(rec)
     db.commit()
     return True

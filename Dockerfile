@@ -14,8 +14,9 @@ WORKDIR /app
 COPY backend/requirements.txt /app/backend/requirements.txt
 COPY backend/requirements-core.txt /app/backend/requirements-core.txt
 COPY backend/requirements-heavy.txt /app/backend/requirements-heavy.txt
-RUN pip install --upgrade pip && \
-    pip install --no-cache-dir -r backend/requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip && \
+    pip install -r backend/requirements.txt
 
 # Build frontend
 # --mount=type=cache keeps npm cache between builds → only changed packages are re-downloaded
@@ -25,6 +26,13 @@ RUN --mount=type=cache,target=/root/.npm \
     npm install --legacy-peer-deps --cache /root/.npm
 
 COPY frontend/ /app/frontend/
+# Vite envDir = /app (см. frontend/vite.config.ts). Файл кладёт vm-deploy-build-on-vm.sh
+COPY .env.vite-build /app/.env
+# Дублируем через ARG для совместимости с docker build --build-arg
+ARG VITE_GOOGLE_CLIENT_ID=
+ARG VITE_GOOGLE_API_KEY=
+ENV VITE_GOOGLE_CLIENT_ID="${VITE_GOOGLE_CLIENT_ID}" \
+    VITE_GOOGLE_API_KEY="${VITE_GOOGLE_API_KEY}"
 ENV NODE_OPTIONS="--max_old_space_size=2048"
 RUN npm run build
 

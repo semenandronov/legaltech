@@ -27,6 +27,13 @@ Every chunk stored in vector index must contain:
 - `clause_type`
 - `cross_references`
 
+## Optional metadata (indexing / retrieval extensions)
+
+Not required for hybrid merge logic, but emitted by `LegalChunkerV2` / PGVector ingest:
+
+- `is_table_fragment` (`bool`): chunk comes from a sharded Docling `TableItem` (row groups with repeated markdown header).
+- `embedding_text` (`str`, optional): when `LEGAL_CHUNK_EMBED_PREFIX_ENABLED` is true, embeddings are computed from `[Контекст: parent_path > section] + page_content` while `page_content` stays the clean excerpt for LLM prompts.
+
 ## Chunk Profiles
 
 ### contracts

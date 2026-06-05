@@ -23,7 +23,7 @@
 # КОГДА НЕ ИСПОЛЬЗОВАТЬ
 - Простой поиск информации → используй rag_search
 - Нужно только резюме → используй summary_chain
-- Извлечение данных → используй TabularExtractionAgent
+- Извлечение данных → используй TabularReviewService
 """
 from typing import Dict, Any, Optional, List, TypedDict
 from sqlalchemy.orm import Session

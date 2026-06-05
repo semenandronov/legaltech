@@ -63,7 +63,7 @@ export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = ({
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
+            'X-Access-Token': token || '',
           },
           body: JSON.stringify({
             plan_id: planId,
@@ -99,7 +99,7 @@ export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = ({
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
+            'X-Access-Token': token || '',
           },
           body: JSON.stringify({
             plan_id: planId,

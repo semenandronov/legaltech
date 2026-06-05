@@ -58,11 +58,22 @@
   background: transparent;
 }
 
-.editor-content .ProseMirror {
+.editor-content .ProseMirror,
+.editor-surface {
   outline: none;
   width: 100%;
   max-width: 100%;
   color: var(--color-text-primary);
+  font-family: 'Times New Roman', Times, serif;
+  font-size: 14pt;
+  line-height: 1.6;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* AI range hint must not block drag-to-select */
+.ai-selection-highlight {
+  pointer-events: none !important;
 }
 
 /* Editor prose styles (replaces Tailwind prose to avoid max-width: 65ch limitation) */
@@ -120,13 +131,29 @@
 }
 
 .editor-content .ProseMirror ul,
-.editor-content .ProseMirror ol {
+.editor-surface ul {
   margin: 1rem 0;
-  padding-left: 1.5rem;
+  padding-left: 1.75rem;
+  list-style-type: disc;
+  list-style-position: outside;
 }
 
-.editor-content .ProseMirror li {
-  margin: 0.5rem 0;
+.editor-content .ProseMirror ol,
+.editor-surface ol {
+  margin: 1rem 0;
+  padding-left: 1.75rem;
+  list-style-type: decimal;
+  list-style-position: outside;
+}
+
+.editor-content .ProseMirror li,
+.editor-surface li {
+  margin: 0.35rem 0;
+}
+
+.editor-content .ProseMirror li p,
+.editor-surface li p {
+  margin: 0;
 }
 
 .editor-content .ProseMirror blockquote {
@@ -219,6 +246,12 @@
   opacity: 0.8;
 }
 
+/* Underline */
+.editor-content .ProseMirror u {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 /* Typography improvements (font/color/line-height defined in .editor-prose above) */
 
 /* Focus styles */
@@ -231,8 +264,14 @@
 }
 
 /* Selection styles */
-.editor-content .ProseMirror ::selection {
+.editor-content .ProseMirror ::selection,
+.editor-surface ::selection {
   background-color: #bfdbfe;
+}
+
+.editor-content .ProseMirror-selectednode,
+.editor-surface .ProseMirror-selectednode {
+  outline: none;
 }
 
 /* Track Changes styles */

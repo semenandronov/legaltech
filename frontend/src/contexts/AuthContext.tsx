@@ -55,6 +55,9 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   }, [])
 
   const login = async (email: string, password: string) => {
+    localStorage.removeItem('access_token')
+    localStorage.removeItem('refresh_token')
+    localStorage.removeItem('user')
     const response = await loginApi({ email, password })
     localStorage.setItem('access_token', response.access_token)
     localStorage.setItem('refresh_token', response.refresh_token)

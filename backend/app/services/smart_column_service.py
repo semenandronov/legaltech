@@ -277,6 +277,7 @@ class SmartColumnService:
 - tag: один тег из предопределенного списка
 - verbatim: точная цитата из документа
 - manual_input: ручной ввод (без AI)
+- document_type: тип/категория юридического документа (договор, иск, определение и т.д.)
 
 Для каждого вопроса определи:
 1. column_label: короткое название колонки (на русском или английском, для заголовка таблицы)
@@ -330,7 +331,10 @@ class SmartColumnService:
                 if not label or not col_prompt:
                     continue
                 # Validate column_type
-                valid_types = {"text", "number", "currency", "yes_no", "date", "tag", "verbatim", "manual_input"}
+                valid_types = {
+                    "text", "number", "currency", "yes_no", "date", "tag",
+                    "verbatim", "manual_input", "document_type",
+                }
                 if col_type not in valid_types:
                     col_type = "text"
                 out.append(ColumnDescription(

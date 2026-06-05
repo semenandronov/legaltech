@@ -24,6 +24,7 @@ export type AnswerBlockCitation = {
   context_before?: string
   context_after?: string
   bbox?: { x0?: number; y0?: number; x1?: number; y1?: number }
+  bbox_regions?: Array<{ x0?: number; y0?: number; x1?: number; y1?: number }>
   page_bbox?: { width?: number; height?: number }
   url?: string
   source_type?: string
@@ -44,6 +45,7 @@ export function sourceInfosToAnswerBlockCitations(sources: SourceInfo[]): Answer
     context_before: s.context_before,
     context_after: s.context_after,
     bbox: s.bbox,
+    bbox_regions: s.bbox_regions,
     page_bbox: s.page_bbox,
     url: s.url,
     source_type: s.source_type,
@@ -65,6 +67,7 @@ function citationToSourceInfo(c: AnswerBlockCitation): SourceInfo {
     context_before: c.context_before,
     context_after: c.context_after,
     bbox: c.bbox,
+    bbox_regions: c.bbox_regions,
     page_bbox: c.page_bbox,
     url: c.url,
     source_type: c.source_type,

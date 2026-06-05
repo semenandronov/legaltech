@@ -10,7 +10,10 @@ from app.services.chat.citation_payload import (
     repair_citation_brackets,
     enrich_structured_citations,
 )
-from app.services.langchain_agents.utils.reducers import merge_citations_reducer
+from app.services.langchain_agents.utils.reducers import (
+    citations_state_reducer,
+    merge_citations_reducer,
+)
 from app.services.chat.events import SSESerializer
 
 
@@ -143,13 +146,33 @@ def test_build_retrieval_citations_bbox_aliases():
     assert cites[0]["page_bbox"] is None
 
 
+def test_build_retrieval_citations_yandex_bbox_regions():
+    """Сканы: bbox из top-level bbox_regions (Yandex OCR), без Docling dl_meta."""
+    meta = {
+        "file_id": "fscan",
+        "source_file": "scan.pdf",
+        "source_page": 1,
+        "chunk_id": "ych1",
+        "char_start": 0,
+        "char_end": 10,
+        "bbox_regions": [{"x0": 50.0, "y0": 100.0, "x1": 200.0, "y1": 120.0}],
+        "page_bbox": {"width": 595.0, "height": 842.0},
+    }
+    cites = build_retrieval_citations([Document(page_content="текст", metadata=meta)])
+    assert cites[0]["bbox"] == {"x0": 50.0, "y0": 100.0, "x1": 200.0, "y1": 120.0}
+    assert cites[0]["page_bbox"] == {"width": 595.0, "height": 842.0}
+    assert cites[0]["bbox_regions"] == meta["bbox_regions"]
+
+
 def test_build_retrieval_citations_dl_meta_multiple_prov_regions():
-    """Все prov-боксы чанка попадают в bbox_regions; bbox — первый регион."""
+    """Без char span на prov — legacy: в citation не более одного bbox."""
     meta = {
         "file_id": "fpdf",
         "source_file": "doc.pdf",
         "source_page": 1,
         "chunk_id": "ch1",
+        "char_start": 0,
+        "char_end": 200,
         "dl_meta": {
             "page_bbox": {"width": 595.0, "height": 842.0},
             "doc_items": [
@@ -166,8 +189,43 @@ def test_build_retrieval_citations_dl_meta_multiple_prov_regions():
     assert cites[0]["bbox"] == {"x0": 10.0, "y0": 780.0, "x1": 100.0, "y1": 800.0}
     assert cites[0]["page_bbox"] == {"width": 595.0, "height": 842.0}
     regions = cites[0]["bbox_regions"]
-    assert len(regions) == 2
-    assert regions[1] == {"x0": 10.0, "y0": 730.0, "x1": 100.0, "y1": 750.0}
+    assert len(regions) == 1
+
+
+def test_build_retrieval_citations_filters_prov_by_char_span():
+    meta = {
+        "file_id": "fpdf",
+        "source_file": "doc.pdf",
+        "chunk_id": "ch2",
+        "char_start": 0,
+        "char_end": 40,
+        "dl_meta": {
+            "page_bbox": {"width": 595.0, "height": 842.0},
+            "doc_items": [
+                {
+                    "prov": [
+                        {
+                            "char_start": 0,
+                            "char_end": 50,
+                            "bbox": {"l": 10, "t": 800, "r": 100, "b": 780},
+                        },
+                        {
+                            "char_start": 60,
+                            "char_end": 120,
+                            "bbox": {"l": 10, "t": 750, "r": 100, "b": 730},
+                        },
+                    ]
+                }
+            ],
+        },
+    }
+    cites = build_retrieval_citations(
+        [Document(page_content="x" * 100, metadata=meta)],
+        original_text_by_file_id={"fpdf": "x" * 100},
+    )
+    regions = cites[0]["bbox_regions"]
+    assert len(regions) == 1
+    assert regions[0]["y0"] == 780.0
 
 
 def test_repair_citation_brackets():
@@ -182,6 +240,12 @@ def test_repair_normalizes_source_style_brackets():
     assert "[3]" in t
     assert "Источник" not in t
     assert meta["normalized_source_style"] == 1
+
+
+def test_citations_state_reducer_empty_list_clears_stale():
+    stale = [{"source_id": "f", "chunk_id": "c1", "page": 1}]
+    assert citations_state_reducer(stale, []) == []
+    assert citations_state_reducer(stale, None) == stale
 
 
 def test_merge_citations_reducer_keeps_two_chunks_same_page():

@@ -9,6 +9,11 @@ export const CITE_ZW = '\u200B\u200B'
 export const CITE_PREFIX = `${CITE_ZW}CITE_`
 export const CITE_SUFFIX = `_ENDCITE${CITE_ZW}`
 
+/** Текст уже содержит маркеры с бэкенда (expand_dc_markers) — не гонять через linkCitationsInline. */
+export function hasEmbeddedCitationMarkers(text: string): boolean {
+  return text.includes(CITE_PREFIX)
+}
+
 /** Маркер: CITE_<citation_id>_<displayN>_ENDCITE (citation_id обычно cit_<12 hex>). */
 export function encodeCitationMarker(citationId: string, displayN: number): string {
   return `${CITE_PREFIX}${citationId}_${displayN}${CITE_SUFFIX}`

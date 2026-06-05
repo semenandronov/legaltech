@@ -288,6 +288,31 @@ const DocumentEditorPage = ({ embedded = false }: { embedded?: boolean }) => {
     }
   }
 
+  const handleReplaceTextFuzzy = (originalText: string, newText: string): boolean => {
+    if (editorRef.current) {
+      const success = editorRef.current.replaceTextFuzzy(originalText, newText)
+      if (success) setHasUnsavedChanges(true)
+      return success
+    }
+    return false
+  }
+
+  const getDocumentContextForChat = useCallback(() => {
+    if (editorRef.current?.getChatContextHtml) {
+      return editorRef.current.getChatContextHtml()
+    }
+    return content
+  }, [content])
+
+  const handleReplaceNodeById = (nodeId: string, newText: string): boolean => {
+    if (editorRef.current) {
+      const success = editorRef.current.replaceNodeById(nodeId, newText)
+      if (success) setHasUnsavedChanges(true)
+      return success
+    }
+    return false
+  }
+
   const handleVersionRestored = (restoredContent: string) => {
     setContent(normalizeLegalDocumentHtml(restoredContent))
     setHasUnsavedChanges(true)
@@ -575,11 +600,6 @@ const DocumentEditorPage = ({ embedded = false }: { embedded?: boolean }) => {
             onSelectionChange={setSelectedText}
             onSelectionRangeChange={(range) => {
               setSelectionRange(range)
-              if (range && range.from !== range.to) {
-                editorRef.current?.setSelectionHighlight(range.from, range.to)
-              } else {
-                editorRef.current?.clearSelectionHighlight()
-              }
             }}
             caseId={caseId}
             documentId={documentId}
@@ -662,6 +682,9 @@ const DocumentEditorPage = ({ embedded = false }: { embedded?: boolean }) => {
                   editorRef.current?.clearSelectionHighlight()
                 }}
                 onReplaceRange={handleReplaceRange}
+                onReplaceNodeById={handleReplaceNodeById}
+                onReplaceTextFuzzy={handleReplaceTextFuzzy}
+                getDocumentContextForChat={getDocumentContextForChat}
                 onScrollToText={handleScrollToText}
               />
             </div>

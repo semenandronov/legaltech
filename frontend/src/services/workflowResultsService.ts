@@ -251,7 +251,7 @@ export const saveWorkflowMessageToHistory = async (result: WorkflowResultData): 
     const response = await fetch(getApiUrl('/api/assistant/chat/workflow-message'), {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${token}`,
+        'X-Access-Token': token,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({

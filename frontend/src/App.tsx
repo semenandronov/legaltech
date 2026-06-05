@@ -1,8 +1,11 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useMemo } from 'react'
 import { Routes, Route, Navigate, useParams, useSearchParams } from 'react-router-dom'
 import { Box, CircularProgress } from '@mui/material'
 import { MessageSquare, FileEdit, BookOpen, Workflow, Scissors } from 'lucide-react'
 import ProtectedRoute from './components/ProtectedRoute'
+import { InternalDevToolsRoute } from './components/InternalDevToolsRoute'
+import { useAuth } from './contexts/AuthContext'
+import { canAccessInternalDevTools } from './utils/internalDevToolsAccess'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import UnifiedSidebar from './components/Layout/UnifiedSidebar'
@@ -21,6 +24,7 @@ const PlaybooksPage = lazy(() => import('./pages/PlaybooksPage'))
 const WorkflowsPage = lazy(() => import('./pages/WorkflowsPage'))
 const GlobalAssistantPage = lazy(() => import('./pages/GlobalAssistantPage'))
 const LegalCorpusManagePage = lazy(() => import('./pages/LegalCorpusManagePage'))
+const CourtPracticeManagePage = lazy(() => import('./pages/CourtPracticeManagePage'))
 const DraftTemplatesAdminPage = lazy(() => import('./pages/DraftTemplatesAdminPage'))
 const CaseOverviewPage = lazy(() => import('./pages/CaseOverviewPage'))
 const HistoryPage = lazy(() => import('./pages/HistoryPage'))
@@ -108,8 +112,20 @@ function App() {
         path="/legal-corpus"
         element={
           <ProtectedRoute>
+            <InternalDevToolsRoute redirectTo="/cases">
+              <Suspense fallback={<PageLoader />}>
+                <LegalCorpusManagePage />
+              </Suspense>
+            </InternalDevToolsRoute>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/court-practice"
+        element={
+          <ProtectedRoute>
             <Suspense fallback={<PageLoader />}>
-              <LegalCorpusManagePage />
+              <CourtPracticeManagePage />
             </Suspense>
           </ProtectedRoute>
         }
@@ -118,9 +134,11 @@ function App() {
         path="/admin/draft-templates"
         element={
           <ProtectedRoute>
-            <Suspense fallback={<PageLoader />}>
-              <DraftTemplatesAdminPage />
-            </Suspense>
+            <InternalDevToolsRoute redirectTo="/cases">
+              <Suspense fallback={<PageLoader />}>
+                <DraftTemplatesAdminPage />
+              </Suspense>
+            </InternalDevToolsRoute>
           </ProtectedRoute>
         }
       />
@@ -166,9 +184,7 @@ function App() {
         path="/cases/:caseId/chunk-lab"
         element={
           <ProtectedRoute>
-            <Suspense fallback={<PageLoader />}>
-              <ChunkLabPage />
-            </Suspense>
+            <ChunkLabRouteGate />
           </ProtectedRoute>
         }
       />
@@ -265,16 +281,35 @@ function App() {
   )
 }
 
+const ChunkLabRouteGate = () => {
+  const { caseId } = useParams<{ caseId: string }>()
+  const fallback = caseId ? `/cases/${caseId}/chat` : '/cases'
+  return (
+    <InternalDevToolsRoute redirectTo={fallback}>
+      <Suspense fallback={<PageLoader />}>
+        <ChunkLabPage />
+      </Suspense>
+    </InternalDevToolsRoute>
+  )
+}
+
 const CaseChatPage = () => {
   const { caseId } = useParams<{ caseId: string }>()
+  const { user } = useAuth()
 
-  const navItems = [
-    { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
-    { id: 'chunk-lab', label: 'Чанки', icon: Scissors, path: `/cases/${caseId}/chunk-lab` },
-    { id: 'editor', label: 'Редактор', icon: FileEdit, path: `/cases/${caseId}/editor` },
-    { id: 'playbooks', label: 'Playbooks', icon: BookOpen, path: `/cases/${caseId}/playbooks` },
-    { id: 'workflows', label: 'Workflows', icon: Workflow, path: `/cases/${caseId}/workflows` },
-  ]
+  const navItems = useMemo(() => {
+    const all = [
+      { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
+      { id: 'chunk-lab', label: 'Чанки', icon: Scissors, path: `/cases/${caseId}/chunk-lab` },
+      { id: 'editor', label: 'Редактор', icon: FileEdit, path: `/cases/${caseId}/editor` },
+      { id: 'playbooks', label: 'Playbooks', icon: BookOpen, path: `/cases/${caseId}/playbooks` },
+      { id: 'workflows', label: 'Workflows', icon: Workflow, path: `/cases/${caseId}/workflows` },
+    ]
+    if (!canAccessInternalDevTools(user?.email)) {
+      return all.filter((item) => item.id !== 'chunk-lab')
+    }
+    return all
+  }, [caseId, user?.email])
 
   return (
     <Suspense fallback={<PageLoader />}>

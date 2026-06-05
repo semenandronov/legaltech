@@ -22,7 +22,9 @@ export const FontFamily = Extension.create({
             parseHTML: element => element.style.fontFamily?.replace(/['"]/g, '') || null,
             renderHTML: attributes => {
               if (!attributes.fontFamily) return {}
-              return { style: `font-family: ${attributes.fontFamily}` }
+              const name = String(attributes.fontFamily)
+              const quoted = name.includes(' ') ? `"${name}"` : name
+              return { style: `font-family: ${quoted}` }
             },
           },
         },
@@ -34,8 +36,9 @@ export const FontFamily = Extension.create({
     return {
       setFontFamily:
         (fontFamily: string) =>
-        ({ chain }) => {
-          return chain().setMark('textStyle', { fontFamily }).run()
+        ({ editor, chain }) => {
+          const attrs = { ...editor.getAttributes('textStyle'), fontFamily }
+          return chain().setMark('textStyle', attrs).run()
         },
       unsetFontFamily:
         () =>

@@ -44,6 +44,35 @@ except: pass
 logger = logging.getLogger(__name__)
 
 
+def clean_env_str(value: Optional[str], default: str = "") -> str:
+    """Убирает пробелы и обрамляющие кавычки (Docker --env-file передаёт их буквально)."""
+    if value is None:
+        return default
+    cleaned = value.strip().strip('"').strip("'")
+    return cleaned if cleaned else default
+
+
+def redact_database_url(url: str) -> str:
+    """Маскирует пароль (и при необходимости user) в DSN для логов и исключений."""
+    if not url or not isinstance(url, str):
+        return "postgresql://***"
+    try:
+        from urllib.parse import urlparse, urlunparse
+
+        raw = url.strip()
+        p = urlparse(raw)
+        if not p.scheme or not str(p.scheme).lower().startswith("postgres"):
+            return "***"
+        user = p.username or ""
+        host = p.hostname or ""
+        port = f":{p.port}" if p.port else ""
+        auth = f"{user}:***@" if user else ""
+        netloc = f"{auth}{host}{port}"
+        return urlunparse((p.scheme, netloc, p.path or "", "", "", ""))
+    except Exception:
+        return "postgresql://***"
+
+
 class Config:
     """Application configuration"""
     
@@ -58,7 +87,66 @@ class Config:
     SQLALCHEMY_POOL_SIZE: int = int(os.getenv("SQLALCHEMY_POOL_SIZE", "10"))
     SQLALCHEMY_MAX_OVERFLOW: int = int(os.getenv("SQLALCHEMY_MAX_OVERFLOW", "20"))
     SQLALCHEMY_POOL_TIMEOUT: int = int(os.getenv("SQLALCHEMY_POOL_TIMEOUT", "60"))
-    
+
+    # Зависшие файлы (pending/processing) при init_db / старте приложения.
+    # В serverless новый контейнер не должен помечать error файлы, которые ещё обрабатывает другой инстанс.
+    # Варианты: RESET_STUCK_FILES_ON_STARTUP=false или STUCK_FILE_RESET_MIN_AGE_MINUTES=45 (только «устаревшие»).
+    RESET_STUCK_FILES_ON_STARTUP: bool = (
+        os.getenv("RESET_STUCK_FILES_ON_STARTUP", "true").strip().lower() in ("1", "true", "yes")
+    )
+    STUCK_FILE_RESET_MIN_AGE_MINUTES: int = int(
+        (os.getenv("STUCK_FILE_RESET_MIN_AGE_MINUTES", "0") or "0").strip().strip('"').strip("'")
+    )
+
+    # API / Worker (два Yandex Serverless Containers из одного Docker-образа)
+    # api — сайт и REST; worker — только POST /internal/process-files
+    APP_ROLE: str = (os.getenv("APP_ROLE", "api") or "api").strip().lower()
+    WORKER_BASE_URL: str = (os.getenv("WORKER_BASE_URL") or "").strip().rstrip("/")
+    INTERNAL_WORKER_SECRET: str = (os.getenv("INTERNAL_WORKER_SECRET") or "").strip()
+    # auto: worker при заданных WORKER_BASE_URL + INTERNAL_WORKER_SECRET; local | worker — принудительно
+    FILE_PROCESSING_MODE: str = (
+        (os.getenv("FILE_PROCESSING_MODE", "auto") or "auto").strip().lower()
+    )
+    WORKER_DISPATCH_TIMEOUT_SEC: float = float(
+        os.getenv("WORKER_DISPATCH_TIMEOUT_SEC", "30") or "30"
+    )
+    # Bearer для вызова worker (Yandex 403 без токена при invoker на SA)
+    WORKER_DISPATCH_USE_METADATA_IAM: bool = (
+        os.getenv("WORKER_DISPATCH_USE_METADATA_IAM", "true").strip().lower()
+        in ("1", "true", "yes")
+    )
+
+    def is_worker_role(self) -> bool:
+        return self.APP_ROLE == "worker"
+
+    def file_processing_via_worker(self) -> bool:
+        """API шлёт обработку на worker; сам worker никогда не диспатчит наружу."""
+        if self.is_worker_role():
+            return False
+        mode = self.FILE_PROCESSING_MODE
+        configured = bool(self.WORKER_BASE_URL and self.INTERNAL_WORKER_SECRET)
+        if mode == "local":
+            return False
+        if mode == "worker":
+            return configured
+        return configured  # auto
+
+    # Параллельная обработка файлов в одном batch (worker/API local).
+    # OCR pacing — в yandex_vision_ocr (квота ~10 async start/s); здесь — файлы / LLM / embed.
+    FILE_PROCESSING_MAX_PARALLEL_FILES: int = int(
+        os.getenv("FILE_PROCESSING_MAX_PARALLEL_FILES", "4") or "4"
+    )
+    FILE_PROCESSING_MAX_PARALLEL_PASSPORT: int = int(
+        os.getenv("FILE_PROCESSING_MAX_PARALLEL_PASSPORT", "3") or "3"
+    )
+    FILE_PROCESSING_MAX_PARALLEL_EMBEDDINGS: int = int(
+        os.getenv("FILE_PROCESSING_MAX_PARALLEL_EMBEDDINGS", "2") or "2"
+    )
+    # How many cases may ingest files concurrently (scheduler-level cap).
+    FILE_PROCESSING_MAX_CONCURRENT_CASES: int = int(
+        os.getenv("FILE_PROCESSING_MAX_CONCURRENT_CASES", "2") or "2"
+    )
+
     # Validate DATABASE_URL on initialization
     @staticmethod
     def _validate_database_url():
@@ -103,7 +191,7 @@ class Config:
                 warning_msg = (
                     f"\n⚠️  Обнаружена команда psql в DATABASE_URL. Извлечена строка подключения.\n"
                     f"Рекомендуется использовать только строку подключения без команды psql.\n"
-                    f"Используется: {extracted_url[:50]}...\n"
+                    f"Используется: {redact_database_url(extracted_url)}\n"
                 )
                 print(warning_msg, file=sys.stderr)
                 try:
@@ -119,7 +207,7 @@ class Config:
                     warning_msg = (
                         f"\n⚠️  Обнаружена команда psql в DATABASE_URL. Извлечена строка подключения.\n"
                         f"Рекомендуется использовать только строку подключения без команды psql.\n"
-                        f"Используется: {extracted_url[:50]}...\n"
+                        f"Используется: {redact_database_url(extracted_url)}\n"
                     )
                     print(warning_msg, file=sys.stderr)
                     try:
@@ -134,7 +222,7 @@ class Config:
                 "\n" + "="*80 + "\n"
                 "❌ КРИТИЧЕСКАЯ ОШИБКА: Неверный формат DATABASE_URL!\n"
                 "="*80 + "\n"
-                f"Текущее значение: {db_url[:100]}...\n\n"
+                f"Текущее значение: {redact_database_url(db_url)}\n\n"
                 "DATABASE_URL должна быть строкой подключения к PostgreSQL в формате:\n"
                 "postgresql://user:password@host:port/database\n\n"
                 "ПРИМЕРЫ:\n"
@@ -162,7 +250,10 @@ class Config:
                 logger.error(error_msg)
             except:
                 pass
-            raise ValueError(f"Неверный формат DATABASE_URL. Ожидается строка вида 'postgresql://user:password@host:port/database', получено: {db_url[:100]}...")
+            raise ValueError(
+                "Неверный формат DATABASE_URL. Ожидается строка вида "
+                f"'postgresql://user:password@host:port/database', получено: {redact_database_url(db_url)}"
+            )
         
         # Update DATABASE_URL if it was extracted from psql command
         if db_url != os.getenv("DATABASE_URL", Config._default_db_url):
@@ -174,7 +265,7 @@ class Config:
             warning_msg = (
                 f"\n⚠️  ПРЕДУПРЕЖДЕНИЕ: DATABASE_URL содержит localhost/127.0.0.1\n"
                 f"Это может не работать в облачном окружении.\n"
-                f"URL (без пароля): {db_url.split('@')[0] if '@' in db_url else db_url[:50]}@***\n"
+                f"URL: {redact_database_url(db_url)}\n"
             )
             print(warning_msg, file=sys.stderr)
             try:
@@ -182,12 +273,8 @@ class Config:
             except:
                 pass
         
-        # Log success (mask password)
-        url_parts = db_url.split("@")
-        if len(url_parts) > 1:
-            success_msg = f"✅ DATABASE_URL установлена: {url_parts[0]}@***"
-        else:
-            success_msg = f"✅ DATABASE_URL установлена: {db_url[:50]}..."
+        # Log success (никогда не логируем user:password в открытом виде)
+        success_msg = f"✅ DATABASE_URL установлена: {redact_database_url(db_url)}"
         print(success_msg, file=sys.stderr)
         try:
             logger.info(success_msg)
@@ -208,7 +295,11 @@ class Config:
     API_VERSION: str = "0.1.0"
     
     # File Upload
-    MAX_FILE_SIZE: int = 30 * 1024 * 1024  # 30 MB
+    MAX_FILE_SIZE: int = 30 * 1024 * 1024  # 30 MB (default for case files)
+    # Отдельный лимит для Справочника: кодексы в PDF могут быть тяжелее 30 МБ.
+    LEGAL_CORPUS_MAX_FILE_SIZE: int = int(
+        os.getenv("LEGAL_CORPUS_MAX_FILE_SIZE_MB", "50") or "50"
+    ) * 1024 * 1024
     ALLOWED_EXTENSIONS: List[str] = [
         ".pdf",
         ".docx",
@@ -226,22 +317,60 @@ class Config:
     ]
     MAX_TOTAL_TEXT_CHARS: int = 2_000_000  # Ограничение суммарного текста
 
-    # Yandex Vision OCR: в одном запросе PDF не больше N страниц (квота сервиса)
-    YANDEX_VISION_MAX_PDF_PAGES: int = int(os.getenv("YANDEX_VISION_MAX_PDF_PAGES", "200"))
+    # Старый batchAnalyze: чанк до N страниц. Новый recognizeTextAsync: см. YANDEX_OCR_ASYNC_MAX_PAGES_PER_REQUEST.
+    YANDEX_VISION_MAX_PDF_PAGES: int = int(os.getenv("YANDEX_VISION_MAX_PDF_PAGES", "300"))
+    # Новый OCR API: до 200 стр. в одном recognizeTextAsync (см. Vision OCR limits); чанки только если > лимита или >9 МБ.
+    YANDEX_OCR_ASYNC_MAX_PAGES_PER_REQUEST: int = int(
+        os.getenv("YANDEX_OCR_ASYNC_MAX_PAGES_PER_REQUEST", "200")
+    )
+    # Новый OCR API: для PDF — только model=page (официальный гайд Yandex recognizeTextAsync).
+    YANDEX_OCR_SCAN_MODEL: str = clean_env_str(os.getenv("YANDEX_OCR_SCAN_MODEL"), "page").lower()
+    YANDEX_OCR_TABLE_MODEL: str = clean_env_str(os.getenv("YANDEX_OCR_TABLE_MODEL"), "page").lower()
+    YANDEX_OCR_PDF_ASYNC_MODEL: str = clean_env_str(
+        os.getenv("YANDEX_OCR_PDF_ASYNC_MODEL"), "page"
+    ).lower()
+    YANDEX_OCR_ASYNC_INITIAL_POLL_DELAY_SEC: float = float(
+        os.getenv("YANDEX_OCR_ASYNC_INITIAL_POLL_DELAY_SEC", "2.0") or "2.0"
+    )
+    # Параллельный OCR только при нескольких чанках (по умолчанию один запрос на весь PDF)
+    YANDEX_OCR_ASYNC_PARALLEL_ENABLED: bool = (
+        clean_env_str(os.getenv("YANDEX_OCR_ASYNC_PARALLEL_ENABLED"), "false").lower() == "true"
+    )
+    YANDEX_OCR_ASYNC_MAX_PARALLEL_CHUNKS: int = int(
+        os.getenv("YANDEX_OCR_ASYNC_MAX_PARALLEL_CHUNKS", "5")
+    )
+    # Мин. интервал между стартами async OCR (~8/с при 0.12; квота сервиса 10/с)
+    YANDEX_OCR_MIN_START_INTERVAL_SEC: float = float(
+        os.getenv("YANDEX_OCR_MIN_START_INTERVAL_SEC", "0.12")
+    )
+    # Мин. интервал между poll-запросами (квота 50/с; 0 = без доп. паузы в poll-цикле)
+    YANDEX_OCR_MIN_POLL_INTERVAL_SEC: float = float(
+        os.getenv("YANDEX_OCR_MIN_POLL_INTERVAL_SEC", "0.0")
+    )
     # PDF: сначала Yandex Vision для всех документов, затем fallback при ошибках
-    PDF_OCR_PREFER_YANDEX: bool = os.getenv("PDF_OCR_PREFER_YANDEX", "true").lower() == "true"
+    PDF_OCR_PREFER_YANDEX: bool = clean_env_str(os.getenv("PDF_OCR_PREFER_YANDEX"), "true").lower() == "true"
     # Минимальная эвристика качества OCR-текста из PDF (символов на страницу с текстом)
     PDF_OCR_MIN_EXPECTED_CHARS_PER_PAGE: int = int(
         os.getenv("PDF_OCR_MIN_EXPECTED_CHARS_PER_PAGE", "5")
     )
+    # Скан без текстового слоя: tesseract (PyMuPDF+pytesseract) | docling_easyocr (Docling, см. DOCLING_PDF_OCR_ENGINE).
+    # Для подсветки по prov: docling_easyocr + не ставить ocr:true в лоадере; LegalChunker повторно гоняет Docling по bytes.
+    PDF_SCAN_OCR_ENGINE: str = clean_env_str(os.getenv("PDF_SCAN_OCR_ENGINE"), "tesseract").lower()
     # OCR robust settings (quota/backoff/diagnostics)
     YANDEX_OCR_MAX_RETRIES: int = int(os.getenv("YANDEX_OCR_MAX_RETRIES", "3"))
     YANDEX_OCR_MIN_REQUEST_INTERVAL_SEC: float = float(
         os.getenv("YANDEX_OCR_MIN_REQUEST_INTERVAL_SEC", "1.1")
     )
     YANDEX_OCR_LANGUAGE_CODES: str = os.getenv("YANDEX_OCR_LANGUAGE_CODES", "ru,en")
-    # Timeout (seconds) per chunk for new async OCR API
+    # Timeout (seconds) per chunk for new async OCR API (poll loop budget)
     YANDEX_OCR_ASYNC_TIMEOUT_SEC: int = int(os.getenv("YANDEX_OCR_ASYNC_TIMEOUT_SEC", "300"))
+    # HTTP read timeouts for ocr.api.cloud.yandex.net (connect, read) — POST start / GET poll
+    YANDEX_OCR_HTTP_START_TIMEOUT_SEC: float = float(
+        os.getenv("YANDEX_OCR_HTTP_START_TIMEOUT_SEC", "180") or "180"
+    )
+    YANDEX_OCR_HTTP_POLL_TIMEOUT_SEC: float = float(
+        os.getenv("YANDEX_OCR_HTTP_POLL_TIMEOUT_SEC", "120") or "120"
+    )
     YANDEX_OCR_DATA_LOGGING_ENABLED: bool = os.getenv(
         "YANDEX_OCR_DATA_LOGGING_ENABLED", "true"
     ).lower() == "true"
@@ -252,9 +381,56 @@ class Config:
     XLSX_PDF_MAX_COLS: int = int(os.getenv("XLSX_PDF_MAX_COLS", "32"))
 
     # Кто может загружать общий правовой справочник (законы, обзоры) в pgvector; через запятую
-    LEGAL_CORPUS_UPLOADER_EMAILS: str = os.getenv(
+    LEGAL_CORPUS_UPLOADER_EMAILS: str = clean_env_str(os.getenv(
         "LEGAL_CORPUS_UPLOADER_EMAILS",
         "semenandronov2004@mail.ru",
+    ))
+    # Судебная практика (КАД): загрузчики CSV; пусто → те же email, что LEGAL_CORPUS_UPLOADER_EMAILS
+    COURT_PRACTICE_UPLOADER_EMAILS: str = clean_env_str(os.getenv("COURT_PRACTICE_UPLOADER_EMAILS", ""))
+    GIGACHAT_EMBEDDING_MODEL: str = clean_env_str(
+        os.getenv("GIGACHAT_EMBEDDING_MODEL"), "EmbeddingsGigaR"
+    )
+    GIGACHAT_EMBEDDING_DIM: int = int(os.getenv("GIGACHAT_EMBEDDING_DIM", "2560") or "2560")
+    GIGACHAT_EMBEDDING_BATCH_SIZE: int = int(os.getenv("GIGACHAT_EMBEDDING_BATCH_SIZE", "8") or "8")
+    GIGACHAT_EMBEDDING_MIN_INTERVAL_SEC: float = float(
+        os.getenv("GIGACHAT_EMBEDDING_MIN_INTERVAL_SEC", "0.12") or "0.12"
+    )
+    COURT_PRACTICE_VECTOR_RECALL_K: int = int(os.getenv("COURT_PRACTICE_VECTOR_RECALL_K", "50") or "50")
+    COURT_PRACTICE_FTS_RECALL_K: int = int(os.getenv("COURT_PRACTICE_FTS_RECALL_K", "50") or "50")
+    COURT_PRACTICE_RRF_K: int = int(os.getenv("COURT_PRACTICE_RRF_K", "60") or "60")
+    COURT_PRACTICE_MAX_CHUNKS_PER_CASE: int = int(
+        os.getenv("COURT_PRACTICE_MAX_CHUNKS_PER_CASE", "3") or "3"
+    )
+    COURT_PRACTICE_FINAL_K: int = int(os.getenv("COURT_PRACTICE_FINAL_K", "7") or "7")
+    COURT_PRACTICE_USE_RERANKER: bool = (
+        os.getenv("COURT_PRACTICE_USE_RERANKER", "true").strip().lower() in ("1", "true", "yes")
+    )
+    COURT_PRACTICE_CONTEXT_K: int = int(os.getenv("COURT_PRACTICE_CONTEXT_K", "7") or "7")
+    COURT_PRACTICE_MAX_CONTEXT_CHARS: int = int(
+        os.getenv("COURT_PRACTICE_MAX_CONTEXT_CHARS", "28000") or "28000"
+    )
+    # Query planner (FTS multi-query supplement) for court practice
+    COURT_PRACTICE_LLM_PLANNER_ENABLED: bool = (
+        os.getenv("COURT_PRACTICE_LLM_PLANNER_ENABLED", "true").strip().lower() in ("1", "true", "yes")
+    )
+    COURT_PRACTICE_LLM_PLANNER_MODEL: str = clean_env_str(os.getenv("COURT_PRACTICE_LLM_PLANNER_MODEL", ""))
+    COURT_PRACTICE_QUERY_PLANNER_MAX_QUERIES: int = int(
+        os.getenv("COURT_PRACTICE_QUERY_PLANNER_MAX_QUERIES", "6") or "6"
+    )
+    COURT_PRACTICE_FTS_SUPPLEMENT_K: int = int(
+        os.getenv("COURT_PRACTICE_FTS_SUPPLEMENT_K", "10") or "10"
+    )
+    # Детальные nested spans в Langfuse для court_practice (planner, hybrid, FTS, rerank)
+    COURT_PRACTICE_LANGFUSE_DETAILED: bool = (
+        os.getenv("COURT_PRACTICE_LANGFUSE_DETAILED", "true").strip().lower() in ("1", "true", "yes")
+    )
+    # Детальные nested spans в Langfuse для case assistant (router, hybrid funnel, rerank)
+    CASE_ASSISTANT_LANGFUSE_DETAILED: bool = (
+        os.getenv("CASE_ASSISTANT_LANGFUSE_DETAILED", "true").strip().lower() in ("1", "true", "yes")
+    )
+    # Пошаговые span'ы orchestrator / session / HTTP (case + global assistant).
+    ASSISTANT_PIPELINE_LANGFUSE_DETAILED: bool = (
+        os.getenv("ASSISTANT_PIPELINE_LANGFUSE_DETAILED", "true").strip().lower() in ("1", "true", "yes")
     )
 
     # Chunking budgets (safety limits)
@@ -263,9 +439,153 @@ class Config:
         os.getenv("LEGAL_CHUNKING_BUDGET_MAX_TOTAL_CHUNKS", "4000") or "4000"
     )
     # Optional override for GLOBAL_LEGAL_CORPUS indexing (legal reference library)
+    # Some deployments quote numeric envs in .env (e.g. "0"). Accept both.
     LEGAL_CORPUS_BUDGET_MAX_TOTAL_CHUNKS: int = int(
-        os.getenv("LEGAL_CORPUS_BUDGET_MAX_TOTAL_CHUNKS", "8000") or "8000"
+        (os.getenv("LEGAL_CORPUS_BUDGET_MAX_TOTAL_CHUNKS", "8000") or "8000").strip().strip('"').strip("'")
+        or "8000"
     )
+    # Устарело: global/case чат в assistant_chat_v2 не подмешивает справочник по этому флагу — только тумблер в UI.
+    # Оставлено для совместимости старых .env; значение читается в config, маршруты его не используют.
+    LEGAL_CORPUS_FORCE_ENABLED: bool = os.getenv("LEGAL_CORPUS_FORCE_ENABLED", "false").strip().lower() == "true"
+    # Устарело: раньше включало справочник в чате по делу без тумблера; маршруты больше не читают.
+    LEGAL_CORPUS_AUTO_USE_IN_CASE_CHAT: bool = os.getenv(
+        "LEGAL_CORPUS_AUTO_USE_IN_CASE_CHAT", "false"
+    ).strip().lower() == "true"
+    # Справочник (GLOBAL_LEGAL_CORPUS): размер пула кандидатов до rerank / дедупа (multi-query + широкий recall).
+    LEGAL_CORPUS_RECALL_MAX: int = int(
+        (os.getenv("LEGAL_CORPUS_RECALL_MAX", "60") or "60").strip().strip('"').strip("'") or "60"
+    )
+    # Сколько чанков отдавать в промпт после rerank (если не переопределено аргументом k).
+    LEGAL_CORPUS_FINAL_K: int = int(
+        (os.getenv("LEGAL_CORPUS_FINAL_K", "8") or "8").strip().strip('"').strip("'") or "8"
+    )
+    # Cross-encoder rerank для справочника (отдельно от RAG_USE_RERANKER по делу).
+    LEGAL_CORPUS_USE_RERANKER: bool = os.getenv(
+        "LEGAL_CORPUS_USE_RERANKER", "true"
+    ).strip().lower() == "true"
+    # После article fast path с полным покрытием плана — не гонять cross-encoder rerank по пулу.
+    LEGAL_CORPUS_SKIP_RERANK_ON_FAST_PATH: bool = os.getenv(
+        "LEGAL_CORPUS_SKIP_RERANK_ON_FAST_PATH", "true"
+    ).strip().lower() == "true"
+    # Усечение текста чанка для пары query–passage в reranker.
+    LEGAL_CORPUS_RERANK_MAX_CHARS: int = int(
+        (os.getenv("LEGAL_CORPUS_RERANK_MAX_CHARS", "2400") or "2400").strip().strip('"').strip("'")
+        or "2400"
+    )
+    # Внутренний чат (garant): размер выборки и лимит символов контекста справочника.
+    LEGAL_CORPUS_CONTEXT_K: int = int(
+        (os.getenv("LEGAL_CORPUS_CONTEXT_K", "8") or "8").strip().strip('"').strip("'") or "8"
+    )
+    LEGAL_CORPUS_MAX_CONTEXT_CHARS: int = int(
+        (os.getenv("LEGAL_CORPUS_MAX_CONTEXT_CHARS", "14000") or "14000").strip().strip('"').strip("'")
+        or "14000"
+    )
+    # Глобальный ассистент: минимум слотов для legal_corpus после merge с matter.
+    LEGAL_CORPUS_GLOBAL_MERGE_MIN_SLOTS: int = int(
+        (os.getenv("LEGAL_CORPUS_GLOBAL_MERGE_MIN_SLOTS", "3") or "3").strip().strip('"').strip("'")
+        or "3"
+    )
+    # LLM pre-retrieval: переводит бытовой вопрос в юридические поисковые запросы перед первым поиском.
+    GLOBAL_LEGAL_QUERY_INTERPRETER_ENABLED: bool = os.getenv(
+        "GLOBAL_LEGAL_QUERY_INTERPRETER_ENABLED", "true"
+    ).strip().lower() == "true"
+    # Глобальный ассистент: второй проход retrieval по legal_corpus (итеративный добор, см. LangGraph agentic RAG).
+    GLOBAL_LEGAL_ITERATIVE_RETRIEVAL_ENABLED: bool = os.getenv(
+        "GLOBAL_LEGAL_ITERATIVE_RETRIEVAL_ENABLED", "true"
+    ).strip().lower() == "true"
+    # Максимум дополнительных поисковых строк за один запрос (после первого merge).
+    GLOBAL_LEGAL_ITERATIVE_MAX_QUERIES: int = int(
+        (os.getenv("GLOBAL_LEGAL_ITERATIVE_MAX_QUERIES", "3") or "3").strip().strip('"').strip("'") or "3"
+    )
+    # k на каждый follow-up запрос (меньше основного прохода, чтобы уложиться в бюджет).
+    GLOBAL_LEGAL_ITERATIVE_K_PER_QUERY: int = int(
+        (os.getenv("GLOBAL_LEGAL_ITERATIVE_K_PER_QUERY", "6") or "6").strip().strip('"').strip("'") or "6"
+    )
+    # Legal corpus agent: макс. hybrid-запросов за один turn (без LLM query interpreter на первом проходе).
+    LEGAL_CORPUS_MAX_HYBRID_QUERIES: int = int(
+        (os.getenv("LEGAL_CORPUS_MAX_HYBRID_QUERIES", "3") or "3").strip().strip('"').strip("'") or "3"
+    )
+    # Wall-clock бюджет на retrieval справочника в одном turn (мс); после — partial context.
+    LEGAL_CORPUS_RETRIEVAL_WALL_MS: int = int(
+        (os.getenv("LEGAL_CORPUS_RETRIEVAL_WALL_MS", "30000") or "30000").strip().strip('"').strip("'")
+        or "30000"
+    )
+    # LLM query interpreter только на follow-up, не до первого hybrid (экономия latency).
+    LEGAL_CORPUS_QUERY_INTERPRETER_ON_FIRST_PASS: bool = os.getenv(
+        "LEGAL_CORPUS_QUERY_INTERPRETER_ON_FIRST_PASS", "false"
+    ).strip().lower() == "true"
+    # Таймаут выполнения global-assistant LangGraph (секунды).
+    GLOBAL_ASSISTANT_GRAPH_TIMEOUT_SEC: int = int(
+        (os.getenv("GLOBAL_ASSISTANT_GRAPH_TIMEOUT_SEC", "360") or "360").strip().strip('"').strip("'")
+        or "360"
+    )
+    # Опционально: подсказка для embedding_text по instrument_id (без LLM, статический текст).
+    LEGAL_CORPUS_EMBED_SYNONYM_HINTS_ENABLED: bool = os.getenv(
+        "LEGAL_CORPUS_EMBED_SYNONYM_HINTS_ENABLED", "true"
+    ).strip().lower() == "true"
+
+    # Dual legal-aware chunker (LegalChunkerV2, contract v2.1).
+    # При True все новые загрузки в дело и Справочник идут через Docling AST → macro/micro.
+    # На ошибке Docling/AST автоматически fallback на strict docling-direct-v1.
+    LEGAL_CHUNKING_DUAL_ENABLED: bool = (
+        os.getenv("LEGAL_CHUNKING_DUAL_ENABLED", "true").strip().lower() == "true"
+    )
+    # Один AST-сегмент длиннее этого (символы) — дробим до macro-слоя (Docling TableItem / длинный TextItem).
+    LEGAL_SEGMENT_MAX_CHARS: int = int(os.getenv("LEGAL_SEGMENT_MAX_CHARS", "2200") or "2200")
+    # Таблица в markdown длиннее — шардирование по строкам с повтором header.
+    LEGAL_TABLE_SHARD_MIN_CHARS: int = int(os.getenv("LEGAL_TABLE_SHARD_MIN_CHARS", "1500") or "1500")
+    LEGAL_TABLE_SHARD_ROWS_PER_GROUP: int = int(os.getenv("LEGAL_TABLE_SHARD_ROWS_PER_GROUP", "8") or "8")
+    # Hidden context: префикс breadcrumbs только в embedding_text (см. metadata), page_content без префикса.
+    LEGAL_CHUNK_EMBED_PREFIX_ENABLED: bool = (
+        os.getenv("LEGAL_CHUNK_EMBED_PREFIX_ENABLED", "true").strip().lower() == "true"
+    )
+    # WARNING если один файл дал больше стольки чанков (парсер/шум).
+    LEGAL_CHUNK_COUNT_WARN_THRESHOLD: int = int(
+        os.getenv("LEGAL_CHUNK_COUNT_WARN_THRESHOLD", "2000") or "2000"
+    )
+    # Профиль чанкинга по умолчанию, если doc_type не классифицирован.
+    # Допустимые значения: "regulations" | "court_docs" | "contracts".
+    LEGAL_CHUNKING_DEFAULT_PROFILE: str = (
+        os.getenv("LEGAL_CHUNKING_DEFAULT_PROFILE", "contracts").strip().lower()
+    )
+
+    # Docling pipeline limits (используются document_converter_service и legal_chunker).
+    # 2000 страниц закрывает крупные кодексы (ГК РФ ~1.2k стр., НК РФ ~1.5k стр.).
+    DOCLING_MAX_PAGES_PER_DOC: int = int(
+        os.getenv("DOCLING_MAX_PAGES_PER_DOC", "2000") or "2000"
+    )
+    DOCLING_MAX_FILE_SIZE_BYTES: int = int(
+        os.getenv("DOCLING_MAX_FILE_SIZE_BYTES", str(60 * 1024 * 1024)) or str(60 * 1024 * 1024)
+    )
+    DOCLING_PDF_TABLE_MODE: str = os.getenv("DOCLING_PDF_TABLE_MODE", "accurate").strip().lower()
+    DOCLING_PDF_TABLE_STRUCTURE: bool = (
+        os.getenv("DOCLING_PDF_TABLE_STRUCTURE", "true").strip().lower() == "true"
+    )
+    DOCLING_PDF_TABLE_CELL_MATCHING: bool = (
+        os.getenv("DOCLING_PDF_TABLE_CELL_MATCHING", "true").strip().lower() == "true"
+    )
+    DOCLING_ENABLE_REMOTE_SERVICES: bool = (
+        os.getenv("DOCLING_ENABLE_REMOTE_SERVICES", "false").strip().lower() == "true"
+    )
+    # Движок OCR внутри Docling PDF pipeline: auto | easyocr | tesseract_cli
+    DOCLING_PDF_OCR_ENGINE: str = clean_env_str(os.getenv("DOCLING_PDF_OCR_ENGINE"), "auto").lower()
+    DOCLING_OCR_FORCE_FULL_PAGE: bool = (
+        clean_env_str(os.getenv("DOCLING_OCR_FORCE_FULL_PAGE"), "false").lower() == "true"
+    )
+    DOCLING_OCR_BITMAP_AREA_THRESHOLD: float = float(
+        os.getenv("DOCLING_OCR_BITMAP_AREA_THRESHOLD", "0.05") or "0.05"
+    )
+    DOCLING_ARTIFACTS_PATH: str = os.getenv("DOCLING_ARTIFACTS_PATH", "").strip()
+    # EasyOCR (ISO 639-1): ru,en,…
+    DOCLING_OCR_EASYOCR_LANGS: str = clean_env_str(os.getenv("DOCLING_OCR_EASYOCR_LANGS"), "ru,en")
+    # Tesseract CLI в Docling: трёхбуквенные коды через запятую или rus+eng
+    DOCLING_OCR_TESSERACT_LANGS: str = os.getenv("DOCLING_OCR_TESSERACT_LANGS", "rus,eng").strip()
+    # Для do_ocr=auto: переопределить lang у выбранного движка (формат зависит от движка; часто пусто = дефолты Docling)
+    DOCLING_OCR_LANGUAGES: list[str] = [
+        x.strip()
+        for x in os.getenv("DOCLING_OCR_LANGUAGES", "").split(",")
+        if x.strip()
+    ]
 
     # LLM context limits
     MAX_CONTEXT_CHARS: int = 60_000  # Приближённо к лимиту ~32k токенов
@@ -283,6 +603,40 @@ class Config:
     RAG_LANGGRAPH_STRUCTURED_CITATIONS_ENABLED: bool = (
         os.getenv("RAG_LANGGRAPH_STRUCTURED_CITATIONS_ENABLED", "true").lower() == "true"
     )
+    # Editor document chat: stream tokens via Yandex OpenAI-compat (stream=true).
+    EDITOR_CHAT_STREAM_ENABLED: bool = (
+        os.getenv("EDITOR_CHAT_STREAM_ENABLED", "true").lower() == "true"
+    )
+    # Max document HTML chars from frontend (full doc or selection-only slice).
+    EDITOR_DOCUMENT_CONTEXT_MAX_CHARS: int = int(
+        os.getenv("EDITOR_DOCUMENT_CONTEXT_MAX_CHARS", "80000") or "80000"
+    )
+    # Подробные логи [EditorLatency] + SSE latency_debug в стриме редактора.
+    EDITOR_LATENCY_VERBOSE: bool = (
+        os.getenv("EDITOR_LATENCY_VERBOSE", "true").lower() == "true"
+    )
+    # Редактор: START → mode_router без manage_memory (история в editor_transcript, без LLM-summary).
+    EDITOR_FAST_MEMORY_PATH: bool = (
+        os.getenv("EDITOR_FAST_MEMORY_PATH", "true").lower() == "true"
+    )
+    # Скрепка в редакторе: до N файлов целиком (structured_text), без RAG
+    EDITOR_ATTACH_FULL_TEXT_ENABLED: bool = (
+        os.getenv("EDITOR_ATTACH_FULL_TEXT_ENABLED", "true").lower() == "true"
+    )
+    EDITOR_ATTACH_MAX_FILES: int = int(os.getenv("EDITOR_ATTACH_MAX_FILES", "3") or "3")
+    EDITOR_ATTACH_MAX_CHARS_PER_FILE: int = int(
+        os.getenv("EDITOR_ATTACH_MAX_CHARS_PER_FILE", "80000") or "80000"
+    )
+    EDITOR_ATTACH_MAX_CHARS_TOTAL: int = int(
+        os.getenv("EDITOR_ATTACH_MAX_CHARS_TOTAL", "120000") or "120000"
+    )
+    FILE_STRUCTURED_TEXT_MAX_STORE_CHARS: int = int(
+        os.getenv("FILE_STRUCTURED_TEXT_MAX_STORE_CHARS", "2000000") or "2000000"
+    )
+    # Прогрев ChatGraph при старте API (убирает ~3s compile на первом запросе).
+    CHAT_GRAPH_WARMUP_ON_STARTUP: bool = (
+        os.getenv("CHAT_GRAPH_WARMUP_ON_STARTUP", "true").lower() == "true"
+    )
 
     # Fast retrieval tuning (case assistant / LangGraph RAG node)
     # Avoid multi-query LLM expansion + multi-pass k_schedule for depth_tier=fast by default.
@@ -298,6 +652,390 @@ class Config:
         "RAG_FAST_MULTIQUERY_FALLBACK", "true"
     ).lower() == "true"
     RAG_FAST_FALLBACK_MIN_DOCS: int = int(os.getenv("RAG_FAST_FALLBACK_MIN_DOCS", "2") or "2")
+
+    # Case assistant context pipeline (scope router → hybrid recall → rerank → LLM)
+    CASE_ASSISTANT_CONTEXT_PIPELINE_ENABLED: bool = (
+        os.getenv("CASE_ASSISTANT_CONTEXT_PIPELINE_ENABLED", "true").strip().lower() == "true"
+    )
+    CASE_ASSISTANT_LLM_ROUTER_ENABLED: bool = (
+        os.getenv("CASE_ASSISTANT_LLM_ROUTER_ENABLED", "true").strip().lower() == "true"
+    )
+    CASE_ASSISTANT_ROUTER_MODEL: str = os.getenv(
+        "CASE_ASSISTANT_ROUTER_MODEL",
+        os.getenv("YANDEX_GPT_MODEL", "yandexgpt-lite/latest"),
+    ).strip()
+    CASE_ASSISTANT_ROUTER_MIN_CONFIDENCE: float = float(
+        os.getenv("CASE_ASSISTANT_ROUTER_MIN_CONFIDENCE", "0.55") or "0.55"
+    )
+    CASE_ASSISTANT_ROUTER_MAX_CATALOG_FILES: int = int(
+        os.getenv("CASE_ASSISTANT_ROUTER_MAX_CATALOG_FILES", "80") or "80"
+    )
+    # Дела с числом файлов <= порога: без выбора документов — chunk search по всему делу.
+    CASE_ASSISTANT_ROUTER_SMALL_CASE_MAX_FILES: int = int(
+        os.getenv("CASE_ASSISTANT_ROUTER_SMALL_CASE_MAX_FILES", "5") or "5"
+    )
+    # Deprecated: keyword/heuristic-first routing removed; kept for env compat only.
+    CASE_ASSISTANT_ROUTER_HEURISTIC_FIRST: bool = (
+        os.getenv("CASE_ASSISTANT_ROUTER_HEURISTIC_FIRST", "false").strip().lower() == "true"
+    )
+    CASE_ASSISTANT_ROUTER_HEURISTIC_MIN_CONFIDENCE: float = float(
+        os.getenv("CASE_ASSISTANT_ROUTER_HEURISTIC_MIN_CONFIDENCE", "0.72") or "0.72"
+    )
+    CASE_ASSISTANT_CATALOG_CACHE_ENABLED: bool = (
+        os.getenv("CASE_ASSISTANT_CATALOG_CACHE_ENABLED", "true").strip().lower() == "true"
+    )
+    CASE_ASSISTANT_CATALOG_CACHE_TTL_SEC: int = int(
+        os.getenv("CASE_ASSISTANT_CATALOG_CACHE_TTL_SEC", "600") or "600"
+    )
+    CASE_ASSISTANT_DOC_COUNT_CACHE_ENABLED: bool = (
+        os.getenv("CASE_ASSISTANT_DOC_COUNT_CACHE_ENABLED", "true").strip().lower() == "true"
+    )
+    CASE_ASSISTANT_DOC_COUNT_CACHE_TTL_SEC: int = int(
+        os.getenv("CASE_ASSISTANT_DOC_COUNT_CACHE_TTL_SEC", "300") or "300"
+    )
+    CASE_ASSISTANT_INSTANT_MAX_CONTEXT_CHARS: int = int(
+        os.getenv("CASE_ASSISTANT_INSTANT_MAX_CONTEXT_CHARS", "16000") or "16000"
+    )
+    CASE_ASSISTANT_STANDARD_MAX_CONTEXT_CHARS: int = int(
+        os.getenv("CASE_ASSISTANT_STANDARD_MAX_CONTEXT_CHARS", "48000") or "48000"
+    )
+    CASE_ASSISTANT_DEEP_MAX_CONTEXT_CHARS: int = int(
+        os.getenv("CASE_ASSISTANT_DEEP_MAX_CONTEXT_CHARS", "64000") or "64000"
+    )
+    CASE_ASSISTANT_MAX_CONTEXT_CHARS_CEILING: int = int(
+        os.getenv("CASE_ASSISTANT_MAX_CONTEXT_CHARS_CEILING", "48000") or "48000"
+    )
+    CASE_ASSISTANT_INSTANT_MAX_TOKENS: int = int(
+        os.getenv("CASE_ASSISTANT_INSTANT_MAX_TOKENS", "800") or "800"
+    )
+    CASE_ASSISTANT_STANDARD_MAX_TOKENS: int = int(
+        os.getenv("CASE_ASSISTANT_STANDARD_MAX_TOKENS", "1500") or "1500"
+    )
+    CASE_ASSISTANT_DEEP_MAX_TOKENS: int = int(
+        os.getenv("CASE_ASSISTANT_DEEP_MAX_TOKENS", "4500") or "4500"
+    )
+    CASE_ASSISTANT_INSTANT_TEMPERATURE: float = float(
+        os.getenv("CASE_ASSISTANT_INSTANT_TEMPERATURE", "0.1") or "0.1"
+    )
+    CASE_ASSISTANT_STANDARD_TEMPERATURE: float = float(
+        os.getenv("CASE_ASSISTANT_STANDARD_TEMPERATURE", "0.2") or "0.2"
+    )
+    CASE_ASSISTANT_DEEP_TEMPERATURE: float = float(
+        os.getenv("CASE_ASSISTANT_DEEP_TEMPERATURE", "0.3") or "0.3"
+    )
+    # File-level summary index (hierarchical RAG step 1): hybrid vector+FTS → dynamic K
+    CASE_ASSISTANT_FILE_SUMMARY_INDEX_ENABLED: bool = (
+        os.getenv("CASE_ASSISTANT_FILE_SUMMARY_INDEX_ENABLED", "true").strip().lower() == "true"
+    )
+    CASE_ASSISTANT_FILE_SUMMARY_MIN_SCORE: float = float(
+        os.getenv("CASE_ASSISTANT_FILE_SUMMARY_MIN_SCORE", "0.6") or "0.6"
+    )
+    CASE_ASSISTANT_FILE_SUMMARY_SCORE_GAP: float = float(
+        os.getenv("CASE_ASSISTANT_FILE_SUMMARY_SCORE_GAP", "0.15") or "0.15"
+    )
+    CASE_ASSISTANT_FILE_SUMMARY_RECALL_K: int = int(
+        os.getenv("CASE_ASSISTANT_FILE_SUMMARY_RECALL_K", "30") or "30"
+    )
+    CASE_ASSISTANT_FILE_SUMMARY_MAX_FILES: int = int(
+        os.getenv("CASE_ASSISTANT_FILE_SUMMARY_MAX_FILES", "20") or "20"
+    )
+    CASE_ASSISTANT_FILE_SUMMARY_RELAXED_MIN_SCORE: float = float(
+        os.getenv("CASE_ASSISTANT_FILE_SUMMARY_RELAXED_MIN_SCORE", "0.35") or "0.35"
+    )
+    CASE_ASSISTANT_FILE_SUMMARY_NEAR_MISS_TOP_K: int = int(
+        os.getenv("CASE_ASSISTANT_FILE_SUMMARY_NEAR_MISS_TOP_K", "3") or "3"
+    )
+    # LLM scope secretary: max file_ids (0 = use FILE_SUMMARY_MAX_FILES)
+    CASE_ASSISTANT_ROUTER_LLM_MAX_FILES: int = int(
+        os.getenv("CASE_ASSISTANT_ROUTER_LLM_MAX_FILES", "0") or "0"
+    )
+    # full_case from LLM only when confidence >= this threshold
+    CASE_ASSISTANT_ROUTER_FULL_CASE_MIN_CONFIDENCE: float = float(
+        os.getenv("CASE_ASSISTANT_ROUTER_FULL_CASE_MIN_CONFIDENCE", "0.72") or "0.72"
+    )
+    # In-dialog session memory (thread state + semantic search + LLM resolver; no phrase triggers)
+    SESSION_CONTEXT_ENABLED: bool = (
+        os.getenv("SESSION_CONTEXT_ENABLED", "true").strip().lower() == "true"
+    )
+    SESSION_CONTEXT_SEMANTIC_ENABLED: bool = (
+        os.getenv("SESSION_CONTEXT_SEMANTIC_ENABLED", "true").strip().lower() == "true"
+    )
+    SESSION_CONTEXT_RESOLVER_ENABLED: bool = (
+        os.getenv("SESSION_CONTEXT_RESOLVER_ENABLED", "true").strip().lower() == "true"
+    )
+    SESSION_CONTEXT_INTENT_AUTHORITY_ENABLED: bool = (
+        os.getenv("SESSION_CONTEXT_INTENT_AUTHORITY_ENABLED", "true").strip().lower() == "true"
+    )
+    SESSION_CONTEXT_INTENT_AUTHORITY_MIN_CONF: float = float(
+        os.getenv("SESSION_CONTEXT_INTENT_AUTHORITY_MIN_CONF", "0.72") or "0.72"
+    )
+    SESSION_CONTEXT_THREAD_STATE_LLM_ENABLED: bool = (
+        os.getenv("SESSION_CONTEXT_THREAD_STATE_LLM_ENABLED", "true").strip().lower() == "true"
+    )
+    SESSION_CONTEXT_SEARCH_K: int = int(os.getenv("SESSION_CONTEXT_SEARCH_K", "8") or "8")
+    SESSION_CONTEXT_MAX_RELEVANT_TURNS: int = int(
+        os.getenv("SESSION_CONTEXT_MAX_RELEVANT_TURNS", "5") or "5"
+    )
+    # Turn Context Contract — Phase 2 LLM-lite query expansion for deictic follow-ups
+    TURN_CONTEXT_LLM_QUERY_RESOLVE_ENABLED: bool = (
+        os.getenv("TURN_CONTEXT_LLM_QUERY_RESOLVE_ENABLED", "true").strip().lower() == "true"
+    )
+    TURN_CONTEXT_LLM_QUERY_MODEL: str = os.getenv(
+        "TURN_CONTEXT_LLM_QUERY_MODEL",
+        os.getenv("CASE_ASSISTANT_ROUTER_MODEL", "yandexgpt-lite/latest"),
+    )
+    TURN_CONTEXT_LLM_QUERY_MAX_TOKENS: int = int(
+        os.getenv("TURN_CONTEXT_LLM_QUERY_MAX_TOKENS", "256") or "256"
+    )
+    # Turn Context Contract — primary LLM judge (memory vs scoped vs full retrieval)
+    TURN_CONTEXT_LLM_JUDGE_ENABLED: bool = (
+        os.getenv("TURN_CONTEXT_LLM_JUDGE_ENABLED", "true").strip().lower() == "true"
+    )
+    TURN_CONTEXT_LLM_JUDGE_MODEL: str = os.getenv(
+        "TURN_CONTEXT_LLM_JUDGE_MODEL",
+        os.getenv("TURN_CONTEXT_LLM_QUERY_MODEL", os.getenv("CASE_ASSISTANT_ROUTER_MODEL", "")),
+    )
+    TURN_CONTEXT_LLM_JUDGE_MAX_TOKENS: int = int(
+        os.getenv("TURN_CONTEXT_LLM_JUDGE_MAX_TOKENS", "384") or "384"
+    )
+    TURN_CONTEXT_LLM_JUDGE_MIN_CONF: float = float(
+        os.getenv("TURN_CONTEXT_LLM_JUDGE_MIN_CONF", "0.68") or "0.68"
+    )
+    TURN_CONTEXT_LLM_JUDGE_MAX_TURNS: int = int(
+        os.getenv("TURN_CONTEXT_LLM_JUDGE_MAX_TURNS", "10") or "10"
+    )
+    SESSION_REPLAY_SEARCH_SCORE_MIN: float = float(
+        os.getenv("SESSION_REPLAY_SEARCH_SCORE_MIN", "0.45") or "0.45"
+    )
+    # Raw chat history in global assistant answer prompt (session context / replay unchanged)
+    GLOBAL_ASSISTANT_HISTORY_PROMPT_MAX_TURNS: int = int(
+        os.getenv("GLOBAL_ASSISTANT_HISTORY_PROMPT_MAX_TURNS", "16") or "16"
+    )
+    GLOBAL_ASSISTANT_HISTORY_PROMPT_MAX_CHARS: int = int(
+        os.getenv("GLOBAL_ASSISTANT_HISTORY_PROMPT_MAX_CHARS", "6400") or "6400"
+    )
+    GLOBAL_ASSISTANT_HISTORY_SUMMARIZE_AFTER_TURNS: int = int(
+        os.getenv("GLOBAL_ASSISTANT_HISTORY_SUMMARIZE_AFTER_TURNS", "20") or "20"
+    )
+    # LangGraph short-term memory: messages + checkpointer (Postgres transcript is canonical)
+    GLOBAL_ASSISTANT_CHECKPOINT_MESSAGES_ENABLED: bool = (
+        os.getenv("GLOBAL_ASSISTANT_CHECKPOINT_MESSAGES_ENABLED", "true").strip().lower()
+        == "true"
+    )
+    # Legacy transcript replay short-circuit (off when checkpoint messages are enabled)
+    GLOBAL_ASSISTANT_TRANSCRIPT_REPLAY_ENABLED: bool = (
+        os.getenv("GLOBAL_ASSISTANT_TRANSCRIPT_REPLAY_ENABLED", "false").strip().lower()
+        == "true"
+    )
+    # Case-assistant LangGraph message memory (editor fast-path keeps tighter defaults)
+    CASE_GRAPH_MEMORY_KEEP_LAST_N: int = int(
+        os.getenv("CASE_GRAPH_MEMORY_KEEP_LAST_N", "12") or "12"
+    )
+    CASE_GRAPH_MEMORY_SUMMARIZE_THRESHOLD: int = int(
+        os.getenv("CASE_GRAPH_MEMORY_SUMMARIZE_THRESHOLD", "24") or "24"
+    )
+    CASE_GRAPH_MEMORY_MAX_TOKENS: int = int(
+        os.getenv("CASE_GRAPH_MEMORY_MAX_TOKENS", "8000") or "8000"
+    )
+    # Lite router only on summary-index miss (not on every question)
+    CASE_ASSISTANT_LLM_ROUTER_FALLBACK_ENABLED: bool = (
+        os.getenv("CASE_ASSISTANT_LLM_ROUTER_FALLBACK_ENABLED", "true").strip().lower() == "true"
+    )
+    # In-memory BM25 по делу: prewarm из PGVector в процессе API (не только worker).
+    CASE_BM25_PREWARM_ENABLED: bool = (
+        os.getenv("CASE_BM25_PREWARM_ENABLED", "true").strip().lower() == "true"
+    )
+    CASE_BM25_MAX_CHUNKS: int = int(os.getenv("CASE_BM25_MAX_CHUNKS", "2500") or "2500")
+    # false: на запросе не блокировать построение BM25 (FTS + фоновый prewarm).
+    CASE_BM25_SYNC_ON_HYBRID_SEARCH: bool = (
+        os.getenv("CASE_BM25_SYNC_ON_HYBRID_SEARCH", "true").strip().lower() == "true"
+    )
+    # Слияние фоновых rebuild после серии store_in_vector_db (сек; 0 = без debounce).
+    CASE_BM25_DEBOUNCE_SEC: float = float(os.getenv("CASE_BM25_DEBOUNCE_SEC", "1.5") or "1.5")
+    CASE_ASSISTANT_RECALL_K: int = int(os.getenv("CASE_ASSISTANT_RECALL_K", "100") or "100")
+    CASE_ASSISTANT_FINAL_K: int = int(os.getenv("CASE_ASSISTANT_FINAL_K", "15") or "15")
+    # Tabular review: per-cell RAG (smaller than case chat — one file, one question)
+    TABULAR_RECALL_K: int = int(os.getenv("TABULAR_RECALL_K", "30") or "30")
+    TABULAR_FINAL_K: int = int(os.getenv("TABULAR_FINAL_K", "5") or "5")
+    TABULAR_FINAL_K_SIMPLE: int = int(os.getenv("TABULAR_FINAL_K_SIMPLE", "3") or "3")
+    TABULAR_CONTEXT_MAX_CHARS: int = int(
+        os.getenv("TABULAR_CONTEXT_MAX_CHARS", "6000") or "6000"
+    )
+    # Tabular: cross-encoder rerank per cell (off by default — use hybrid top-k; set true to re-enable).
+    TABULAR_RERANK_ENABLED: bool = (
+        os.getenv("TABULAR_RERANK_ENABLED", "false").strip().lower() == "true"
+    )
+    TABULAR_EVIDENCE_REQUIRED: bool = (
+        os.getenv("TABULAR_EVIDENCE_REQUIRED", "true").strip().lower() == "true"
+    )
+    TABULAR_CONFIDENCE_REVIEW_THRESHOLD: float = float(
+        os.getenv("TABULAR_CONFIDENCE_REVIEW_THRESHOLD", "0.7") or "0.7"
+    )
+    TABULAR_CONFIDENCE_AUTO_COMPLETE_THRESHOLD: float = float(
+        os.getenv("TABULAR_CONFIDENCE_AUTO_COMPLETE_THRESHOLD", "0.6") or "0.6"
+    )
+    CASE_ASSISTANT_RERANK_ENABLED: bool = (
+        os.getenv("CASE_ASSISTANT_RERANK_ENABLED", "true").strip().lower() == "true"
+    )
+    CASE_ASSISTANT_RERANK_MAX_CHARS: int = int(
+        os.getenv("CASE_ASSISTANT_RERANK_MAX_CHARS", "1200") or "1200"
+    )
+    # Core RAG: recall hybrid on micro chunks only; macro resolved after rerank
+    CASE_ASSISTANT_MICRO_ONLY_RECALL_ENABLED: bool = (
+        os.getenv("CASE_ASSISTANT_MICRO_ONLY_RECALL_ENABLED", "true").strip().lower() == "true"
+    )
+    CASE_ASSISTANT_MICRO_RECALL_K: int = int(
+        os.getenv("CASE_ASSISTANT_MICRO_RECALL_K", "20") or "20"
+    )
+    CASE_ASSISTANT_PARENT_CONTEXT_ENABLED: bool = (
+        os.getenv("CASE_ASSISTANT_PARENT_CONTEXT_ENABLED", "true").strip().lower() == "true"
+    )
+    CASE_ASSISTANT_RERANK_BATCH_SIZE: int = int(
+        os.getenv("CASE_ASSISTANT_RERANK_BATCH_SIZE", "32") or "32"
+    )
+    CASE_ASSISTANT_RERANK_USE_COHERE: bool = (
+        os.getenv("CASE_ASSISTANT_RERANK_USE_COHERE", "false").strip().lower() == "true"
+    )
+    CASE_ASSISTANT_RERANK_POOL_CAP: int = int(
+        os.getenv("CASE_ASSISTANT_RERANK_POOL_CAP", "24") or "24"
+    )
+    CASE_ASSISTANT_SKIP_RERANK_WHEN_SUFFICIENT: bool = (
+        os.getenv("CASE_ASSISTANT_SKIP_RERANK_WHEN_SUFFICIENT", "true").strip().lower() == "true"
+    )
+    CASE_ASSISTANT_SKIP_RERANK_MIN_RANK_GAP: float = float(
+        os.getenv("CASE_ASSISTANT_SKIP_RERANK_MIN_RANK_GAP", "0.12") or "0.12"
+    )
+    CASE_ASSISTANT_OVERVIEW_SUMMARY_PATH_ENABLED: bool = (
+        os.getenv("CASE_ASSISTANT_OVERVIEW_SUMMARY_PATH_ENABLED", "true").strip().lower()
+        == "true"
+    )
+    CASE_ASSISTANT_RERANK_LIGHT_MODEL: str = os.getenv(
+        "CASE_ASSISTANT_RERANK_LIGHT_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    ).strip()
+    CASE_ASSISTANT_RERANK_LIGHT_MAX_CHARS: int = int(
+        os.getenv("CASE_ASSISTANT_RERANK_LIGHT_MAX_CHARS", "900") or "900"
+    )
+    CASE_ASSISTANT_RERANK_LIGHT_BATCH_SIZE: int = int(
+        os.getenv("CASE_ASSISTANT_RERANK_LIGHT_BATCH_SIZE", "64") or "64"
+    )
+    # Recall + rerank in one executor (no separate graph-node cold gap)
+    CASE_ASSISTANT_UNIFIED_RETRIEVAL: bool = (
+        os.getenv("CASE_ASSISTANT_UNIFIED_RETRIEVAL", "true").strip().lower() == "true"
+    )
+    # Adaptive execution tiers (instant / standard / deep) — recall and rerank per tier
+    CASE_ASSISTANT_ADAPTIVE_TIER_ENABLED: bool = (
+        os.getenv("CASE_ASSISTANT_ADAPTIVE_TIER_ENABLED", "true").strip().lower() == "true"
+    )
+    CASE_ASSISTANT_INSTANT_RECALL_K: int = int(
+        os.getenv("CASE_ASSISTANT_INSTANT_RECALL_K", "16") or "16"
+    )
+    CASE_ASSISTANT_STANDARD_RECALL_K: int = int(
+        os.getenv("CASE_ASSISTANT_STANDARD_RECALL_K", "35") or "35"
+    )
+    CASE_ASSISTANT_TIER_LLM_ENABLED: bool = (
+        os.getenv("CASE_ASSISTANT_TIER_LLM_ENABLED", "false").strip().lower() == "true"
+    )
+    CASE_ASSISTANT_TIER_CLASSIFIER_MODEL: str = os.getenv(
+        "CASE_ASSISTANT_TIER_CLASSIFIER_MODEL", ""
+    ).strip()
+    CASE_ASSISTANT_MAX_RETRIEVAL_ROUNDS: int = int(
+        os.getenv("CASE_ASSISTANT_MAX_RETRIEVAL_ROUNDS", "2") or "2"
+    )
+    CASE_ASSISTANT_STANDARD_MAX_RETRIEVAL_ROUNDS: int = int(
+        os.getenv("CASE_ASSISTANT_STANDARD_MAX_RETRIEVAL_ROUNDS", "1") or "1"
+    )
+    CASE_ASSISTANT_DEEP_MAX_RETRIEVAL_ROUNDS: int = int(
+        os.getenv("CASE_ASSISTANT_DEEP_MAX_RETRIEVAL_ROUNDS", "3") or "3"
+    )
+    # norm-only (статья/акт без материалов дела): один раунд, без case RAG
+    CASE_ASSISTANT_LEGAL_NORM_ONLY_ENABLED: bool = (
+        os.getenv("CASE_ASSISTANT_LEGAL_NORM_ONLY_ENABLED", "true").strip().lower() == "true"
+    )
+    CASE_ASSISTANT_LEGAL_NORM_MAX_RETRIEVAL_ROUNDS: int = int(
+        os.getenv("CASE_ASSISTANT_LEGAL_NORM_MAX_RETRIEVAL_ROUNDS", "1") or "1"
+    )
+    CASE_ASSISTANT_GRAPH_RECURSION_LIMIT: int = int(
+        os.getenv("CASE_ASSISTANT_GRAPH_RECURSION_LIMIT", "40") or "40"
+    )
+    # План retrieval (topic packs, multi-article, coverage) перед hybrid
+    LEGAL_CORPUS_AGENTIC_PLAN_ENABLED: bool = (
+        os.getenv("LEGAL_CORPUS_AGENTIC_PLAN_ENABLED", "true").strip().lower() == "true"
+    )
+    # LLM анализирует вопрос и планирует search_queries / статьи до hybrid (основной путь)
+    LEGAL_CORPUS_LLM_PLANNER_ENABLED: bool = (
+        os.getenv("LEGAL_CORPUS_LLM_PLANNER_ENABLED", "true").strip().lower() == "true"
+    )
+    LEGAL_CORPUS_LLM_PLANNER_MODEL: str = os.getenv("LEGAL_CORPUS_LLM_PLANNER_MODEL", "").strip()
+    LEGAL_CORPUS_LLM_PLANNER_MAX_QUERIES: int = int(
+        os.getenv("LEGAL_CORPUS_LLM_PLANNER_MAX_QUERIES", "6") or "6"
+    )
+    CASE_ASSISTANT_STREAM_CASE_CHAT: bool = (
+        os.getenv("CASE_ASSISTANT_STREAM_CASE_CHAT", "true").strip().lower() == "true"
+    )
+    # Не блокировать SSE на commit ответа ассистента (case + global).
+    ASSISTANT_ASYNC_PERSIST_ENABLED: bool = (
+        os.getenv("ASSISTANT_ASYNC_PERSIST_ENABLED", "true").strip().lower() == "true"
+    )
+    ASSISTANT_ASYNC_PERSIST_MAX_RETRIES: int = int(
+        os.getenv("ASSISTANT_ASYNC_PERSIST_MAX_RETRIES", "2") or "2"
+    )
+    ASSISTANT_PERSIST_WRITETHROUGH_BUFFER_ENABLED: bool = (
+        os.getenv("ASSISTANT_PERSIST_WRITETHROUGH_BUFFER_ENABLED", "true").strip().lower()
+        == "true"
+    )
+    ASSISTANT_PERSIST_WRITETHROUGH_MAX_TURNS: int = int(
+        os.getenv("ASSISTANT_PERSIST_WRITETHROUGH_MAX_TURNS", "10") or "10"
+    )
+    # Global: отдавать status/progress во время LangGraph retrieval до генерации.
+    GLOBAL_ASSISTANT_STREAM_GRAPH_PROGRESS: bool = (
+        os.getenv("GLOBAL_ASSISTANT_STREAM_GRAPH_PROGRESS", "true").strip().lower() == "true"
+    )
+
+    # Draft Mode: индекс полей шаблона + заполнение (bulk по умолчанию)
+    DRAFT_TEMPLATE_INDEX_ON_UPLOAD: bool = (
+        os.getenv("DRAFT_TEMPLATE_INDEX_ON_UPLOAD", "true").strip().lower() == "true"
+    )
+    DRAFT_TEMPLATE_INDEXER_VERSION: str = os.getenv("DRAFT_TEMPLATE_INDEXER_VERSION", "1").strip()
+    # Один RAG + один LLM на все поля; точечный per-field RAG только для пустых после bulk.
+    DRAFT_BULK_FILL_ENABLED: bool = (
+        os.getenv("DRAFT_BULK_FILL_ENABLED", "true").strip().lower() == "true"
+    )
+    DRAFT_BULK_TARGETED_RETRY_ENABLED: bool = (
+        os.getenv("DRAFT_BULK_TARGETED_RETRY_ENABLED", "true").strip().lower() == "true"
+    )
+    DRAFT_BULK_RAG_K: int = int(os.getenv("DRAFT_BULK_RAG_K", "14") or "14")
+    DRAFT_BULK_RAG_STRATEGY: str = os.getenv("DRAFT_BULK_RAG_STRATEGY", "hybrid").strip() or "hybrid"
+    DRAFT_BULK_CONTEXT_MAX_CHARS: int = int(os.getenv("DRAFT_BULK_CONTEXT_MAX_CHARS", "20000") or "20000")
+    DRAFT_BULK_UNIFIED_MAX_FIELDS_PER_CALL: int = int(
+        os.getenv("DRAFT_BULK_UNIFIED_MAX_FIELDS_PER_CALL", "48") or "48"
+    )
+    DRAFT_BULK_MIN_CONFIDENCE: float = float(os.getenv("DRAFT_BULK_MIN_CONFIDENCE", "0.25") or "0.25")
+    DRAFT_BULK_RETRY_MAX_FIELDS: int = int(os.getenv("DRAFT_BULK_RETRY_MAX_FIELDS", "4") or "4")
+    DRAFT_BULK_RETRY_MIN_SHARED_CHARS: int = int(os.getenv("DRAFT_BULK_RETRY_MIN_SHARED_CHARS", "800") or "800")
+    DRAFT_BULK_RETRY_LIGHT_RAG_ENABLED: bool = (
+        os.getenv("DRAFT_BULK_RETRY_LIGHT_RAG_ENABLED", "true").strip().lower() == "true"
+    )
+    DRAFT_BULK_RETRY_RAG_K: int = int(os.getenv("DRAFT_BULK_RETRY_RAG_K", "5") or "5")
+    DRAFT_SKIP_PREFETCH_RAG_WHEN_CATALOG_FILL: bool = (
+        os.getenv("DRAFT_SKIP_PREFETCH_RAG_WHEN_CATALOG_FILL", "true").strip().lower() == "true"
+    )
+    DRAFT_PER_FIELD_RAG_ENABLED: bool = (
+        os.getenv("DRAFT_PER_FIELD_RAG_ENABLED", "true").strip().lower() == "true"
+    )
+    DRAFT_FIELD_FINAL_K: int = int(os.getenv("DRAFT_FIELD_FINAL_K", "5") or "5")
+    DRAFT_FIELD_RAG_MAX_PARALLEL: int = int(os.getenv("DRAFT_FIELD_RAG_MAX_PARALLEL", "4") or "4")
+    DRAFT_FIELD_BATCH_SIZE: int = int(os.getenv("DRAFT_FIELD_BATCH_SIZE", "8") or "8")
+    DRAFT_FULL_HTML_FALLBACK_ENABLED: bool = (
+        os.getenv("DRAFT_FULL_HTML_FALLBACK_ENABLED", "false").strip().lower() == "true"
+    )
+    DRAFT_PLAN_FIELD_PROBE_COUNT: int = int(os.getenv("DRAFT_PLAN_FIELD_PROBE_COUNT", "5") or "5")
+    # False (default): draft mode сразу генерирует документ без отдельного плана и кнопки «Одобрить».
+    DRAFT_PLAN_APPROVAL_ENABLED: bool = (
+        os.getenv("DRAFT_PLAN_APPROVAL_ENABLED", "false").strip().lower() == "true"
+    )
+
+    COHERE_API_KEY: str = os.getenv("COHERE_API_KEY", "").strip()
+    RERANKER_BATCH_SIZE: int = int(os.getenv("RERANKER_BATCH_SIZE", "32") or "32")
     
     # Structured RAG Output Settings
     RAG_USE_STRUCTURED_OUTPUT: bool = os.getenv("RAG_USE_STRUCTURED_OUTPUT", "true").lower() == "true"  # Use structured JSON output with mandatory citations
@@ -349,25 +1087,65 @@ class Config:
     # Garant API
     GARANT_API_KEY: str = os.getenv("GARANT_API_KEY", "")
     GARANT_API_URL: str = os.getenv("GARANT_API_URL", "https://api.garant.ru/v2")  # Альтернатива API ключу
-    YANDEX_FOLDER_ID: str = os.getenv("YANDEX_FOLDER_ID", "")  # Обязательно для работы Yandex сервисов
+    YANDEX_FOLDER_ID: str = clean_env_str(os.getenv("YANDEX_FOLDER_ID"))  # Обязательно для работы Yandex сервисов
     YANDEX_GPT_MODEL: str = os.getenv("YANDEX_GPT_MODEL", "yandexgpt-lite/latest")  # Модель по умолчанию
-    YANDEX_EMBEDDING_MODEL: str = os.getenv("YANDEX_EMBEDDING_MODEL", "text-search-query/latest")  # Модель embeddings по умолчанию
+    # Эмбеддинги: doc — индексация чанков, query — поисковые запросы (см. Yandex AI Studio).
+    YANDEX_EMBEDDING_DOC_MODEL: str = os.getenv(
+        "YANDEX_EMBEDDING_DOC_MODEL", "text-search-doc/latest"
+    )
+    YANDEX_EMBEDDING_QUERY_MODEL: str = os.getenv(
+        "YANDEX_EMBEDDING_QUERY_MODEL", "text-search-query/latest"
+    )
+    # Устаревший общий ключ — fallback для query, если QUERY_MODEL не задан отдельно.
+    YANDEX_EMBEDDING_MODEL: str = os.getenv("YANDEX_EMBEDDING_MODEL", "text-search-query/latest")
     YANDEX_AI_STUDIO_CLASSIFIER_ID: str = os.getenv("YANDEX_AI_STUDIO_CLASSIFIER_ID", "")  # ID классификатора в Yandex AI Studio
     
     # Полные URI моделей (приоритет над короткими именами)
     # Формат: gpt://<folder-id>/yandexgpt-lite/latest или emb://<folder-id>/text-search-query/latest
-    YANDEX_GPT_MODEL_URI: str = os.getenv("YANDEX_GPT_MODEL_URI", "")
-    YANDEX_EMBEDDING_MODEL_URI: str = os.getenv("YANDEX_EMBEDDING_MODEL_URI", "")
+    YANDEX_GPT_MODEL_URI: str = clean_env_str(os.getenv("YANDEX_GPT_MODEL_URI"))
+    YANDEX_EMBEDDING_MODEL_URI: str = clean_env_str(os.getenv("YANDEX_EMBEDDING_MODEL_URI"))
+    YANDEX_EMBEDDING_DOC_MODEL_URI: str = clean_env_str(os.getenv("YANDEX_EMBEDDING_DOC_MODEL_URI"))
+    YANDEX_EMBEDDING_QUERY_MODEL_URI: str = clean_env_str(os.getenv("YANDEX_EMBEDDING_QUERY_MODEL_URI"))
+    YANDEX_LLM_TRANSPORT: str = clean_env_str(os.getenv("YANDEX_LLM_TRANSPORT"), "grpc").lower()
     # Классификатор документов (Yandex AI Studio). Если пусто — используем YANDEX_AI_STUDIO_CLASSIFIER_ID или LLM fallback.
     YANDEX_CLASSIFIER_MODEL_URI: str = os.getenv("YANDEX_CLASSIFIER_MODEL_URI", "")
+    # SSE global-chat: отдавать клиенту reasoning-дельты из streaming chunks (если модель их присылает).
+    YANDEX_SSE_STREAM_MODEL_REASONING: bool = (
+        os.getenv("YANDEX_SSE_STREAM_MODEL_REASONING", "false").strip().lower() == "true"
+    )
 
     # Embeddings transport:
     # - "openai": HTTPS OpenAI-compatible endpoint (ai.api.cloud.yandex.net) — fastest/most stable in dev/VPN/proxy envs
     # - "grpc": official YCloudML gRPC transport (may fail/hang on DNS/service discovery in some networks)
-    YANDEX_EMBEDDINGS_TRANSPORT: str = os.getenv("YANDEX_EMBEDDINGS_TRANSPORT", "openai").strip().lower()
-    
+    YANDEX_EMBEDDINGS_TRANSPORT: str = clean_env_str(os.getenv("YANDEX_EMBEDDINGS_TRANSPORT"), "openai").lower()
+    # Yandex embedding API лимит ~2048 tokens; длиннее — режем на части и усредняем векторы.
+    YANDEX_EMBEDDING_MAX_INPUT_CHARS: int = int(os.getenv("YANDEX_EMBEDDING_MAX_INPUT_CHARS", "2800"))
+    # Жёсткий потолок API (токены); рабочий лимит = min(это * ratio, MAX_INPUT_TOKENS если задан).
+    YANDEX_EMBEDDING_API_TOKEN_CAP: int = int(os.getenv("YANDEX_EMBEDDING_API_TOKEN_CAP", "2048") or "2048")
+    # Доля от API cap для cl100k_base-оценки (буфер под другой BPE Яндекса / кириллицу). 0.85 ≈ 15% запас.
+    YANDEX_EMBEDDING_TOKEN_SAFETY_RATIO: float = float(
+        os.getenv("YANDEX_EMBEDDING_TOKEN_SAFETY_RATIO", "0.85") or "0.85"
+    )
+    # Явный потолок токенов на один запрос эмбеддинга (0 = только ratio*cap).
+    YANDEX_EMBEDDING_MAX_INPUT_TOKENS: int = int(os.getenv("YANDEX_EMBEDDING_MAX_INPUT_TOKENS", "0") or "0")
+    # Нахлест символов между соседними сегментами при токен-нарезке (усреднение векторов).
+    YANDEX_EMBEDDING_SEGMENT_OVERLAP_CHARS: int = int(
+        os.getenv("YANDEX_EMBEDDING_SEGMENT_OVERLAP_CHARS", "150") or "150"
+    )
+    # OpenAI-compat: один текст на запрос; параллель до N (квота векторизации ~10/с).
+    YANDEX_EMBEDDING_MAX_PARALLEL_REQUESTS: int = int(
+        os.getenv("YANDEX_EMBEDDING_MAX_PARALLEL_REQUESTS")
+        or os.getenv("YANDEX_EMBEDDING_BATCH_SIZE", "8")
+        or "8"
+    )
+    YANDEX_EMBEDDING_MIN_REQUEST_INTERVAL_SEC: float = float(
+        os.getenv("YANDEX_EMBEDDING_MIN_REQUEST_INTERVAL_SEC", "0.11") or "0.11"
+    )
+    # Deprecated alias — не используйте для multi-input batch (API Yandex не поддерживает).
+    YANDEX_EMBEDDING_BATCH_SIZE: int = int(os.getenv("YANDEX_EMBEDDING_BATCH_SIZE", "8") or "8")
+
     # GigaChat (Сбер) - с поддержкой function calling
-    GIGACHAT_CREDENTIALS: str = os.getenv("GIGACHAT_CREDENTIALS", "")  # Authorization Key (base64 encoded ClientID:ClientSecret)
+    GIGACHAT_CREDENTIALS: str = clean_env_str(os.getenv("GIGACHAT_CREDENTIALS", ""))  # Authorization Key (base64 ClientID:ClientSecret)
     # GigaChat SmartSpeech STT (separate API key for speech recognition)
     GIGACHAT_STT_CREDENTIALS: str = os.getenv("GIGACHAT_STT_CREDENTIALS", "MDE5ZDFhNmQtZWI3Yy03YTQ3LWIwMmMtNDFiZTU0ZGQ2YzU1OjQxZTEzMTMzLWEzMzUtNDNmZC05NjVmLTMyZTEwNDIwNDhjNQ==")
     GIGACHAT_MODEL: str = os.getenv("GIGACHAT_MODEL", "GigaChat-Pro")
@@ -382,7 +1160,7 @@ class Config:
     MODEL_SELECTION_ENABLED: bool = os.getenv("MODEL_SELECTION_ENABLED", "true").lower() == "true"
     
     # Выбор LLM провайдера для агентов (только gigachat)
-    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "gigachat")  # "gigachat"
+    LLM_PROVIDER: str = clean_env_str(os.getenv("LLM_PROVIDER"), "gigachat").lower()
     # Yandex Index prefix - removed (Yandex Vector Store no longer used)
     # YANDEX_INDEX_PREFIX: str = os.getenv("YANDEX_INDEX_PREFIX", "legal_ai_vault")
     
@@ -393,20 +1171,37 @@ class Config:
     LANGSMITH_ENDPOINT: str = os.getenv("LANGCHAIN_ENDPOINT", "https://api.smith.langchain.com")
 
     # Langfuse (LLM observability)
-    LANGFUSE_ENABLED: bool = os.getenv("LANGFUSE_ENABLED", "false").lower() == "true"
-    LANGFUSE_PUBLIC_KEY: str = os.getenv("LANGFUSE_PUBLIC_KEY", "").strip()
-    LANGFUSE_SECRET_KEY: str = os.getenv("LANGFUSE_SECRET_KEY", "").strip()
-    LANGFUSE_HOST: str = os.getenv("LANGFUSE_HOST", "").strip().rstrip("/")
-    LANGFUSE_SAMPLE_RATE: float = float(os.getenv("LANGFUSE_SAMPLE_RATE", "1.0") or "1.0")
-    LANGFUSE_DEBUG: bool = os.getenv("LANGFUSE_DEBUG", "false").lower() == "true"
-    LANGFUSE_FLUSH_ON_END: bool = os.getenv("LANGFUSE_FLUSH_ON_END", "true").lower() == "true"
+    LANGFUSE_ENABLED: bool = clean_env_str(os.getenv("LANGFUSE_ENABLED"), "false").lower() == "true"
+    LANGFUSE_PUBLIC_KEY: str = clean_env_str(os.getenv("LANGFUSE_PUBLIC_KEY"))
+    LANGFUSE_SECRET_KEY: str = clean_env_str(os.getenv("LANGFUSE_SECRET_KEY"))
+    LANGFUSE_HOST: str = clean_env_str(os.getenv("LANGFUSE_HOST")).rstrip("/")
+    LANGFUSE_SAMPLE_RATE: float = float(
+        (os.getenv("LANGFUSE_SAMPLE_RATE", "1.0") or "1.0").strip().strip('"').strip("'") or "1.0"
+    )
+    LANGFUSE_DEBUG: bool = clean_env_str(os.getenv("LANGFUSE_DEBUG"), "false").lower() == "true"
+    LANGFUSE_FLUSH_ON_END: bool = clean_env_str(os.getenv("LANGFUSE_FLUSH_ON_END"), "true").lower() == "true"
     
     # File Storage
     UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", "./uploads")
-    
+    # When false (default), uploads write only to UPLOAD_DIR; Postgres file_content stays NULL.
+    # Set true if API and worker do not share UPLOAD_DIR (no shared volume / object storage).
+    FILE_STORE_BYTES_IN_DB: bool = (
+        os.getenv("FILE_STORE_BYTES_IN_DB", "false").strip().lower() in ("1", "true", "yes")
+    )
+    # Google Drive Picker import (frontend supplies short-lived OAuth token per request)
+    GOOGLE_DRIVE_IMPORT_MAX_FILES: int = int(
+        os.getenv("GOOGLE_DRIVE_IMPORT_MAX_FILES", "30") or "30"
+    )
+
     # Security / JWT
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-here-change-in-production")
-    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", os.getenv("SECRET_KEY", "your-secret-key-change-in-production"))
+    SECRET_KEY: str = clean_env_str(
+        os.getenv("SECRET_KEY"),
+        "your-secret-key-here-change-in-production",
+    )
+    JWT_SECRET_KEY: str = clean_env_str(
+        os.getenv("JWT_SECRET_KEY") or os.getenv("SECRET_KEY"),
+        "your-secret-key-change-in-production",
+    )
     JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
     ALGORITHM: str = "HS256"  # Alias for JWT_ALGORITHM
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))  # 24 hours
@@ -465,6 +1260,19 @@ class Config:
 
 # Create config instance
 config = Config()
+
+
+def is_legal_corpus_force_enabled() -> bool:
+    """Читает LEGAL_CORPUS_FORCE_ENABLED из конфига (legacy).
+
+    Маршруты assistant_chat_v2 больше не подмешивают справочник по этому флагу — только UI.
+    Функция оставлена для скриптов и обратной совместимости.
+    """
+    try:
+        return bool(config.LEGAL_CORPUS_FORCE_ENABLED)
+    except AttributeError:
+        return os.getenv("LEGAL_CORPUS_FORCE_ENABLED", "false").strip().lower() == "true"
+
 
 # Validate DATABASE_URL on module import
 # #region agent log

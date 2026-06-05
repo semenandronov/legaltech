@@ -12,7 +12,7 @@ const apiClient = axios.create({
 apiClient.interceptors.request.use((config) => {
   const token = localStorage.getItem('access_token')
   if (token && config.headers) {
-    config.headers.Authorization = `Bearer ${token}`
+    config.headers['X-Access-Token'] = token
   }
   return config
 })
@@ -37,7 +37,7 @@ apiClient.interceptors.response.use(
             if (!error.config.headers) {
               error.config.headers = {}
             }
-            error.config.headers.Authorization = `Bearer ${access_token}`
+            error.config.headers['X-Access-Token'] = access_token
             return apiClient(error.config)
           }
         } catch (refreshError) {
@@ -443,9 +443,24 @@ export const tabularReviewApi = {
   ): Promise<{
     status: string
     saved_count: number
+    filled_count?: number
     error_count: number
     total_tasks: number
     column_id: string
+    cells: Array<{
+      file_id: string
+      column_id: string
+      cell_value?: string | null
+      normalized_value?: string | null
+      verbatim_extract?: string | null
+      reasoning?: string | null
+      confidence_score?: number | null
+      source_page?: number | null
+      source_section?: string | null
+      source_references?: TabularCell['source_references']
+      status?: TabularCell['status']
+      candidates?: TabularCell['candidates']
+    }>
   }> {
     try {
       const response = await apiClient.post(

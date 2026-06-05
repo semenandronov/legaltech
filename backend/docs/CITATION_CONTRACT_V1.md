@@ -13,8 +13,8 @@
 - `quote_anchor` (**нет**): якорь для поиска/подсветки в `File.original_text` (в идеале `original_text[char_start:char_end]` при валидных offsets).
 - `char_start`, `char_end` (**нет**): смещения в **склеенном** `original_text` как при индексации (`\n\n` между чанками, см. `DocumentProcessor.split_documents`).
 - `chunk_id` (**нет**): стабильный id чанка (для трассировки/маппинга structured citations).
-- `bbox` (**нет**): один bbox-регион (первый) для обратной совместимости. Формат: `{ x0, y0, x1, y1 }` в PDF user space.
-- `bbox_regions` (**нет**): список bbox-регионов (если чанк покрывает несколько фрагментов). Каждый элемент: `{ x0, y0, x1, y1 }` в PDF user space.
+- `bbox` (**нет**): один bbox-регион (первый из отфильтрованного списка) для обратной совместимости. Формат: `{ x0, y0, x1, y1 }` в PDF user space.
+- `bbox_regions` (**нет**): bbox-регионы, **пересекающиеся** с char-span цитаты (`char_start`/`char_end` + сужение по `quote_anchor`). Не весь RAG-чанк. Каждый элемент: `{ x0, y0, x1, y1 }` в PDF user space.
 - `page_bbox` (**нет**): размеры страницы, `{ width, height }` (используется UI для нормализации/перевода координат).
 
 ## Инварианты
@@ -31,14 +31,23 @@
 
 ### Источник координат и номера страницы (строгость)
 
-- `page`, `bbox`, `bbox_regions`, `page_bbox` **нельзя** брать из “угадывания”/других метаданных: только из Docling provenance (`dl_meta...prov...`).
-- Если в метаданных чанка после Docling нет provenance (или bbox) — `bbox`/`bbox_regions`/`page_bbox` будут `null`; UI должен работать через `highlightPage` + text-layer поиск по `quote_anchor` (см. `DocumentPreviewSheet` → `PDFViewer`).
+- **Текстовые PDF (Docling AST):** `page`, `bbox`, `bbox_regions`, `page_bbox` — из Docling provenance (`dl_meta...prov...`).
+- **Сканы (Yandex OCR):** один bbox на OCR-блок; `LegalChunkerV2` пишет в `dl_meta.doc_items[].prov[]` с `char_start`/`char_end` на блок. Micro-чанк получает только prov, чей char-span пересекается с чанком; citation SSE фильтрует по span цитаты.
+- Порядок в `RAGService._extract_bbox_regions`: сначала `dl_meta` (с опциональным char-span фильтром), иначе `bbox_regions`/`bbox` на чанке.
+- **Reindex:** документы, проиндексированные до prov `char_start`/`char_end`, отдают в citation не более одного bbox (legacy cap) до переиндексации.
+- Если provenance/bbox нет — `bbox`/`bbox_regions`/`page_bbox` будут `null`; UI — `highlightPage` + text-layer по `quote_anchor`.
 
 ### Нормализация `page_no`
 
 - Берём **минимальный** `page_no` по всем `prov` (чанк может пересекать страницы/области).
 - Если минимум равен 0 — считаем, что это 0-based и нормализуем в 1.
 - Если минимум \(\ge 1\) — считаем, что это 1-based и используем как есть.
+
+## Оригинал файла (просмотр по цитате)
+
+- Загрузка в дело (диск, Google Drive и т.д.) сохраняет байты в `UPLOAD_DIR/{case_id}/…` и `files.file_path`.
+- Просмотр: `GET /api/cases/{case_id}/files/{file_id}/content` — единый путь `load_case_file_bytes` (диск → опционально `file_content` в БД).
+- UI открывает viewer по `source_id` (= `file_id`), без ожидания списка файлов; каталог — только для уточнения типа/`legacy_fallback`.
 
 ## Ручной чеклист приёмки
 

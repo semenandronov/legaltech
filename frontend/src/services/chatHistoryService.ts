@@ -187,7 +187,7 @@ export async function loadChatHistory(caseId: string, sessionId?: string): Promi
     const response = await fetch(url, {
       method: 'GET',
       headers: {
-        'Authorization': `Bearer ${token}`,
+        'X-Access-Token': token || '',
         'Content-Type': 'application/json',
       },
     })

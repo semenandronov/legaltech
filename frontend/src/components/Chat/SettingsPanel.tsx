@@ -1,5 +1,5 @@
 import React from 'react'
-import { Brain, Scale, FileText } from 'lucide-react'
+import { Scale, FileText, Gavel } from 'lucide-react'
 import { Switch } from '../UI/switch'
 import {
   Tooltip,
@@ -7,15 +7,19 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '../UI/tooltip'
+import {
+  canEnableCourtPractice,
+  canEnableLegalResearch,
+} from '../../lib/chatInstrumentPolicy'
 
 interface SettingsPanelProps {
   webSearch: boolean
-  deepThink: boolean
   legalResearch: boolean
+  courtPractice: boolean
   draftMode: boolean
   onWebSearchChange: (value: boolean) => void
-  onDeepThinkChange: (value: boolean) => void
   onLegalResearchChange: (value: boolean) => void
+  onCourtPracticeChange: (value: boolean) => void
   onDraftModeChange: (value: boolean) => void
   className?: string
   variant?: 'default' | 'compact'
@@ -24,81 +28,70 @@ interface SettingsPanelProps {
 }
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({
-  webSearch: _webSearch, // Неиспользуется, но оставлен для совместимости интерфейса
-  deepThink,
+  webSearch: _webSearch,
   legalResearch,
+  courtPractice,
   draftMode,
-  onWebSearchChange,
-  onDeepThinkChange,
+  onWebSearchChange: _onWebSearchChange,
   onLegalResearchChange,
+  onCourtPracticeChange,
   onDraftModeChange,
   className = '',
   variant = 'default',
   style,
   hideDraft = false,
 }) => {
-  // Обработчик для глубокого размышления - выключает другие функции
-  const handleDeepThinkChange = (checked: boolean) => {
-    if (checked) {
-      // Если включаем глубокое размышление, выключаем остальные
-      onLegalResearchChange(false)
-      onWebSearchChange(false)
-      onDraftModeChange(false)
-    }
-    onDeepThinkChange(checked)
-  }
-
-  // Обработчик для КОДЕКС - выключает другие функции
   const handleLegalResearchChange = (checked: boolean) => {
-    if (checked) {
-      // Если включаем КОДЕКС, выключаем остальные
-      onDeepThinkChange(false)
-      onWebSearchChange(false)
-      onDraftModeChange(false)
-    }
     onLegalResearchChange(checked)
   }
 
-  // Обработчик для режима Draft - выключает другие функции
+  const handleCourtPracticeChange = (checked: boolean) => {
+    onCourtPracticeChange(checked)
+  }
+
   const handleDraftModeChange = (checked: boolean) => {
-    if (checked) {
-      // Если включаем режим Draft, выключаем остальные
-      onDeepThinkChange(false)
-      onLegalResearchChange(false)
-      onWebSearchChange(false)
-    }
     onDraftModeChange(checked)
   }
 
   const allSettings = [
-    // Веб-поиск отключен - убран из списка
-    {
-      id: 'deepThink',
-      label: 'Глубокое размышление',
-      description: 'Используйте более глубокий анализ для сложных вопросов. Использует более мощную модель, увеличивает время ответа.',
-      icon: Brain,
-      value: deepThink,
-      onChange: handleDeepThinkChange,
-    },
     {
       id: 'legalResearch',
-      label: 'КОДЕКС',
-      description: 'Подключает справочник с законами для ответа. Если тумблер выключен, ИИ использует только материалы вашего дела.',
+      label: 'Справочник',
+      description:
+        'Общий правовой справочник (НПА). Только в режиме Ask; при включении Draft отключается.',
       icon: Scale,
       value: legalResearch,
       onChange: handleLegalResearchChange,
+      disabled: !canEnableLegalResearch(draftMode),
+    },
+    {
+      id: 'courtPractice',
+      label: 'Суд. практика',
+      description:
+        'Поиск по загруженной базе судебных актов (КАД). Ответ со ссылками на номера дел.',
+      icon: Gavel,
+      value: courtPractice,
+      onChange: handleCourtPracticeChange,
+      disabled: !canEnableCourtPractice(draftMode),
     },
     {
       id: 'draftMode',
       label: 'Режим Draft',
-      description: 'Создание документов через ИИ. Опишите нужный документ, и ИИ создаст его для редактирования в редакторе.',
+      description:
+        'Создание документов через ИИ. При включении справочник и другие инструменты отключаются.',
       icon: FileText,
       value: draftMode,
       onChange: handleDraftModeChange,
+      disabled: false,
     },
   ]
 
-  const settings = hideDraft ? allSettings.filter(s => s.id !== 'draftMode') : allSettings
+  let settings = hideDraft
+    ? allSettings.filter((s) => s.id !== 'draftMode')
+    : allSettings
+  if (draftMode) {
+    settings = settings.filter((s) => s.id === 'draftMode')
+  }
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -106,13 +99,16 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
         <div className={`flex items-center gap-1 ${className}`} style={style} role="group" aria-label="Настройки чата">
           {settings.map((setting) => {
             const Icon = setting.icon
+            const disabled = Boolean(setting.disabled)
             return (
               <Tooltip key={setting.id}>
                 <TooltipTrigger asChild>
                   <button
                     type="button"
-                    onClick={() => setting.onChange(!setting.value)}
+                    disabled={disabled}
+                    onClick={() => !disabled && setting.onChange(!setting.value)}
                     onKeyDown={(e) => {
+                      if (disabled) return
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault()
                         setting.onChange(!setting.value)
@@ -121,9 +117,11 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     aria-pressed={setting.value}
                     aria-label={`${setting.label}: ${setting.value ? 'включено' : 'выключено'}`}
                     className={`flex items-center justify-center w-8 h-8 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 ${
-                      setting.value
-                        ? 'bg-secondary text-accent-muted border border-border'
-                        : 'bg-transparent text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                      disabled
+                        ? 'opacity-40 cursor-not-allowed'
+                        : setting.value
+                          ? 'bg-secondary text-accent-muted border border-border'
+                          : 'bg-transparent text-gray-400 hover:text-gray-600 hover:bg-gray-100'
                     }`}
                   >
                     <Icon className="w-4 h-4" aria-hidden="true" />
@@ -133,6 +131,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   <div>
                     <p className="font-semibold text-sm mb-1">{setting.label}</p>
                     <p className="text-xs text-gray-300 whitespace-normal">{setting.description}</p>
+                    {disabled && (
+                      <p className="text-xs text-amber-200 mt-1">Недоступно в режиме Draft.</p>
+                    )}
                   </div>
                 </TooltipContent>
               </Tooltip>
@@ -143,20 +144,22 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
         <div className={`flex items-center gap-6 px-4 py-2.5 bg-gray-50 border-t border-gray-200 ${className}`} style={style}>
           {settings.map((setting) => {
             const Icon = setting.icon
+            const disabled = Boolean(setting.disabled)
             return (
               <Tooltip key={setting.id}>
                 <TooltipTrigger asChild>
-                  <div className="flex items-center gap-2 cursor-pointer group">
-                    <Icon 
+                  <div
+                    className={`flex items-center gap-2 group ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
+                  >
+                    <Icon
                       className={`w-5 h-5 transition-colors ${
-                        setting.value 
-                          ? 'text-accent-muted' 
-                          : 'text-gray-400 group-hover:text-gray-600'
-                      }`} 
+                        setting.value ? 'text-accent-muted' : 'text-gray-400 group-hover:text-gray-600'
+                      }`}
                     />
                     <Switch
                       checked={setting.value}
                       onCheckedChange={setting.onChange}
+                      disabled={disabled}
                       className="scale-90"
                     />
                   </div>
@@ -165,6 +168,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   <div>
                     <p className="font-semibold text-sm mb-1">{setting.label}</p>
                     <p className="text-xs text-gray-300 whitespace-normal">{setting.description}</p>
+                    {disabled && (
+                      <p className="text-xs text-amber-200 mt-1">Недоступно в режиме Draft.</p>
+                    )}
                   </div>
                 </TooltipContent>
               </Tooltip>

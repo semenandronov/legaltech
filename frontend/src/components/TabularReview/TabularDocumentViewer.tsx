@@ -22,6 +22,8 @@ import { getFileHtml } from "@/services/fileHtmlApi"
 
 interface CellData {
   verbatimExtract?: string | null
+  /** Запасные фрагменты для PDF text layer (ассистент: quote / anchor после основного текста). */
+  verbatimAlternates?: string[] | null
   cellValue?: string | null
   sourcePage?: number | null
   /**
@@ -58,6 +60,10 @@ interface TabularDocumentViewerProps {
   documents?: DocumentTab[] // Multiple documents for tabs
   onClose?: () => void
   onDocumentChange?: (fileId: string) => void
+  /** Префикс API файлов без `/files`: как у PDFViewer `/api/v2/assistant` или `/api/cases/{id}` */
+  fileApiBase?: string
+  /** Превью цитаты в чате: компактная панель PDF без поиска и печати. */
+  citationPreview?: boolean
 }
 
 export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
@@ -69,6 +75,8 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
   documents,
   onClose: _onClose,
   onDocumentChange,
+  fileApiBase,
+  citationPreview = false,
 }) => {
   const [documentText, setDocumentText] = useState<string>("")
   const [documentHtml, setDocumentHtml] = useState<string | null>(null) // DOCX → HTML
@@ -94,8 +102,8 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
 
   // Load document when initialFileId or caseId changes
   useEffect(() => {
-    if (!initialFileId || !caseId) return
-    
+    if (!initialFileId || (!caseId && !fileApiBase)) return
+
     const activeDoc = documentTabs[activeTab]
     if (!activeDoc?.fileId) return
     
@@ -106,7 +114,7 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
       loadDocumentInfo(activeDoc.fileId, propFileType || activeDoc.fileType || "pdf")
       onDocumentChange?.(activeDoc.fileId)
     }
-  }, [initialFileId, caseId, activeTab])
+  }, [initialFileId, caseId, fileApiBase, activeTab])
 
   // Update active tab when initialFileId changes
   useEffect(() => {
@@ -145,11 +153,12 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
       }
 
       // For other non-PDF files (txt, csv, etc.) — load raw text content
+      const filesRoot = fileApiBase ?? `/api/cases/${caseId}`
       const baseUrl = import.meta.env.VITE_API_URL || ""
-      const url = baseUrl ? `${baseUrl}/api/cases/${caseId}/files/${fileIdToLoad}/content` : `/api/cases/${caseId}/files/${fileIdToLoad}/content`
+      const url = baseUrl ? `${baseUrl}${filesRoot}/files/${fileIdToLoad}/content` : `${filesRoot}/files/${fileIdToLoad}/content`
       const textResponse = await fetch(url, {
         headers: {
-          Authorization: `Bearer ${localStorage.getItem("access_token")}`,
+          'X-Access-Token': localStorage.getItem("access_token") || '',
         },
       })
 
@@ -270,11 +279,12 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
   const handleDownload = async () => {
     if (!currentFileId) return
     try {
+      const filesRoot = fileApiBase ?? `/api/cases/${caseId}`
       const baseUrl = import.meta.env.VITE_API_URL || ""
-      const url = baseUrl ? `${baseUrl}/api/cases/${caseId}/files/${currentFileId}/download` : `/api/cases/${caseId}/files/${currentFileId}/download`
+      const url = baseUrl ? `${baseUrl}${filesRoot}/files/${currentFileId}/download` : `${filesRoot}/files/${currentFileId}/download`
       const response = await fetch(url, {
         headers: {
-          Authorization: `Bearer ${localStorage.getItem("access_token")}`,
+          'X-Access-Token': localStorage.getItem("access_token") || '',
         },
       })
       if (response.ok) {
@@ -347,12 +357,14 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
       : pageBasis === "one"
         ? Math.max(1, Number(cellData.sourcePage))
         : Number(cellData.sourcePage) + 1
-  /** sourceReferences в таблице по-прежнему считаем 0-based */
+  /** sourceReferences унаследованы от табличного backend: basis задаётся sourcePageBasis */
   const viewerPdfPageFromRef =
     cellData?.sourceReferences?.[0]?.page == null ||
     Number.isNaN(Number(cellData.sourceReferences[0].page))
       ? undefined
-      : Number(cellData.sourceReferences[0].page) + 1
+      : pageBasis === "one"
+        ? Math.max(1, Number(cellData.sourceReferences[0].page))
+        : Number(cellData.sourceReferences[0].page) + 1
 
   const pdfInitialAndHighlightPage =
     viewerPdfPageFromSourcePage ?? viewerPdfPageFromRef ?? undefined
@@ -480,40 +492,28 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
                 fileId={currentFileId}
               caseId={caseId}
                 filename={activeDoc?.fileName || ""}
+              fileApiBase={fileApiBase}
               initialPage={pdfInitialAndHighlightPage}
               highlightPage={pdfInitialAndHighlightPage}
               highlightText={cellData?.verbatimExtract || cellData?.sourceReferences?.[0]?.text || cellData?.cellValue || undefined}
+              highlightTextCandidates={cellData?.verbatimAlternates ?? undefined}
               highlightBBox={cellData?.highlightBBox}
               highlightBBoxRegions={cellData?.highlightBBoxRegions}
               highlightPageBBox={cellData?.highlightPageBBox}
+              expandHighlightSearchAllPages={
+                !!(
+                  cellData?.verbatimExtract?.trim() ||
+                  cellData?.verbatimAlternates?.some((x) => String(x).trim().length >= 2) ||
+                  cellData?.sourceReferences?.[0]?.text?.trim() ||
+                  cellData?.cellValue?.trim()
+                )
+              }
+              showDocumentSearch={!citationPreview}
+              showPrint={!citationPreview}
               onError={(err) => {
                 setError(err.message || "Ошибка при загрузке PDF")
               }}
             />
-            )}
-            {/* Source references indicators */}
-            {cellData?.sourceReferences && cellData.sourceReferences.length > 0 && (
-              <Box
-                sx={{
-                  position: "absolute",
-                  top: 8,
-                  right: 8,
-                  bgcolor: "primary.main",
-                  color: "primary.contrastText",
-                  px: 1.5,
-                  py: 0.5,
-                  borderRadius: 1,
-                  fontSize: "0.75rem",
-                  zIndex: 10,
-                }}
-              >
-                {cellData.sourceReferences.map((ref, idx) => (
-                  <Box key={idx} sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-                    {ref.page && `Page ${ref.page}`}
-                    {ref.section && ` • ${ref.section}`}
-                  </Box>
-                ))}
-              </Box>
             )}
           </Box>
         ) : fileType === "docx" && documentHtml ? (

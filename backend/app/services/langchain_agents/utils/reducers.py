@@ -289,6 +289,24 @@ def merge_citations_reducer(
     return result
 
 
+def citations_state_reducer(
+    existing: Optional[List[Dict[str, Any]]],
+    new: Optional[List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    """
+    Citations channel: merge within a retrieval turn, explicit clear on [].
+
+    None — no update in this step (keep checkpoint value).
+    [] — clear stale citations (clarify, error, new turn boundary).
+    non-empty — merge/dedupe with existing via merge_citations_reducer.
+    """
+    if new is None:
+        return existing if existing is not None else []
+    if new == []:
+        return []
+    return merge_citations_reducer(existing, new)
+
+
 def last_value_reducer(
     existing: Any, 
     new: Any

@@ -124,18 +124,6 @@ def create_assistant(
             **kwargs
         )
     
-    elif config.graph == GraphType.TABULAR:
-        from app.services.langchain_agents.graphs.tabular_graph import create_tabular_graph
-        
-        graph = create_tabular_graph(
-            db=db,
-            use_checkpointing=config.use_checkpointing,
-            use_send_api=config.use_send_api,
-            interrupt_before=config.interrupt_before or None,
-            interrupt_after=config.interrupt_after or None,
-            **kwargs
-        )
-    
     elif config.graph == GraphType.WORKFLOW:
         from app.services.langchain_agents.graphs.workflow_graph import create_workflow_graph
         

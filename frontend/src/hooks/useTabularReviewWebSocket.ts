@@ -1,27 +1,48 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
+import type { TabularCellRealtimeUpdate } from '../utils/tabularTableState'
 
 interface TabularReviewWebSocketMessage {
-  type: 'connected' | 'cell_updated' | 'column_added' | 'extraction_progress' | 'error' | 'table_created'
+  type:
+    | 'connected'
+    | 'cell_updated'
+    | 'column_added'
+    | 'column_deleted'
+    | 'extraction_progress'
+    | 'extraction_cell_finished'
+    | 'error'
+    | 'table_created'
   cell_id?: string
   file_id?: string
   column_id?: string
   cell_value?: string | null
+  normalized_value?: string | null
+  verbatim_extract?: string | null
   reasoning?: string | null
   source_references?: Array<{ page?: number | null; section?: string | null; text: string }>
   status?: string
   confidence_score?: number | null
+  source_page?: number | null
+  source_section?: string | null
+  success?: boolean
+  cell?: {
+    id?: string
+    cell_value?: string | null
+    status?: string
+  }
   column?: {
     id: string
     column_label: string
     column_type: string
     prompt: string
-    column_config?: any
+    column_config?: unknown
     order_index: number
   }
   progress?: {
     column_id: string
     progress: number
     total: number
+    saved_count?: number
+    error_count?: number
   }
   table?: {
     id: string
@@ -37,27 +58,54 @@ interface TabularReviewWebSocketMessage {
 interface UseTabularReviewWebSocketOptions {
   reviewId: string | null
   enabled?: boolean
-  onCellUpdated?: (data: {
-    cell_id: string
-    file_id: string
+  onCellUpdated?: (data: TabularCellRealtimeUpdate) => void
+  onExtractionCellFinished?: (data: {
     column_id: string
-    cell_value: string | null
-    reasoning: string | null
-    source_references: any[]
-    status: string
-    confidence_score: number | null
+    file_id: string
+    success: boolean
   }) => void
-  onColumnAdded?: (column: any) => void
-  onExtractionProgress?: (progress: { column_id: string; progress: number; total: number }) => void
-  onTableCreated?: (table: { id: string; name: string; description?: string; columns_count?: number; rows_count?: number }) => void
+  onColumnAdded?: (column: TabularReviewWebSocketMessage['column']) => void
+  onColumnDeleted?: (columnId: string) => void
+  onExtractionProgress?: (progress: {
+    column_id: string
+    progress: number
+    total: number
+    saved_count?: number
+    error_count?: number
+  }) => void
+  onTableCreated?: (table: NonNullable<TabularReviewWebSocketMessage['table']>) => void
   onError?: (error: string) => void
+}
+
+function parseCellUpdatedMessage(data: TabularReviewWebSocketMessage): TabularCellRealtimeUpdate | null {
+  const fileId = data.file_id
+  const columnId = data.column_id
+  if (!fileId || !columnId) {
+    return null
+  }
+  return {
+    cell_id: data.cell_id ?? data.cell?.id,
+    file_id: fileId,
+    column_id: columnId,
+    cell_value: data.cell_value ?? data.cell?.cell_value ?? null,
+    normalized_value: data.normalized_value ?? undefined,
+    verbatim_extract: data.verbatim_extract ?? undefined,
+    reasoning: data.reasoning ?? undefined,
+    confidence_score: data.confidence_score ?? undefined,
+    source_page: data.source_page ?? undefined,
+    source_section: data.source_section ?? undefined,
+    source_references: data.source_references,
+    status: (data.status ?? data.cell?.status ?? 'completed') as TabularCellRealtimeUpdate['status'],
+  }
 }
 
 export const useTabularReviewWebSocket = ({
   reviewId,
   enabled = true,
   onCellUpdated,
+  onExtractionCellFinished,
   onColumnAdded,
+  onColumnDeleted,
   onExtractionProgress,
   onTableCreated,
   onError,
@@ -73,13 +121,14 @@ export const useTabularReviewWebSocket = ({
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const host = import.meta.env.VITE_API_URL?.replace(/^https?:\/\//, '') || window.location.host
-    const wsUrl = `${protocol}//${host}/ws/tabular-review/${reviewId}`
+    const token = localStorage.getItem('access_token')
+    const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : ''
+    const wsUrl = `${protocol}//${host}/ws/tabular-review/${reviewId}${tokenQuery}`
 
     try {
       const ws = new WebSocket(wsUrl)
 
       ws.onopen = () => {
-        console.log('Tabular Review WebSocket connected')
         setIsConnected(true)
         reconnectAttempts.current = 0
       }
@@ -90,20 +139,22 @@ export const useTabularReviewWebSocket = ({
 
           switch (data.type) {
             case 'connected':
-              console.log('Tabular Review WebSocket connected:', data.message)
               break
 
-            case 'cell_updated':
-              if (onCellUpdated && data.cell_id && data.file_id && data.column_id) {
-                onCellUpdated({
-                  cell_id: data.cell_id,
-                  file_id: data.file_id,
+            case 'cell_updated': {
+              const update = parseCellUpdatedMessage(data)
+              if (update && onCellUpdated) {
+                onCellUpdated(update)
+              }
+              break
+            }
+
+            case 'extraction_cell_finished':
+              if (onExtractionCellFinished && data.column_id && data.file_id) {
+                onExtractionCellFinished({
                   column_id: data.column_id,
-                  cell_value: data.cell_value || null,
-                  reasoning: data.reasoning || null,
-                  source_references: data.source_references || [],
-                  status: data.status || 'completed',
-                  confidence_score: data.confidence_score || null,
+                  file_id: data.file_id,
+                  success: Boolean(data.success),
                 })
               }
               break
@@ -111,6 +162,12 @@ export const useTabularReviewWebSocket = ({
             case 'column_added':
               if (onColumnAdded && data.column) {
                 onColumnAdded(data.column)
+              }
+              break
+
+            case 'column_deleted':
+              if (onColumnDeleted && data.column_id) {
+                onColumnDeleted(data.column_id)
               }
               break
 
@@ -133,7 +190,7 @@ export const useTabularReviewWebSocket = ({
               break
 
             default:
-              console.warn('Unknown Tabular Review WebSocket message type:', data.type)
+              break
           }
         } catch (error) {
           console.error('Error parsing Tabular Review WebSocket message:', error)
@@ -143,21 +200,17 @@ export const useTabularReviewWebSocket = ({
         }
       }
 
-      ws.onerror = (error) => {
-        console.error('Tabular Review WebSocket error:', error)
+      ws.onerror = () => {
         setIsConnected(false)
       }
 
       ws.onclose = () => {
-        console.log('Tabular Review WebSocket disconnected')
         setIsConnected(false)
 
-        // Reconnect logic
         if (reconnectAttempts.current < maxReconnectAttempts && enabled && reviewId) {
           reconnectAttempts.current++
           const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 10000)
           reconnectTimeoutRef.current = setTimeout(() => {
-            console.log(`Reconnecting Tabular Review WebSocket... (attempt ${reconnectAttempts.current})`)
             connect()
           }, delay)
         } else if (reconnectAttempts.current >= maxReconnectAttempts) {
@@ -174,7 +227,17 @@ export const useTabularReviewWebSocket = ({
         onError('Ошибка при создании соединения')
       }
     }
-  }, [reviewId, enabled, onCellUpdated, onColumnAdded, onExtractionProgress, onTableCreated, onError])
+  }, [
+    reviewId,
+    enabled,
+    onCellUpdated,
+    onExtractionCellFinished,
+    onColumnAdded,
+    onColumnDeleted,
+    onExtractionProgress,
+    onTableCreated,
+    onError,
+  ])
 
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {
@@ -202,6 +265,3 @@ export const useTabularReviewWebSocket = ({
     disconnect,
   }
 }
-
-
-

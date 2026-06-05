@@ -4,6 +4,7 @@ import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import { FolderOpen, MessageSquare, Clock, Workflow, Scissors, Upload, RefreshCw } from 'lucide-react'
 import api, { getApiUrl } from '../services/api'
 import { TabularDocumentViewer } from '../components/TabularReview/TabularDocumentViewer'
+import { buildChunkLabViewerCellData } from '../utils/chunkLabViewerCellData'
 
 type CitationPayload = {
   citation_id?: string
@@ -152,20 +153,15 @@ const ChunkLabPage = () => {
   const cellData = useMemo(() => {
     if (!selected) return null
     const c = selected.citation
-    const extract =
-      (c.quote_anchor && String(c.quote_anchor)) ||
-      (c.quote && String(c.quote)) ||
-      selected.text_preview ||
-      null
-    return {
-      verbatimExtract: extract,
-      highlightMode: 'verbatim' as const,
-      sourcePage: c.page ?? null,
-      sourcePageBasis: 'one' as const,
-      highlightBBox: c.bbox,
-      highlightBBoxRegions: c.bbox_regions,
-      highlightPageBBox: c.page_bbox,
-    }
+    return buildChunkLabViewerCellData({
+      quote_anchor: c.quote_anchor,
+      quote: c.quote,
+      text_preview: selected.text_preview,
+      page: c.page ?? null,
+      bbox: c.bbox,
+      bbox_regions: c.bbox_regions,
+      page_bbox: c.page_bbox,
+    })
   }, [selected])
 
   if (!caseId) {

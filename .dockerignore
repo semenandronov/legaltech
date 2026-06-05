@@ -1,0 +1,21 @@
+.git
+**/.venv
+**/venv
+**/env
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+htmlcov
+.coverage
+coverage.xml
+frontend/node_modules
+frontend/dist
+backend/uploads
+**/legal-corpus-jobs
+.env
+.env.*
+!.env.example
+# Сборка на VM: Vite/Google Drive (см. vm-deploy-build-on-vm.sh)
+!.env.vite-build

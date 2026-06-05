@@ -44,14 +44,21 @@ import {
   ArrowDownward as ArrowDownwardIcon,
   ContentCopy as ContentCopyIcon,
 } from '@mui/icons-material'
-import { TabularRow, TabularColumn, TabularCell, CellDetails } from "@/services/tabularReviewApi"
+import { TabularRow, TabularColumn, TabularCell, CellDetails, SourceReference } from "@/services/tabularReviewApi"
 import { tabularReviewApi } from "@/services/tabularReviewApi"
+import {
+  normalizeCellSourceReferences,
+  sourceReferenceButtonLabel,
+  truncateQuote,
+  type TabularCellClickPayload,
+} from "@/utils/tabularCellViewerData"
 import { TagCell } from "./TagCell"
 import { CellHistoryPanel } from "./CellHistoryPanel"
 import { AdvancedFiltersPanel, AdvancedFilters } from "./AdvancedFiltersPanel"
 import { useKeyboardNavigation } from "@/hooks/useKeyboardNavigation"
 import { ColumnBuilder } from "./ColumnBuilder"
 import { FilterPopover } from "./FilterPopover"
+import { ColumnHeaderMenu } from "./ColumnHeaderMenu"
 
 // Approximate row height used for virtualization and overlay sizing
 const ROW_HEIGHT_ESTIMATE = 50
@@ -72,18 +79,7 @@ interface TabularReviewTableProps {
     rows: TabularRow[]
   }
   onTableDataUpdate?: (updater: (prev: TabularReviewTableProps['tableData']) => TabularReviewTableProps['tableData']) => void
-  onCellClick?: (fileId: string, columnId: string, cellData: {
-    verbatimExtract?: string | null
-    sourcePage?: number | null
-    sourceSection?: string | null
-    columnType?: string
-    highlightMode?: 'verbatim' | 'page' | 'none'
-    sourceReferences?: Array<{ page?: number | null; section?: string | null; text: string }>
-    // Phase 4: Deep link fields
-    docId?: string | null
-    charStart?: number | null
-    charEnd?: number | null
-  }) => void
+  onCellClick?: (fileId: string, columnId: string, cellData: TabularCellClickPayload) => void
   onCellEdit?: (fileId: string, columnId: string, cell: TabularCell) => void
   onRemoveDocument?: (fileId: string) => void
   onRunColumn?: (columnId: string) => void
@@ -96,11 +92,13 @@ interface TabularReviewTableProps {
   filterPopoverOpen?: boolean
   filterAnchorEl?: HTMLElement | null
   onCloseFilterPopover?: () => void
-  /** Множество ID колонок, которые сейчас заполняет ИИ — показывается индикатор и скелетон */
+  /** Множество ID колонок, которые сейчас заполняет ИИ — спиннер в заголовке колонки */
   runningColumnIds?: Set<string>
+  /** `${columnId}:${fileId}` — скелетон только в ячейках, которые ещё обрабатываются */
+  processingCellKeys?: Set<string>
 }
 
-export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableDataUpdate: _onTableDataUpdate, onCellClick, onCellEdit, onRemoveDocument, onRunColumn, onColumnEdit, onColumnDelete, onAddColumnClick, showAddColumnPopover, onCloseAddColumnPopover, onSaveNewColumn, filterPopoverOpen, filterAnchorEl, onCloseFilterPopover, runningColumnIds }: TabularReviewTableProps) => {
+export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableDataUpdate: _onTableDataUpdate, onCellClick, onCellEdit, onRemoveDocument, onRunColumn, onColumnEdit, onColumnDelete, onAddColumnClick, showAddColumnPopover, onCloseAddColumnPopover, onSaveNewColumn, filterPopoverOpen, filterAnchorEl, onCloseFilterPopover, runningColumnIds, processingCellKeys }: TabularReviewTableProps) => {
   const addColumnButtonRef = React.useRef<HTMLElement | null>(null)
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
@@ -146,10 +144,36 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
     cellValue: string
     reasoning?: string | null
     sourceDocName?: string
-    sourcePage?: number | null
-    sourceReferences?: Array<{ page?: number | null; section?: string | null; text: string }>
-    onViewSource: () => void
+    sourceReferences: SourceReference[]
+    fileId: string
+    columnId: string
+    viewSourceBase: TabularCellClickPayload
   } | null>(null)
+
+  const closeCellPopover = React.useCallback(() => {
+    setCellPopoverAnchor(null)
+    setCellPopoverData(null)
+  }, [])
+
+  const handleViewSourceAt = React.useCallback(
+    (index: number) => {
+      if (!cellPopoverData || !onCellClick) return
+      const ref = cellPopoverData.sourceReferences[index]
+      closeCellPopover()
+      onCellClick(cellPopoverData.fileId, cellPopoverData.columnId, {
+        ...cellPopoverData.viewSourceBase,
+        sourceReferenceIndex: index,
+        sourceReferences: cellPopoverData.sourceReferences,
+        verbatimExtract: ref?.text ?? cellPopoverData.viewSourceBase.verbatimExtract,
+        sourcePage: ref?.page ?? cellPopoverData.viewSourceBase.sourcePage,
+        sourceSection: ref?.section ?? cellPopoverData.viewSourceBase.sourceSection,
+        highlightMode: ref?.text?.trim()
+          ? 'verbatim'
+          : cellPopoverData.viewSourceBase.highlightMode,
+      })
+    },
+    [cellPopoverData, closeCellPopover, onCellClick],
+  )
 
   // Debounced глобальный фильтр (оставлен для внутренней логики фильтрации)
 
@@ -485,11 +509,28 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
               </IconButton>
             </Tooltip>
           )}
+          {(onColumnEdit || onColumnDelete) && (
+            <ColumnHeaderMenu
+              columnId={col.id}
+              columnLabel={col.column_label}
+              isPinned={Boolean(col.is_pinned)}
+              disabled={runningColumnIds?.has(col.id)}
+              onEdit={
+                onColumnEdit
+                  ? (anchorEl) => onColumnEdit(col.id, anchorEl)
+                  : undefined
+              }
+              onDelete={
+                onColumnDelete ? () => onColumnDelete(col.id) : undefined
+              }
+            />
+          )}
         </Box>
       ),
       cell: ({ row }) => {
-        // Show skeleton while AI is filling this column
-        if (runningColumnIds?.has(col.id)) {
+        const rowFileId = row.original.file_id
+        const cellProcessingKey = `${col.id}:${rowFileId}`
+        if (processingCellKeys?.has(cellProcessingKey)) {
           const widths = [55, 70, 45, 80, 60, 50, 75, 40, 65, 85]
           const w = widths[row.index % widths.length]
           return (
@@ -573,13 +614,14 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                 } else if (details.source_page || details.source_section) {
                   highlightMode = 'page'
                 }
-                const viewSourcePayload = {
+                const refs = normalizeCellSourceReferences(details, cellValue)
+                const viewSourceBase: TabularCellClickPayload = {
                   verbatimExtract: details.verbatim_extract,
                   sourcePage: details.source_page,
                   sourceSection: details.source_section,
                   columnType: details.column_type,
                   highlightMode,
-                  sourceReferences: details.source_references,
+                  sourceReferences: refs,
                   docId: details.primary_source_doc_id || row.original.file_id,
                   charStart: details.primary_source_char_start || undefined,
                   charEnd: details.primary_source_char_end || undefined,
@@ -589,15 +631,10 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                   cellValue,
                   reasoning: details.reasoning,
                   sourceDocName: row.original.file_name,
-                  sourcePage: details.source_page,
-                  sourceReferences: details.source_references,
-                  onViewSource: () => {
-                    setCellPopoverAnchor(null)
-                    setCellPopoverData(null)
-                    if (onCellClick) {
-                      onCellClick(row.original.file_id, col.id, viewSourcePayload)
-                    }
-                  },
+                  sourceReferences: refs,
+                  fileId: row.original.file_id,
+                  columnId: col.id,
+                  viewSourceBase,
                 })
               }
 
@@ -726,7 +763,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
 
     const baseColumns = [rowIndexColumn, fileColumn, ...dynamicColumns]
     return onAddColumnClick ? [...baseColumns, addColumnColumn] : baseColumns
-  }, [tableData.columns, reviewId, onCellClick, onRemoveDocument, onColumnEdit, onColumnDelete, onAddColumnClick, onRunColumn, runningColumnIds, handleInlineCancel, showAddColumnPopover])
+  }, [tableData.columns, reviewId, onCellClick, onRemoveDocument, onColumnEdit, onColumnDelete, onAddColumnClick, onRunColumn, runningColumnIds, processingCellKeys, handleInlineCancel, showAddColumnPopover])
 
   const table = useReactTable({
     data: tableRows,
@@ -1267,36 +1304,84 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
               </Box>
             )}
 
-            {/* Source */}
-            {(cellPopoverData.sourceDocName || cellPopoverData.sourcePage) && (
+            {/* Source + кнопки «Источник N» */}
+            {cellPopoverData.sourceDocName && (
               <Box>
                 <Typography sx={{ fontSize: '0.6875rem', fontWeight: 600, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.07em', mb: 0.75 }}>
                   Source
                 </Typography>
-                {cellPopoverData.sourceDocName && (
-                  <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.75 }}>
-                    <FileTextIcon sx={{ fontSize: 14, color: '#6B7280', mt: '2px', flexShrink: 0 }} />
-                    <Typography sx={{ fontSize: '0.8125rem', color: '#374151', lineHeight: 1.4 }}>
-                      {cellPopoverData.sourceDocName}
-                    </Typography>
-                  </Box>
-                )}
-                {cellPopoverData.sourcePage && (
-                  <Typography sx={{ fontSize: '0.8125rem', color: '#6B7280', mt: 0.5, pl: 2.75 }}>
-                    Стр. {cellPopoverData.sourcePage}
+                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.75 }}>
+                  <FileTextIcon sx={{ fontSize: 14, color: '#6B7280', mt: '2px', flexShrink: 0 }} />
+                  <Typography sx={{ fontSize: '0.8125rem', color: '#374151', lineHeight: 1.4 }}>
+                    {cellPopoverData.sourceDocName}
                   </Typography>
-                )}
+                </Box>
               </Box>
             )}
 
-            {/* View Source button */}
-            {onCellClick && (
+            {onCellClick && cellPopoverData.sourceReferences.length > 0 && (
+              <>
+                <Divider />
+                <Stack spacing={1}>
+                  {cellPopoverData.sourceReferences.map((ref, idx) => {
+                    const total = cellPopoverData.sourceReferences.length
+                    const label = sourceReferenceButtonLabel(ref, idx, total)
+                    return (
+                      <Box
+                        key={idx}
+                        component="button"
+                        type="button"
+                        onClick={() => handleViewSourceAt(idx)}
+                        sx={{
+                          width: '100%',
+                          py: 1,
+                          px: 1.25,
+                          border: '1px solid #E5E7EB',
+                          borderRadius: '8px',
+                          background: 'white',
+                          fontSize: '0.875rem',
+                          color: '#374151',
+                          fontWeight: 500,
+                          cursor: 'pointer',
+                          fontFamily: 'inherit',
+                          textAlign: 'left',
+                          '&:hover': { bgcolor: '#F9FAFB' },
+                        }}
+                      >
+                        {label}
+                        {ref.text?.trim() && total > 1 && (
+                          <Typography
+                            component="span"
+                            sx={{
+                              display: 'block',
+                              mt: 0.5,
+                              fontSize: '0.75rem',
+                              color: '#6B7280',
+                              fontWeight: 400,
+                              fontStyle: 'italic',
+                            }}
+                          >
+                            «{truncateQuote(ref.text)}»
+                          </Typography>
+                        )}
+                      </Box>
+                    )
+                  })}
+                </Stack>
+              </>
+            )}
+
+            {onCellClick && cellPopoverData.sourceReferences.length === 0 && (
               <>
                 <Divider />
                 <Box
                   component="button"
                   type="button"
-                  onClick={cellPopoverData.onViewSource}
+                  onClick={() => {
+                    if (!cellPopoverData) return
+                    closeCellPopover()
+                    onCellClick(cellPopoverData.fileId, cellPopoverData.columnId, cellPopoverData.viewSourceBase)
+                  }}
                   sx={{
                     width: '100%',
                     py: 1,

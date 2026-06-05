@@ -21,12 +21,7 @@ Assistants модуль для LangGraph.
    - Шаблоны
    - Форматирование
 
-4. **tabular-extractor** - Извлечение в таблицы
-   - Структурированное извлечение
-   - HITL для уточнений
-   - Confidence scoring
-
-5. **workflow-orchestrator** - Оркестратор workflows
+4. **workflow-orchestrator** - Оркестратор workflows
    - Многошаговые задачи
    - Параллельное выполнение
    - Адаптация при ошибках

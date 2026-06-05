@@ -1,0 +1,54 @@
+[
+  {
+    "id": "contracts-termination-001",
+    "question": "При каких условиях договор может быть расторгнут в одностороннем порядке?",
+    "reference": "Договор может быть расторгнут при существенном нарушении обязательств и после письменного уведомления.",
+    "eval_type": "grounding",
+    "token_cost": 1.12,
+    "chunk_hit": 0.93,
+    "boundary_break": 0.05,
+    "citation_span_accuracy": 0.91,
+    "chunk_dedup_rate": 0.08,
+    "expected_clause_ids": ["contract:termination:notice", "contract:termination:breach"],
+    "retrieved_clause_ids": ["contract:termination:notice", "contract:termination:breach"]
+  },
+  {
+    "id": "court-deadline-002",
+    "question": "Какой срок установлен для подачи апелляционной жалобы?",
+    "reference": "Срок подачи апелляционной жалобы составляет один месяц со дня принятия решения суда.",
+    "eval_type": "entity",
+    "token_cost": 0.84,
+    "chunk_hit": 0.82,
+    "boundary_break": 0.08,
+    "citation_span_accuracy": 0.84,
+    "chunk_dedup_rate": 0.08,
+    "expected_clause_ids": ["appeal:deadline:month"],
+    "retrieved_clause_ids": ["appeal:deadline:month"]
+  },
+  {
+    "id": "regulations-reference-003",
+    "question": "На какую норму ГК РФ ссылается документ при описании ответственности?",
+    "reference": "Документ ссылается на статью 309 ГК РФ о надлежащем исполнении обязательств.",
+    "eval_type": "entity",
+    "token_cost": 0.91,
+    "chunk_hit": 0.88,
+    "boundary_break": 0.07,
+    "citation_span_accuracy": 0.87,
+    "chunk_dedup_rate": 0.08,
+    "expected_clause_ids": ["liability:reference:309"],
+    "retrieved_clause_ids": ["liability:reference:309"]
+  },
+  {
+    "id": "appendix-crossref-004",
+    "question": "Есть ли в основном тексте ссылка на Приложение №1 по расчету штрафов?",
+    "reference": "В разделе ответственности указана ссылка на Приложение №1 с формулой расчета штрафа.",
+    "eval_type": "grounding",
+    "token_cost": 1.03,
+    "chunk_hit": 0.79,
+    "boundary_break": 0.11,
+    "citation_span_accuracy": 0.78,
+    "chunk_dedup_rate": 0.08,
+    "expected_clause_ids": ["appendix:penalty:formula", "liability:appendix-link"],
+    "retrieved_clause_ids": ["liability:appendix-link"]
+  }
+]

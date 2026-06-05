@@ -21,7 +21,7 @@ WorkflowOrchestratorAgent - агент-оркестратор для выпол�
 
 # КОГДА НЕ ИСПОЛЬЗОВАТЬ
 - Простой вопрос-ответ → используй ChatReActAgent
-- Извлечение данных в таблицу → используй TabularExtractionAgent
+- Извлечение данных в таблицу → используй TabularReviewService.extract_workflow_tabular_step
 - Одношаговая операция → используй соответствующий узел напрямую
 
 # ТИПЫ ШАГОВ
@@ -426,38 +426,21 @@ class WorkflowOrchestratorAgent:
         dependency_results: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Выполнить шаг извлечения данных."""
-        # Используем TabularExtractionAgent если нужно извлечение в таблицу
         extraction_type = step.config.get("extraction_type", "general")
-        
+
         if extraction_type == "tabular":
-            from app.services.langchain_agents.agents.tabular_extraction_agent import (
-                TabularExtractionAgent,
-                TabularExtractionConfig,
-                ExtractionColumn
-            )
-            
-            columns = [
-                ExtractionColumn(
-                    id=col["id"],
-                    label=col.get("label", col["id"]),
-                    column_type=col.get("type", "text"),
-                    prompt=col.get("prompt", "")
-                )
-                for col in step.config.get("columns", [])
-            ]
-            
-            config = TabularExtractionConfig(
-                review_id=step.config.get("review_id", step.id),
+            from app.services.tabular_review_service import TabularReviewService
+
+            service = TabularReviewService(self.db)
+            return await service.extract_workflow_tabular_step(
                 case_id=self.config.case_id,
-                user_id=self.config.user_id,
-                columns=columns,
                 file_ids=step.config.get("file_ids", []),
-                enable_hitl=False  # В workflow не используем HITL на уровне шага
+                columns=step.config.get("columns", []),
+                confidence_threshold=float(
+                    step.config.get("confidence_threshold", 0.8)
+                ),
+                rag_service=self.rag_service,
             )
-            
-            agent = TabularExtractionAgent(config, self.db, self.rag_service)
-            result = await agent.extract_all()
-            return result
         else:
             # Общее извлечение с улучшенным промптом
             prompt = f"""# РОЛЬ

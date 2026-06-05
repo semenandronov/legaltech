@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react"
+import React, { useState, useEffect, useRef, useCallback } from "react"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { MessageSquare, FileEdit, BookOpen, Workflow, FolderOpen } from "lucide-react"
 import UnifiedSidebar from "../components/Layout/UnifiedSidebar"
@@ -13,7 +13,10 @@ import { TemplatesModal } from "../components/TabularReview/TemplatesModal"
 import { CreateTableModeDialog } from "../components/TabularReview/CreateTableModeDialog"
 import { AutomaticTableCreationDialog } from "../components/TabularReview/AutomaticTableCreationDialog"
 import { ExportTableDialog } from "../components/TabularReview/ExportTableDialog"
-import { tabularReviewApi, TableData } from "../services/tabularReviewApi"
+import { tabularReviewApi, TableData, TabularColumn } from "../services/tabularReviewApi"
+import { appendColumnsToTableData, applyColumnCellsToTableData, applySingleColumnCellToTableData, buildProcessingCellKeys, clearProcessingCellKey, clearProcessingCellKeysForColumn, removeColumnFromTableData } from "../utils/tabularTableState"
+import { buildTabularViewerCellData, type TabularCellClickPayload } from "../utils/tabularCellViewerData"
+import { useTabularReviewWebSocket } from "../hooks/useTabularReviewWebSocket"
 import { getCase } from "../services/api"
 import { Card } from "../components/UI/Card"
 import Spinner from "../components/UI/Spinner"
@@ -53,6 +56,7 @@ const TabularReviewPage: React.FC = () => {
   const [loading, setLoading] = useState(false) // Start with false, will be set to true when actually loading
   const [processing, setProcessing] = useState(false)
   const [runningColumnIds, setRunningColumnIds] = useState<Set<string>>(new Set())
+  const [processingCellKeys, setProcessingCellKeys] = useState<Set<string>>(new Set())
   const [showColumnBuilder, setShowColumnBuilder] = useState(false)
   const [showTableAddColumn, setShowTableAddColumn] = useState(false)
   const [bulkBuilderInitialPrompt, setBulkBuilderInitialPrompt] = useState<string | undefined>(undefined)
@@ -68,18 +72,8 @@ const TabularReviewPage: React.FC = () => {
     fileId: string
     fileType?: string
     fileName?: string
-    cellData: {
-      verbatimExtract?: string | null
-      sourcePage?: number | null
-      sourceSection?: string | null
-      columnType?: string
-      highlightMode?: 'verbatim' | 'page' | 'none'
-      sourceReferences?: Array<{ page?: number | null; section?: string | null; text: string }>
-      // Phase 4: Deep link fields
-      docId?: string | null
-      charStart?: number | null
-      charEnd?: number | null
-    }
+    sourceReferenceIndex?: number
+    cellData: ReturnType<typeof buildTabularViewerCellData>
   } | null>(null)
   const [_loadingCellDetails, setLoadingCellDetails] = useState(false)
   const [editingCell, setEditingCell] = useState<{
@@ -110,6 +104,58 @@ const TabularReviewPage: React.FC = () => {
   const [pendingFileIds, setPendingFileIds] = useState<string[]>([])
   const [showCreateModeDialog, setShowCreateModeDialog] = useState(false)
   const [showAutomaticCreationDialog, setShowAutomaticCreationDialog] = useState(false)
+
+  const handleRealtimeCellUpdated = useCallback((update: Parameters<typeof applySingleColumnCellToTableData>[1]) => {
+    setTableData((prev) => (prev ? applySingleColumnCellToTableData(prev, update) : prev))
+    setProcessingCellKeys((prev) => clearProcessingCellKey(prev, update.column_id, update.file_id))
+  }, [])
+
+  const handleRealtimeExtractionCellFinished = useCallback(
+    ({ column_id, file_id, success }: { column_id: string; file_id: string; success: boolean }) => {
+      if (success) {
+        return
+      }
+      setProcessingCellKeys((prev) => clearProcessingCellKey(prev, column_id, file_id))
+    },
+    [],
+  )
+
+  const beginColumnExtractionUi = useCallback((columnId: string, fileIds: string[]) => {
+    setRunningColumnIds((prev) => new Set([...prev, columnId]))
+    setProcessingCellKeys((prev) => {
+      const next = new Set(prev)
+      for (const key of buildProcessingCellKeys(columnId, fileIds)) {
+        next.add(key)
+      }
+      return next
+    })
+  }, [])
+
+  const finishColumnExtractionUi = useCallback((columnId: string) => {
+    setRunningColumnIds((prev) => {
+      const next = new Set(prev)
+      next.delete(columnId)
+      return next
+    })
+    setProcessingCellKeys((prev) => clearProcessingCellKeysForColumn(prev, columnId))
+  }, [])
+
+  const handleRealtimeColumnDeleted = useCallback((columnId: string) => {
+    if (editingColumn?.id === columnId) {
+      setEditingColumn(null)
+      setEditColumnAnchorEl(null)
+    }
+    setTableData((prev) => (prev ? removeColumnFromTableData(prev, columnId) : prev))
+    finishColumnExtractionUi(columnId)
+  }, [editingColumn?.id, finishColumnExtractionUi])
+
+  useTabularReviewWebSocket({
+    reviewId: reviewId ?? null,
+    enabled: Boolean(reviewId),
+    onCellUpdated: handleRealtimeCellUpdated,
+    onExtractionCellFinished: handleRealtimeExtractionCellFinished,
+    onColumnDeleted: handleRealtimeColumnDeleted,
+  })
 
   // Fetch case name for breadcrumb
   useEffect(() => {
@@ -297,7 +343,7 @@ const TabularReviewPage: React.FC = () => {
     if (!reviewId) return
     
     try {
-      await tabularReviewApi.addColumn(
+      const created = await tabularReviewApi.addColumn(
         reviewId,
         column.column_label,
         column.column_type,
@@ -305,7 +351,18 @@ const TabularReviewPage: React.FC = () => {
         column.column_config
       )
       toast.success("Колонка добавлена")
-      await loadReviewData()
+      setTableData((prev) => {
+        if (!prev) return prev
+        const newCol: TabularColumn = {
+          id: created.id,
+          column_label: created.column_label,
+          column_type: created.column_type,
+          prompt: created.prompt,
+          column_config: created.column_config,
+          order_index: created.order_index ?? prev.columns.length,
+        }
+        return appendColumnsToTableData(prev, [newCol])
+      })
     } catch (err: any) {
       toast.error("Не удалось добавить колонку: " + (err.message || ""))
       throw err
@@ -351,21 +408,36 @@ const TabularReviewPage: React.FC = () => {
   }
 
   const handleColumnDelete = async (columnId: string) => {
-    if (!reviewId) return
-    
-    const column = tableData?.columns.find(c => c.id === columnId)
+    if (!reviewId || !tableData) return
+
+    const column = tableData.columns.find((c) => c.id === columnId)
     if (!column) return
-    
-    if (!confirm(`Вы уверены, что хотите удалить колонку "${column.column_label}"? Это действие нельзя отменить.`)) {
+
+    if (runningColumnIds.has(columnId)) {
+      toast.error("Дождитесь завершения заполнения колонки перед удалением")
       return
     }
-    
+
+    if (
+      !confirm(
+        `Удалить колонку «${column.column_label}»? Ячейки и комментарии к ней будут удалены без возможности восстановления.`,
+      )
+    ) {
+      return
+    }
+
     try {
       await tabularReviewApi.deleteColumn(reviewId, columnId)
-      toast.success("Колонка удалена")
-      await loadReviewData()
-    } catch (err: any) {
-      toast.error("Не удалось удалить колонку: " + (err.message || ""))
+      setTableData((prev) => (prev ? removeColumnFromTableData(prev, columnId) : prev))
+      if (editingColumn?.id === columnId) {
+        setEditingColumn(null)
+        setEditColumnAnchorEl(null)
+      }
+      finishColumnExtractionUi(columnId)
+      toast.success(`Колонка «${column.column_label}» удалена`)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Не удалось удалить колонку"
+      toast.error(message)
     }
   }
 
@@ -885,27 +957,23 @@ const TabularReviewPage: React.FC = () => {
                   }}
                   onColumnEdit={handleColumnEdit}
                   onColumnDelete={handleColumnDelete}
-                  onCellClick={async (fileId, columnId, cellData) => {
-                    // Find file type and name from table data
+                  onCellClick={async (fileId, columnId, cellData: TabularCellClickPayload) => {
                     const row = tableData.rows.find(r => r.file_id === fileId)
-                    
-                    // Find the column by columnId (now passed directly from table)
                     const clickedColumn = tableData.columns.find(col => col.id === columnId)
-                    
-                    // If column not found, use first column as fallback
-                    if (!clickedColumn && tableData.columns.length > 0) {
-                      console.warn(`Column ${columnId} not found, using first column as fallback`)
-                    }
-                    
-                    // Load cell details first to get all source information for highlighting
+
+                    // Popover уже загрузил details; повторный fetch только если refs не переданы
                     let details = null
-                    if (reviewId && clickedColumn) {
+                    if (
+                      reviewId &&
+                      clickedColumn &&
+                      !(cellData.sourceReferences && cellData.sourceReferences.length > 0)
+                    ) {
                       setLoadingCellDetails(true)
                       try {
                         details = await tabularReviewApi.getCellDetails(
                           reviewId,
                           fileId,
-                          clickedColumn.id
+                          clickedColumn.id,
                         )
                       } catch (err) {
                         console.error("Error loading cell details:", err)
@@ -913,75 +981,18 @@ const TabularReviewPage: React.FC = () => {
                         setLoadingCellDetails(false)
                       }
                     }
-                    
-                    // Open document with full highlighting data (no detail panel)
-                    // Use details from API if available (more complete), otherwise use cellData from table
-                    const toBBoxRegions = (
-                      refs: Array<{ bbox?: any | null }> | undefined
-                    ): Array<{ x0?: number; y0?: number; x1?: number; y1?: number }> => {
-                      if (!refs || refs.length === 0) return []
-                      const out: Array<{ x0?: number; y0?: number; x1?: number; y1?: number }> = []
-                      for (const r of refs) {
-                        const b = r?.bbox
-                        if (!b || typeof b !== 'object') continue
-                        const x0 = (b as any).x0
-                        const y0 = (b as any).y0
-                        const x1 = (b as any).x1
-                        const y1 = (b as any).y1
-                        if (
-                          typeof x0 === 'number' &&
-                          typeof y0 === 'number' &&
-                          typeof x1 === 'number' &&
-                          typeof y1 === 'number' &&
-                          x1 > x0 &&
-                          y1 > y0
-                        ) {
-                          out.push({ x0, y0, x1, y1 })
-                        }
-                      }
-                      return out
-                    }
 
-                    const firstPageBBox =
-                      (details?.source_references?.[0] as any)?.page_bbox ||
-                      (cellData?.sourceReferences?.[0] as any)?.page_bbox ||
-                      undefined
+                    const finalCellData = buildTabularViewerCellData({
+                      details,
+                      click: cellData,
+                      fileId,
+                    })
 
-                    const bboxRegions = details
-                      ? toBBoxRegions(details.source_references as any)
-                      : toBBoxRegions(cellData?.sourceReferences as any)
-
-                    const finalCellData = details ? {
-                      verbatimExtract: details.verbatim_extract,
-                      cellValue: details.cell_value,
-                      sourcePage: details.source_page,
-                      sourceSection: details.source_section,
-                      columnType: details.column_type,
-                      highlightMode: details.highlight_mode || cellData.highlightMode || (details.verbatim_extract ? 'verbatim' : (details.source_page ? 'page' : 'none')),
-                      sourceReferences: details.source_references || cellData.sourceReferences || [],
-                      highlightBBoxRegions: bboxRegions.length ? bboxRegions : undefined,
-                      highlightPageBBox: firstPageBBox,
-                      // Phase 4: Deep link fields
-                      docId: details.primary_source_doc_id || fileId,  // Use doc_id if available, fallback to fileId
-                      charStart: details.primary_source_char_start || undefined,
-                      charEnd: details.primary_source_char_end || undefined,
-                    } : {
-                      ...cellData,
-                      // Ensure highlightMode is set correctly
-                      highlightMode: cellData.highlightMode || (cellData.verbatimExtract ? 'verbatim' : (cellData.sourcePage ? 'page' : 'none')),
-                      sourceReferences: cellData.sourceReferences || [],
-                      highlightBBoxRegions: bboxRegions.length ? bboxRegions : undefined,
-                      highlightPageBBox: firstPageBBox,
-                      // Phase 4: Deep link fields from cellData
-                      docId: cellData.docId || fileId,
-                      charStart: cellData.charStart,
-                      charEnd: cellData.charEnd,
-                    }
-                    
-                    setSelectedDocument({ 
-                      fileId, 
+                    setSelectedDocument({
+                      fileId,
                       fileType: row?.file_type || undefined,
                       fileName: row?.file_name || undefined,
+                      sourceReferenceIndex: cellData.sourceReferenceIndex ?? 0,
                       cellData: finalCellData,
                     })
                   }}
@@ -1000,20 +1011,32 @@ const TabularReviewPage: React.FC = () => {
                   }}
                   onRunColumn={async (columnId) => {
                     if (!reviewId) return
+                    const fileIds = tableData?.rows.map((r) => r.file_id) ?? []
                     setProcessing(true)
-                    setRunningColumnIds((prev) => new Set([...prev, columnId]))
+                    beginColumnExtractionUi(columnId, fileIds)
                     try {
                       const result = await tabularReviewApi.runColumnExtraction(reviewId, columnId)
-                      toast.success(`Колонка заполнена: ${result.saved_count} ячеек сохранено`)
-                      await loadReviewData()
+                      const filled = result.filled_count ?? result.saved_count
+                      const pending = Math.max(0, result.saved_count - filled)
+                      toast.success(
+                        pending > 0
+                          ? `Колонка заполнена: ${filled} ответов, ${pending} требуют проверки`
+                          : `Колонка заполнена: ${filled} ответов`
+                      )
+                      if (result.cells?.length) {
+                        setTableData((prev) =>
+                          prev ? applyColumnCellsToTableData(prev, columnId, result.cells) : prev
+                        )
+                      }
                     } catch (err: any) {
                       toast.error("Ошибка при заполнении колонки: " + (err.message || ""))
                     } finally {
-                      setRunningColumnIds((prev) => { const s = new Set(prev); s.delete(columnId); return s })
+                      finishColumnExtractionUi(columnId)
                       setProcessing(false)
                     }
                   }}
                   runningColumnIds={runningColumnIds}
+                  processingCellKeys={processingCellKeys}
                 />
             </div>
 
@@ -1047,6 +1070,7 @@ const TabularReviewPage: React.FC = () => {
               </div>
               <div className="flex-1 overflow-hidden">
                 <TabularDocumentViewer
+                  key={`${selectedDocument.fileId}:${selectedDocument.sourceReferenceIndex ?? 0}:${selectedDocument.cellData.verbatimExtract?.slice(0, 40) ?? ''}`}
                   fileId={selectedDocument.fileId}
                   caseId={caseId || ""}
                   fileType={selectedDocument.fileType}
@@ -1086,23 +1110,34 @@ const TabularReviewPage: React.FC = () => {
             }}
             reviewId={reviewId}
             onColumnsAdded={async (columns) => {
-              await loadReviewData()
-              // Only auto-extract columns that actually use AI (skip manual_input)
+              let fileIds: string[] = []
+              setTableData((prev) => {
+                if (!prev) {
+                  return prev
+                }
+                const next = appendColumnsToTableData(prev, columns)
+                fileIds = next.rows.map((r) => r.file_id)
+                return next
+              })
               const aiColumns = columns.filter((c) => c.column_type !== 'manual_input')
               if (aiColumns.length === 0) return
-              // Mark all AI columns as running immediately so skeletons show
-              setRunningColumnIds(new Set(aiColumns.map((c) => c.id)))
-              // Run extractions in parallel
+              for (const col of aiColumns) {
+                beginColumnExtractionUi(col.id, fileIds)
+              }
               await Promise.allSettled(
                 aiColumns.map(async (col) => {
                   try {
-                    await tabularReviewApi.runColumnExtraction(reviewId, col.id)
+                    const result = await tabularReviewApi.runColumnExtraction(reviewId, col.id)
+                    if (result.cells?.length) {
+                      setTableData((prev) =>
+                        prev ? applyColumnCellsToTableData(prev, col.id, result.cells) : prev
+                      )
+                    }
                   } finally {
-                    setRunningColumnIds((prev) => { const s = new Set(prev); s.delete(col.id); return s })
+                    finishColumnExtractionUi(col.id)
                   }
                 })
               )
-              await loadReviewData()
             }}
             initialQuestionsText={bulkBuilderInitialPrompt}
           />

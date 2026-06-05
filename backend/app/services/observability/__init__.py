@@ -1,5 +1,26 @@
 """Observability services."""
 
+from app.services.observability.case_assistant_langfuse_tracing import (
+    case_assistant_detailed_tracing_enabled,
+    case_assistant_pipeline_trace,
+    case_assistant_span,
+    summarize_case_documents,
+    summarize_metadata_filter,
+    trace_router_result,
+)
+from app.services.observability.assistant_pipeline_langfuse_tracing import (
+    assistant_pipeline_tracing_enabled,
+    assistant_step_span,
+    record_assistant_step,
+    record_execution_branch,
+    record_graph_node_completed,
+    turn_context_trace_fields,
+)
+from app.services.observability.court_practice_langfuse_tracing import (
+    court_practice_detailed_tracing_enabled,
+    court_practice_pipeline_trace,
+    court_practice_span,
+)
 from app.services.observability.langfuse_service import (
     TraceContext,
     create_trace_context,
@@ -7,6 +28,7 @@ from app.services.observability.langfuse_service import (
     flush_langfuse,
     get_langfuse_client,
     get_active_trace_context,
+    get_langchain_callbacks,
     get_prompt_text,
     init_langfuse,
     langfuse_enabled,
@@ -19,14 +41,37 @@ from app.services.observability.langfuse_service import (
     trace_span,
     update_trace,
 )
+from app.services.observability.llm_langfuse_instrumentation import (
+    LangfuseInstrumentedLLMWrapper,
+    apply_langfuse_llm_instrumentation,
+    merge_langfuse_into_runnable_config,
+    observe_generation,
+    observe_llm_generation,
+)
 
 __all__ = [
+    "case_assistant_detailed_tracing_enabled",
+    "case_assistant_pipeline_trace",
+    "case_assistant_span",
+    "summarize_case_documents",
+    "summarize_metadata_filter",
+    "trace_router_result",
+    "assistant_pipeline_tracing_enabled",
+    "assistant_step_span",
+    "record_assistant_step",
+    "record_execution_branch",
+    "record_graph_node_completed",
+    "turn_context_trace_fields",
+    "court_practice_detailed_tracing_enabled",
+    "court_practice_pipeline_trace",
+    "court_practice_span",
     "TraceContext",
     "create_trace_context",
     "end_trace",
     "flush_langfuse",
     "get_langfuse_client",
     "get_active_trace_context",
+    "get_langchain_callbacks",
     "get_prompt_text",
     "init_langfuse",
     "langfuse_enabled",
@@ -38,4 +83,9 @@ __all__ = [
     "trace_event",
     "trace_span",
     "update_trace",
+    "LangfuseInstrumentedLLMWrapper",
+    "apply_langfuse_llm_instrumentation",
+    "merge_langfuse_into_runnable_config",
+    "observe_generation",
+    "observe_llm_generation",
 ]

@@ -56,12 +56,56 @@ async def upload_draft_template_admin(
         logger.error("draft template upload failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Не удалось сохранить шаблон")
 
+    fields_count = 0
+    index_status = "not_indexed"
+    try:
+        from app.services.draft_template_catalog import load_catalog_snapshot
+        from app.services.draft_template_keys import template_key_for_db_template
+
+        snap = load_catalog_snapshot(db, template_key_for_db_template(str(rec.id)))
+        if snap:
+            fields_count = len(snap.field_specs)
+            index_status = "indexed"
+    except Exception:
+        pass
+
     return {
         "id": rec.id,
         "title": rec.title,
         "description": rec.description or "",
         "content_length": len(rec.content or ""),
+        "fields_count": fields_count,
+        "index_status": index_status,
     }
+
+
+@router.get("/api/v2/admin/draft-templates/{template_id}/fields")
+async def get_draft_template_fields_admin(
+    template_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        return dts.get_admin_template_fields(db, template_id)
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/api/v2/admin/draft-templates/{template_id}/reindex")
+async def reindex_draft_template_admin(
+    template_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        return dts.reindex_admin_draft_template(db, current_user, template_id)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error("draft template reindex failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Не удалось проиндексировать шаблон")
 
 
 @router.delete("/api/v2/admin/draft-templates/{template_id}")

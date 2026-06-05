@@ -6,6 +6,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional
 
+from app.config import config
+
 AssistantScope = Literal["global", "case"]
 ConversationMode = Literal[
     "research",
@@ -36,7 +38,6 @@ TaskFamilyLabel = Literal[
 ]
 DepthTierLabel = Literal["fast", "deep"]
 DraftState = Literal["none", "plan_ready", "awaiting_approval", "approved", "generated", "rejected"]
-
 
 @dataclass
 class RunContext:
@@ -242,79 +243,54 @@ class ConversationPolicyService:
         legal_research: bool = False,
         deep_think: bool = False,
         attached_files_count: int = 0,
+        corpus_size: int = 0,
+        dialog_history: str = "",
+        conversation_summary: str = "",
+        anchor_filenames: Optional[List[str]] = None,
     ) -> tuple[TaskTypeLabel, DepthTierLabel, bool, str, float]:
-        q = (question or "").strip().lower()
-        if not q:
-            return "clarification", "fast", True, "empty_question", 0.99
-        if draft_mode:
-            return "drafting", "deep", False, "draft_mode", 0.98
-        if len(q) < 4:
-            return "clarification", "fast", True, "too_short_query", 0.93
-
-        fast_fact_markers = (
-            "какая сумма",
-            "какая дата",
-            "кто",
-            "какой срок",
-            "какой пункт",
-            "номер дела",
-            "дата",
-            "сумма",
-            "срок",
+        from app.services.chat.case_assistant_intent import (
+            intent_to_policy_tuple,
+            resolve_case_assistant_intent,
         )
-        deep_markers = (
-            "обзор",
-            "о чем все документы",
-            "риски",
-            "противореч",
-            "сравни",
-            "проанализируй",
-            "правовая позиция",
-            "соответствует ли",
-            "нарушение",
-            "хронолог",
-            "таймлайн",
+        from app.services.chat.standalone_query_resolver import resolve_standalone_query
+
+        resolved = resolve_standalone_query(
+            question,
+            dialog_history=dialog_history,
+            conversation_summary=conversation_summary,
+            anchor_filenames=anchor_filenames,
         )
-        clarify_markers = (
-            "уточни",
-            "не понял",
-            "что именно",
-            "по какому документу",
-            "по какому периоду",
-            "что сравнить",
-            "какому делу",
-            "без контекста",
+        intent = resolve_case_assistant_intent(
+            question=resolved.resolved_question,
+            attached_files_count=attached_files_count,
+            corpus_size=corpus_size,
+            draft_mode=draft_mode,
+            legal_research=legal_research,
+            deep_think=deep_think,
         )
-        contradiction_markers = ("противореч", "расхожд", "несоответств")
-        synthesis_markers = ("хронолог", "сравни", "сводк", "обзор", "по всем документам", "итог")
-        legal_markers = ("закон", "статья", "кодекс", "норма", "правовая позиция", "нарушение")
+        return intent_to_policy_tuple(intent)
 
-        if any(m in q for m in clarify_markers):
-            return "clarification", "fast", True, "clarification_markers", 0.9
+    @staticmethod
+    def resolve_case_intent(
+        *,
+        question: str,
+        draft_mode: bool = False,
+        legal_research: bool = False,
+        deep_think: bool = False,
+        attached_files_count: int = 0,
+        corpus_size: int = 0,
+    ):
+        """Full intent object for budget assembly and observability."""
+        from app.services.chat.case_assistant_intent import resolve_case_assistant_intent
 
-        # Ambiguous short requests should clarify instead of spending deep budget.
-        has_question_word = any(x in q for x in ("кто", "что", "какой", "какая", "какие", "где", "когда"))
-        has_scope_hint = any(x in q for x in ("документ", "дело", "пункт", "срок", "дата", "сумма"))
-        if len(q) <= 24 and has_question_word and not has_scope_hint and attached_files_count == 0:
-            return "clarification", "fast", True, "ambiguous_short_query", 0.72
-
-        if any(m in q for m in contradiction_markers):
-            return "contradiction_check", "deep", False, "contradiction_markers", 0.9
-        if any(m in q for m in synthesis_markers) and attached_files_count > 1:
-            return "multi_doc_synthesis", "deep", False, "multi_doc_synthesis_markers", 0.88
-        if any(m in q for m in deep_markers):
-            return "multi_doc_synthesis", "deep", False, "deep_markers", 0.82
-        if legal_research and any(m in q for m in legal_markers):
-            return "legal_reasoning", "deep", False, "legal_research_query", 0.85
-        if deep_think:
-            return "legal_reasoning", "deep", False, "deep_think_enabled", 0.8
-        if attached_files_count > 3 and ("все" in q or "обзор" in q):
-            return "multi_doc_synthesis", "deep", False, "multi_docs_overview", 0.8
-        if any(m in q for m in fast_fact_markers):
-            return "fact_lookup", "fast", False, "fast_fact_markers", 0.86
-        if attached_files_count <= 1 and len(q) <= 180:
-            return "single_doc_extraction", "fast", False, "short_single_doc_query", 0.7
-        return "legal_reasoning", "deep", False, "default_deep_path", 0.62
+        return resolve_case_assistant_intent(
+            question=question,
+            attached_files_count=attached_files_count,
+            corpus_size=corpus_size,
+            draft_mode=draft_mode,
+            legal_research=legal_research,
+            deep_think=deep_think,
+        )
 
     @staticmethod
     def map_task_family(task_type: TaskTypeLabel) -> TaskFamilyLabel:
@@ -331,29 +307,154 @@ class ConversationPolicyService:
         return "clarify"
 
     @staticmethod
+    def _attach_pipeline_budget(
+        profile: Dict[str, Any],
+        *,
+        question: str = "",
+        task_type: str = "legal_reasoning",
+        depth_tier: str = "deep",
+        clarification_needed: bool = False,
+        legal_research: bool = False,
+        court_practice: bool = False,
+        deep_think: bool = False,
+        draft_mode: bool = False,
+        structured_execution_tier: Optional[str] = None,
+        corpus_size: int = 0,
+        attached_files_count: int = 0,
+        dialog_history: str = "",
+        conversation_summary: str = "",
+        anchor_filenames: Optional[List[str]] = None,
+        turn_context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        from app.services.chat.evidence_plan import apply_evidence_plan, apply_turn_context_overrides
+        from app.services.chat.execution_tier import (
+            attach_pipeline_budget_for_tier,
+            resolve_execution_tier,
+        )
+        from app.services.chat.standalone_query_resolver import resolve_standalone_query
+
+        tc_kind = (
+            str((turn_context or {}).get("referential_kind") or "none").strip().lower()
+            if isinstance(turn_context, dict)
+            else "none"
+        )
+        if tc_kind != "none" and isinstance(turn_context, dict):
+            routing_question = str(turn_context.get("standalone_query") or question).strip()
+            standalone_original = str(turn_context.get("original_question") or question).strip()
+            standalone_reason = str(turn_context.get("reason") or "turn_context")
+            standalone_changed = routing_question != standalone_original
+        else:
+            standalone = resolve_standalone_query(
+                question,
+                dialog_history=dialog_history,
+                conversation_summary=conversation_summary,
+                anchor_filenames=anchor_filenames,
+            )
+            routing_question = standalone.resolved_question
+            standalone_original = standalone.original_question
+            standalone_reason = standalone.reason
+            standalone_changed = standalone.changed
+
+        intent = ConversationPolicyService.resolve_case_intent(
+            question=routing_question,
+            draft_mode=draft_mode,
+            legal_research=legal_research,
+            deep_think=deep_think,
+            attached_files_count=attached_files_count,
+            corpus_size=corpus_size,
+        )
+        tier, tier_reason = resolve_execution_tier(
+            question=routing_question,
+            task_type=intent.task_type,
+            depth_tier=intent.depth_tier,
+            clarification_needed=intent.clarification_needed,
+            legal_research=legal_research,
+            court_practice=court_practice,
+            deep_think=deep_think,
+            draft_mode=draft_mode,
+            structured_tier=structured_execution_tier,
+            primary_intent=intent.primary,
+        )
+        out = attach_pipeline_budget_for_tier(
+            profile,
+            tier,
+            response_shape=intent.response_shape,
+            response_shape_reason=intent.reason,
+            tier_reason=tier_reason,
+            primary_intent=intent.primary,
+        )
+        out = apply_evidence_plan(out, intent=intent)
+        out = apply_turn_context_overrides(out, turn_context)
+        out["tier_reason"] = tier_reason
+        out["intent_reason"] = intent.reason
+        out["original_question"] = standalone_original
+        out["resolved_question"] = routing_question
+        out["query_resolve_reason"] = standalone_reason
+        out["query_resolved"] = standalone_changed
+        if isinstance(turn_context, dict):
+            out["turn_context"] = turn_context
+        return out
+
+    @staticmethod
     def budget_profile_for_depth(
         depth_tier: DepthTierLabel,
         task_type: TaskTypeLabel,
         *,
         corpus_size: Optional[int] = None,
+        question: str = "",
+        clarification_needed: bool = False,
+        legal_research: bool = False,
+        court_practice: bool = False,
+        deep_think: bool = False,
+        draft_mode: bool = False,
+        structured_execution_tier: Optional[str] = None,
+        attached_files_count: int = 0,
+        dialog_history: str = "",
+        conversation_summary: str = "",
+        anchor_filenames: Optional[List[str]] = None,
+        turn_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        if depth_tier == "fast":
-            return {
+        if depth_tier == "fast" and task_type == "multi_doc_synthesis":
+            profile = {
+                "name": "fast_multi_doc_overview",
+                "max_tool_calls": 4,
+                "max_llm_calls": 1,
+                "max_wall_time_ms": 45_000,
+                "max_retries": 1,
+                "max_sources": 8,
+                "max_context_chars": 16_000,
+                "max_tokens": 1200,
+                "k_schedule": [8, 16],
+                "max_passes": 2,
+            }
+        elif depth_tier == "fast" and task_type == "legal_reasoning":
+            profile = {
+                "name": "fast_legal_reasoning",
+                "max_tool_calls": 3,
+                "max_llm_calls": 1,
+                "max_wall_time_ms": 45_000,
+                "max_retries": 1,
+                "max_sources": 8,
+                "max_context_chars": 16_000,
+                "max_tokens": 1500,
+                "k_schedule": [8, 16],
+                "max_passes": 2,
+            }
+        elif depth_tier == "fast":
+            profile = {
                 "name": "fast",
                 "max_tool_calls": 2,
                 "max_llm_calls": 1,
-                # Soft budget hint for fast path (graph may enforce call timeouts separately).
                 "max_wall_time_ms": 45_000,
                 "max_retries": 1,
                 "max_sources": 6,
-                "max_context_chars": 3200,
+                "max_context_chars": 16_000,
                 "max_tokens": 1200,
-                # Single-pass k for fast: avoids triple retrieval loops while keeping rerank/top-k quality.
                 "k_schedule": [8],
                 "max_passes": 1,
             }
-        if task_type == "drafting":
-            return {
+        elif task_type == "drafting":
+            profile = {
                 "name": "drafting_deep",
                 "max_tool_calls": 12,
                 "max_llm_calls": 8,
@@ -365,10 +466,10 @@ class ConversationPolicyService:
                 "k_schedule": [12, 24, 48],
                 "max_passes": 4,
             }
-        if task_type == "multi_doc_synthesis":
+        elif task_type == "multi_doc_synthesis":
             size = int(corpus_size or 0)
             if size <= 5:
-                return {
+                profile = {
                     "name": "deep_small",
                     "size_bucket": "small",
                     "max_tool_calls": 8,
@@ -381,8 +482,8 @@ class ConversationPolicyService:
                     "k_schedule": [8, 16, 30],
                     "max_passes": 3,
                 }
-            if size <= 30:
-                return {
+            elif size <= 30:
+                profile = {
                     "name": "deep_medium",
                     "size_bucket": "medium",
                     "max_tool_calls": 10,
@@ -395,31 +496,51 @@ class ConversationPolicyService:
                     "k_schedule": [12, 24, 48],
                     "max_passes": 4,
                 }
-            return {
-                "name": "deep_large",
-                "size_bucket": "large",
-                "max_tool_calls": 12,
-                "max_llm_calls": 8,
+            else:
+                profile = {
+                    "name": "deep_large",
+                    "size_bucket": "large",
+                    "max_tool_calls": 12,
+                    "max_llm_calls": 8,
+                    "max_wall_time_ms": 0,
+                    "max_retries": 2,
+                    "max_sources": 22,
+                    "max_context_chars": 10_500,
+                    "max_tokens": 6800,
+                    "k_schedule": [16, 32, 64],
+                    "max_passes": 5,
+                }
+        else:
+            profile = {
+                "name": "deep",
+                "max_tool_calls": 8,
+                "max_llm_calls": 5,
                 "max_wall_time_ms": 0,
                 "max_retries": 2,
-                "max_sources": 22,
-                "max_context_chars": 10_500,
-                "max_tokens": 6800,
-                "k_schedule": [16, 32, 64],
-                "max_passes": 5,
+                "max_sources": 12,
+                "max_context_chars": 7000,
+                "max_tokens": 4500,
+                "k_schedule": [10, 20, 40],
+                "max_passes": 4,
             }
-        return {
-            "name": "deep",
-            "max_tool_calls": 8,
-            "max_llm_calls": 5,
-            "max_wall_time_ms": 0,
-            "max_retries": 2,
-            "max_sources": 12,
-            "max_context_chars": 7000,
-            "max_tokens": 4500,
-            "k_schedule": [10, 20, 40],
-            "max_passes": 4,
-        }
+        return ConversationPolicyService._attach_pipeline_budget(
+            profile,
+            question=question,
+            task_type=task_type,
+            depth_tier=depth_tier,
+            clarification_needed=clarification_needed,
+            legal_research=legal_research,
+            court_practice=court_practice,
+            deep_think=deep_think,
+            draft_mode=draft_mode,
+            structured_execution_tier=structured_execution_tier,
+            corpus_size=int(corpus_size or 0),
+            attached_files_count=int(attached_files_count or 0),
+            dialog_history=dialog_history,
+            conversation_summary=conversation_summary,
+            anchor_filenames=anchor_filenames,
+            turn_context=turn_context,
+        )
 
     @classmethod
     def build_case_state_contract(

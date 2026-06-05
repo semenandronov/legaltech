@@ -69,7 +69,8 @@ function computeWordDiff(oldText: string, newText: string): DiffSegment[] {
 function generateEditTitle(edit: StructuredEdit): string {
   if ((edit as any).description) return (edit as any).description
 
-  const origLen = edit.original_text.length
+  const originalText = edit.original_text ?? ''
+  const origLen = originalText.length
   const newLen = edit.new_text.length
 
   if (origLen === 0 && newLen > 0) {
@@ -77,12 +78,12 @@ function generateEditTitle(edit: StructuredEdit): string {
     return `Добавить: "${preview}${edit.new_text.length > 60 ? '...' : ''}"`
   }
   if (newLen === 0 && origLen > 0) {
-    const preview = edit.original_text.slice(0, 60)
-    return `Удалить: "${preview}${edit.original_text.length > 60 ? '...' : ''}"`
+    const preview = originalText.slice(0, 60)
+    return `Удалить: "${preview}${originalText.length > 60 ? '...' : ''}"`
   }
 
   // For replacements, show a short summary
-  const origPreview = edit.original_text.slice(0, 40)
+  const origPreview = originalText.slice(0, 40)
   return `Заменить: "${origPreview}${origLen > 40 ? '...' : ''}"`
 }
 
@@ -96,7 +97,8 @@ export const EditSuggestionCard: React.FC<EditSuggestionCardProps> = ({
 }) => {
   const isProcessed = isApplied || isSkipped
   const title = generateEditTitle(edit)
-  const diffSegments = computeWordDiff(edit.original_text, edit.new_text)
+  const originalText = edit.original_text ?? ''
+  const diffSegments = computeWordDiff(originalText, edit.new_text)
 
   return (
     <div
@@ -111,7 +113,7 @@ export const EditSuggestionCard: React.FC<EditSuggestionCardProps> = ({
       {/* Title */}
       <div
         className="px-4 pt-3 pb-2 cursor-pointer"
-        onClick={() => edit.found_in_document && !isProcessed && onNavigate(edit.original_text)}
+        onClick={() => edit.found_in_document && !isProcessed && originalText && onNavigate(originalText)}
       >
         <h4 className="text-sm font-semibold text-gray-900 leading-snug">
           {title}

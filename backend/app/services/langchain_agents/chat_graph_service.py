@@ -37,8 +37,13 @@ from app.services.document_processor import DocumentProcessor
 from app.services.langchain_agents.graphs.chat_graph import (
     create_chat_graph,
     create_initial_chat_state,
-    ChatGraphState
+    ChatGraphState,
 )
+from app.config import config as app_config
+
+
+def _case_graph_recursion_limit() -> int:
+    return int(getattr(app_config, "CASE_ASSISTANT_GRAPH_RECURSION_LIMIT", 40) or 40)
 from app.services.langchain_agents.utils.streaming import (
     StreamMode,
     StreamEvent,
@@ -56,10 +61,17 @@ from app.services.observability.langfuse_service import (
     get_active_trace_context,
     get_langchain_callbacks,
     langfuse_enabled,
+    reset_trace_span_parent,
+    set_trace_span_parent,
     trace_contract_event,
     trace_span,
     normalize_observability_metadata,
 )
+from app.services.observability.assistant_pipeline_langfuse_tracing import (
+    assistant_step_span,
+    record_graph_node_completed,
+)
+from app.services.chat.llm_streaming import incremental_stream_piece
 import logging
 import json
 import uuid
@@ -67,6 +79,49 @@ import time
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
+
+
+def _format_text_delta_sse(turn_emitter: Optional[Any], text: str) -> str:
+    if not text:
+        return ""
+    if turn_emitter is not None:
+        return turn_emitter.text_delta(text)
+    return f"data: {json.dumps({'type': 'text-delta', 'textDelta': text}, ensure_ascii=False)}\n\n"
+
+
+def _format_content_sync_sse(turn_emitter: Optional[Any], content: str) -> str:
+    if turn_emitter is not None:
+        return turn_emitter.content_sync(content)
+    return f"data: {json.dumps({'type': 'content_sync', 'content': content}, ensure_ascii=False)}\n\n"
+
+
+def _finalize_generate_response_text(
+    *,
+    resp: str,
+    streamed_text: str,
+    text_streamed_live: bool,
+    turn_emitter: Optional[Any],
+) -> tuple[str, List[str]]:
+    """
+    Canonical answer emission after generate_response post-process.
+
+    Live token stream is a UX preview only. After post-process (citations, sanitize)
+    we always replace the bubble with ``content_sync`` so UI and DB match the node output.
+    """
+    canonical = resp if isinstance(resp, str) else ""
+    if not (canonical or "").strip():
+        return streamed_text, []
+    events: List[str] = []
+    if text_streamed_live:
+        sse = _format_content_sync_sse(turn_emitter, canonical)
+        if sse:
+            events.append(sse)
+        return canonical, events
+    sse = _format_text_delta_sse(turn_emitter, canonical)
+    if sse:
+        events.append(sse)
+    return canonical, events
+
 
 _REASONING_PHASE_LABELS: Dict[str, str] = {
     "generate_draft_plan": "Понимаю задачу и готовлю план документа…",
@@ -141,8 +196,10 @@ class ChatGraphService:
         self.rag_service = rag_service or RAGService()
         self.document_processor = document_processor or DocumentProcessor()
     
-    def _get_or_create_graph(self):
-        """Получить или создать экземпляр графа."""
+    def _get_or_create_graph(self) -> tuple[Any, int]:
+        """Получить или создать экземпляр графа. Возвращает (graph, compile_ms)."""
+        t0 = time.monotonic()
+        compiled = False
         if ChatGraphService._graph_instance is None:
             ChatGraphService._graph_instance = create_chat_graph(
                 db=self.db,
@@ -150,8 +207,10 @@ class ChatGraphService:
                 document_processor=self.document_processor,
                 use_checkpointing=True
             )
+            compiled = True
             logger.info("[ChatGraphService] Created new ChatGraph instance")
-        return ChatGraphService._graph_instance
+        compile_ms = int((time.monotonic() - t0) * 1000) if compiled else 0
+        return ChatGraphService._graph_instance, compile_ms
     
     def _determine_mode(
         self,
@@ -178,25 +237,72 @@ class ChatGraphService:
             return "garant"
         else:
             return "normal"
+
+    def _resolve_case_canonical_messages(
+        self,
+        case_id: str,
+        session_id: str,
+        question: str,
+        *,
+        hydrate_from_db: bool,
+    ) -> Optional[List[BaseMessage]]:
+        """Load canonical LangChain messages from Postgres session transcript."""
+        if not hydrate_from_db:
+            return None
+        sid = (session_id or "").strip()
+        if not sid:
+            return None
+        from app.services.chat.dialog_transcript_service import build_case_turn_messages
+        from app.services.chat.history_service import ChatHistoryService
+
+        transcript = ChatHistoryService(self.db).get_history_for_context(case_id, sid)
+        return build_case_turn_messages(transcript, question)
+
+    @staticmethod
+    def _apply_canonical_messages(
+        state: Dict[str, Any],
+        canonical_messages: List[BaseMessage],
+    ) -> None:
+        from app.services.chat.dialog_transcript_service import reconcile_langchain_messages
+
+        checkpoint_messages = state.get("messages")
+        merged, replaced = reconcile_langchain_messages(checkpoint_messages, canonical_messages)
+        state["messages"] = merged
+        if replaced:
+            logger.info(
+                "[ChatGraphService] DB transcript hydrated (%s messages)",
+                len(merged),
+            )
+
+    def _resolve_template_context(
+        self,
+        *,
+        question: str,
+        draft_mode: bool,
+        document_context: Optional[str],
+        template_system_id: Optional[str] = None,
+        template_file_id: Optional[str] = None,
+        template_file_content: Optional[str] = None,
+    ) -> tuple:
+        """Шаблон draft — только в draft_mode; в case/editor чате не подбираем."""
+        if not draft_mode:
+            return "", None, None
+        from app.services.draft_template_context import resolve_draft_template_context
+
+        return resolve_draft_template_context(
+            self.db,
+            template_system_id=template_system_id,
+            template_file_content=template_file_content,
+            template_file_id=template_file_id,
+            user_question=question,
+        )
     
-    def _get_or_create_session(self, case_id: str) -> str:
-        """Получить или создать session_id для чата."""
-        try:
-            last_message = self.db.query(ChatMessage).filter(
-                ChatMessage.case_id == case_id,
-                ChatMessage.content.isnot(None),
-                ChatMessage.content != ""
-            ).order_by(ChatMessage.created_at.desc()).first()
-            
-            if last_message and last_message.created_at:
-                time_diff = datetime.utcnow() - last_message.created_at
-                if time_diff < timedelta(minutes=30) and last_message.session_id:
-                    return last_message.session_id
-            
-            return str(uuid.uuid4())
-        except Exception as e:
-            logger.warning(f"[ChatGraphService] Error getting session: {e}")
-            return str(uuid.uuid4())
+    def _resolve_case_session(self, session_id: Optional[str]) -> str:
+        """Client-authoritative session id (mint new UUID when client sends none)."""
+        from app.services.chat.case_chat_session import resolve_case_chat_session_id
+
+        resolved, _kind = resolve_case_chat_session_id(session_id)
+        return resolved
     
     def _get_or_create_thread_id(self, case_id: str, session_id: str) -> str:
         """
@@ -220,18 +326,54 @@ class ChatGraphService:
         return thread_id
 
     @staticmethod
+    def _apply_new_turn_state(
+        current_state: dict,
+        *,
+        is_editor_chat: bool,
+        turn_id: Optional[str],
+        editor_mode_hint: Optional[str],
+        mode: str,
+    ) -> None:
+        """Сброс ephemeral-полей между ходами (draft HITL + editor turn contract)."""
+        ChatGraphService._reset_draft_hitl_for_turn(current_state, mode)
+        if is_editor_chat and turn_id:
+            from app.services.chat.turn_contract import (
+                normalize_editor_intent,
+                reset_editor_ephemeral_for_turn,
+            )
+
+            reset_editor_ephemeral_for_turn(
+                current_state,
+                turn_id=turn_id,
+                intent=normalize_editor_intent(editor_mode_hint),
+            )
+            return
+        current_state["response"] = None
+        current_state["rag_context"] = None
+        current_state["garant_context"] = None
+        current_state["rag_documents"] = None
+        current_state["citations"] = []
+        current_state["context_pipeline_meta"] = None
+        current_state["retrieval_task"] = None
+        current_state["scoped_file_ids"] = None
+        current_state["scoped_doc_type"] = None
+        current_state["thinking_steps"] = None
+        current_state["answer_blocks"] = None
+
+    @staticmethod
     def _reset_draft_hitl_for_turn(current_state: dict, mode: str) -> None:
         """
         Сброс устаревшего LangGraph-состояния черновика между запросами.
 
-        Если не ждём подтверждения плана — очищаем draft_plan/draft_approved, иначе
-        маршрут draft_execute + interrupt_before=['draft'] даёт пустой ответ без плана.
-        Если ждём «одобряю» — сохраняем план для уточнений в том же чате.
+        Без DRAFT_PLAN_APPROVAL_ENABLED: каждый ход — сразу генерация документа (draft_approved=True).
+        С планом (legacy): сохраняем waiting_for_approval и сброс одобрения между уточнениями.
         """
         if mode == "draft":
-            if current_state.get("waiting_for_approval"):
-                # Новый ход в чате при показанном плане: уточнения/правки — не считаем документ одобренным,
-                # пока не пришёл resume или явная короткая команда (обрабатывается оркестратором).
+            if not bool(getattr(config, "DRAFT_PLAN_APPROVAL_ENABLED", False)):
+                current_state["draft_plan"] = None
+                current_state["draft_approved"] = True
+                current_state["waiting_for_approval"] = False
+            elif current_state.get("waiting_for_approval"):
                 current_state["draft_approved"] = False
             elif not current_state.get("waiting_for_approval"):
                 current_state["draft_plan"] = None
@@ -258,15 +400,16 @@ class ChatGraphService:
         if not case:
             return {"ok": False, "error": "case_not_found"}
 
-        history = ChatHistoryService(self.db)
-        resolved_session = session_id or history.get_or_create_session(case_id)
+        from app.services.chat.case_chat_session import resolve_case_chat_session_id
+
+        resolved_session, _resolution = resolve_case_chat_session_id(session_id)
 
         t0 = time.monotonic()
-        graph = self._get_or_create_graph()
+        graph, graph_compile_ms = self._get_or_create_graph()
         thread_id = self._get_or_create_thread_id(case_id, resolved_session)
         graph_run_config: Dict[str, Any] = {
             "configurable": {"thread_id": thread_id},
-            "recursion_limit": 25,
+            "recursion_limit": _case_graph_recursion_limit(),
         }
         checkpoint_has_values = False
         try:
@@ -290,6 +433,76 @@ class ChatGraphService:
             "thread_id": thread_id,
             "checkpoint_has_values": checkpoint_has_values,
             "warmup_ms": elapsed_ms,
+            "graph_compile_ms": graph_compile_ms,
+        }
+
+    async def warmup_editor_graph(
+        self,
+        case_id: str,
+        document_id: str,
+        user: User,
+        session_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Прогрев при открытии редактора: кэш графа + опционально чтение checkpoint сессии.
+        """
+        from app.services.chat.editor_session import (
+            editor_thread_id,
+            resolve_editor_chat_session_id,
+        )
+
+        case = self.db.query(Case).filter(
+            Case.id == case_id,
+            Case.user_id == user.id,
+        ).first()
+        if not case:
+            return {"ok": False, "error": "case_not_found"}
+
+        doc_id = (document_id or "new").strip()
+        resolved_session = resolve_editor_chat_session_id(
+            user_id=str(user.id),
+            case_id=case_id,
+            document_id=doc_id,
+            requested_session_id=session_id,
+        )
+
+        t0 = time.monotonic()
+        graph, graph_compile_ms = self._get_or_create_graph()
+        thread_id = editor_thread_id(case_id, resolved_session)
+        graph_run_config: Dict[str, Any] = {
+            "configurable": {"thread_id": thread_id},
+            "recursion_limit": _case_graph_recursion_limit(),
+        }
+        checkpoint_has_values = False
+        try:
+            st = await graph.aget_state(graph_run_config)
+            checkpoint_has_values = bool(st and st.values)
+        except Exception as exc:
+            logger.warning(
+                "[ChatGraphService] editor warmup aget_state failed: %s",
+                exc,
+                exc_info=True,
+            )
+
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        logger.info(
+            "[ChatGraphService] editor warmup case=%s doc=%s session=%s checkpoint=%s compile_ms=%s total_ms=%s",
+            case_id,
+            doc_id,
+            resolved_session,
+            checkpoint_has_values,
+            graph_compile_ms,
+            elapsed_ms,
+        )
+        return {
+            "ok": True,
+            "case_id": case_id,
+            "document_id": doc_id,
+            "session_id": resolved_session,
+            "thread_id": thread_id,
+            "checkpoint_has_values": checkpoint_has_values,
+            "warmup_ms": elapsed_ms,
+            "graph_compile_ms": graph_compile_ms,
         }
     
     def _save_user_message(
@@ -347,6 +560,50 @@ class ChatGraphService:
             self.db.rollback()
             logger.warning(f"[ChatGraphService] Failed to save assistant message: {e}")
         return message_id
+
+    @staticmethod
+    def _normalize_attached_file_ids(
+        attached_file_ids: Optional[List[str]],
+    ) -> Optional[List[str]]:
+        if not attached_file_ids:
+            return None
+        from app.config import config as app_config
+
+        max_files = max(1, int(getattr(app_config, "EDITOR_ATTACH_MAX_FILES", 3) or 3))
+        ids = [str(x).strip() for x in attached_file_ids if str(x).strip()]
+        return ids[:max_files] if ids else None
+
+    def _apply_editor_attached_files_context(
+        self,
+        state: Dict[str, Any],
+        *,
+        case_id: str,
+        user_id: str,
+        attached_file_ids: Optional[List[str]],
+    ) -> None:
+        """Заполняет attached_case_files_context для редактора (полный текст, без RAG)."""
+        from app.config import config as app_config
+
+        ids = self._normalize_attached_file_ids(attached_file_ids)
+        state["attached_file_ids"] = ids
+        if not ids or not getattr(app_config, "EDITOR_ATTACH_FULL_TEXT_ENABLED", True):
+            state["attached_case_files_context"] = None
+            return
+        from app.services.structured_file_text import build_editor_attached_files_context
+
+        ctx = build_editor_attached_files_context(
+            self.db,
+            case_id=case_id,
+            user_id=user_id,
+            file_ids=ids,
+        )
+        state["attached_case_files_context"] = ctx or None
+        if ctx:
+            logger.info(
+                "[ChatGraphService] Editor attach full-text: %s file(s), %s chars",
+                len(ids),
+                len(ctx),
+            )
     
     async def stream_response(
         self,
@@ -355,6 +612,7 @@ class ChatGraphService:
         user: User,
         deep_think: bool = False,
         legal_research: bool = False,
+        court_practice: bool = False,
         draft_mode: bool = False,
         document_context: str = None,
         document_id: str = None,
@@ -375,6 +633,11 @@ class ChatGraphService:
         budget_profile: Optional[Dict[str, Any]] = None,
         corpus_size: Optional[int] = None,
         clarification_needed: Optional[bool] = None,
+        retrieval_task: Optional[Dict[str, Any]] = None,
+        scoped_file_ids: Optional[List[str]] = None,
+        scoped_doc_type: Optional[str] = None,
+        session_context_prompt: Optional[str] = None,
+        session_context_meta: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[str, None]:
         """
         Streaming ответ через ChatGraph.
@@ -409,19 +672,30 @@ class ChatGraphService:
             yield f"data: {json.dumps({'error': 'Дело не найдено'})}\n\n"
             return
 
-        from app.services.draft_template_context import resolve_draft_template_context
-
-        template_context, template_label = resolve_draft_template_context(
-            self.db,
+        template_context, template_label, template_key = self._resolve_template_context(
+            question=question,
+            draft_mode=draft_mode,
+            document_context=document_context,
             template_system_id=template_system_id,
             template_file_content=template_file_content,
             template_file_id=template_file_id,
-            user_question=question,
         )
         
-        # Получаем session_id
-        session_id = session_id or self._get_or_create_session(case_id)
-        
+        # Сессия: редактор — client session_id или стабильная нить на документ.
+        is_editor_chat = bool(document_context) and not draft_mode
+        attached_file_ids = self._normalize_attached_file_ids(attached_file_ids)
+        if is_editor_chat:
+            from app.services.chat.editor_session import resolve_editor_chat_session_id
+
+            session_id = resolve_editor_chat_session_id(
+                user_id=str(user.id),
+                case_id=case_id,
+                document_id=document_id or "new",
+                requested_session_id=session_id,
+            )
+        else:
+            session_id = self._resolve_case_session(session_id)
+
         # Сохраняем сообщение пользователя (если не обрабатывается внешним оркестратором)
         if persist_history:
             self._save_user_message(case_id, question, session_id)
@@ -429,36 +703,110 @@ class ChatGraphService:
         # Определяем режим
         mode = self._determine_mode(deep_think, legal_research, draft_mode)
 
+        active_turn_id: Optional[str] = str(uuid.uuid4()) if is_editor_chat else None
+        turn_emitter = None
+        if is_editor_chat and active_turn_id:
+            from app.services.chat.turn_emitter import EditorTurnEmitter
+
+            turn_emitter = EditorTurnEmitter.for_editor(
+                active_turn_id,
+                editor_mode_hint,
+                document_id,
+            )
+
         trace_ctx = get_active_trace_context()
+        _prep_meta: Dict[str, Any] = {
+            "case_id": case_id,
+            "graph_mode": mode,
+            "persist_history": persist_history,
+        }
+        if is_editor_chat:
+            _prep_meta.update(
+                {
+                    "document_id": document_id,
+                    "editor_mode_hint": editor_mode_hint,
+                    "document_context_chars": len(document_context or ""),
+                    "has_selection": bool((selected_text or "").strip()),
+                }
+            )
         prep_span = trace_span(
             trace_ctx,
-            name="case_chat_graph_prepare",
-            metadata={"case_id": case_id, "graph_mode": mode, "persist_history": persist_history},
+            name="document_editor_prepare" if is_editor_chat else "case_chat_graph_prepare",
+            metadata=_prep_meta,
         )
         prep_started = time.monotonic()
         checkpoint_dialog_continued = False
-        
+        editor_latency = None
+        if is_editor_chat:
+            from app.services.observability.editor_latency_trace import EditorTurnLatency
+
+            editor_latency = EditorTurnLatency(
+                turn_id=active_turn_id,
+                document_id=document_id,
+                editor_mode_hint=editor_mode_hint,
+            )
+
         # Получаем граф
-        graph = self._get_or_create_graph()
-        
+        if is_editor_chat:
+            graph, graph_compile_ms = self._get_or_create_graph()
+        else:
+            with assistant_step_span("case", "graph_prepare.get_or_compile") as gc_out:
+                graph, graph_compile_ms = self._get_or_create_graph()
+                gc_out["graph_compile_ms"] = graph_compile_ms
+        after_graph_ms = int((time.monotonic() - prep_started) * 1000)
+
         # Получаем или создаём thread_id для checkpointing (переиспользуем session_id)
-        thread_id = self._get_or_create_thread_id(case_id, session_id)
+        if is_editor_chat:
+            thread_id = self._get_or_create_thread_id(case_id, session_id)
+        else:
+            with assistant_step_span("case", "graph_prepare.thread_id") as th_out:
+                thread_id = self._get_or_create_thread_id(case_id, session_id)
+                th_out["thread_id"] = thread_id
         graph_run_config: Dict[str, Any] = {
             "configurable": {"thread_id": thread_id},
-            "recursion_limit": 25,
+            "recursion_limit": _case_graph_recursion_limit(),
         }
         if langfuse_enabled():
+            _lf_tags = ["case_assistant", "chat_graph"]
+            if is_editor_chat:
+                _lf_tags = [
+                    "document_editor",
+                    "chat_graph",
+                    f"editor_{(editor_mode_hint or 'ask').strip().lower()}",
+                ]
             _lc = get_langchain_callbacks(
                 session_id=session_id,
                 user_id=str(user.id),
-                tags=["case_assistant", "chat_graph"],
+                tags=_lf_tags,
             )
             if _lc:
                 graph_run_config["callbacks"] = _lc
+
+        if is_editor_chat:
+            canonical_messages = self._resolve_case_canonical_messages(
+                case_id,
+                session_id,
+                question,
+                hydrate_from_db=not is_editor_chat,
+            )
+        else:
+            with assistant_step_span("case", "graph_prepare.hydrate_messages") as hm_out:
+                canonical_messages = self._resolve_case_canonical_messages(
+                    case_id,
+                    session_id,
+                    question,
+                    hydrate_from_db=not is_editor_chat,
+                )
+                hm_out["message_count"] = len(canonical_messages) if canonical_messages else 0
         
         # Загружаем существующее состояние из checkpoint для продолжения диалога
         try:
-            existing_state = await graph.aget_state(graph_run_config)
+            if is_editor_chat:
+                existing_state = await graph.aget_state(graph_run_config)
+            else:
+                with assistant_step_span("case", "graph_prepare.checkpoint_aget_state") as cp_out:
+                    existing_state = await graph.aget_state(graph_run_config)
+                    cp_out["has_values"] = bool(existing_state and existing_state.values)
             if existing_state and existing_state.values:
                 checkpoint_dialog_continued = True
                 # Продолжаем диалог - используем существующее состояние
@@ -474,18 +822,27 @@ class ChatGraphService:
                     current_state["template_context"] = ""
                 if "template_label" not in current_state:
                     current_state["template_label"] = None
+                if "template_key" not in current_state:
+                    current_state["template_key"] = None
+                if "template_system_id" not in current_state:
+                    current_state["template_system_id"] = None
+                if "template_field_catalog" not in current_state:
+                    current_state["template_field_catalog"] = None
                 if attached_file_ids is not None:
                     current_state["attached_file_ids"] = [str(x) for x in attached_file_ids if x] or None
                 elif "attached_file_ids" not in current_state:
                     current_state["attached_file_ids"] = None
-                # Добавляем новое сообщение пользователя
-                current_messages = current_state.get("messages", [])
-                current_messages.append(HumanMessage(content=question))
-                current_state["messages"] = current_messages
+                if canonical_messages is not None:
+                    self._apply_canonical_messages(current_state, canonical_messages)
+                else:
+                    current_messages = current_state.get("messages", [])
+                    current_messages.append(HumanMessage(content=question))
+                    current_state["messages"] = current_messages
                 # Обновляем вопрос и режим для текущего запроса
                 current_state["question"] = question
                 current_state["mode"] = mode
                 current_state["enable_garant"] = legal_research or mode == "garant"
+                current_state["enable_court_practice"] = bool(court_practice)
                 # Политика/бюджет выполнения (обновляем на каждый turn)
                 if task_type is not None:
                     current_state["task_type"] = task_type
@@ -493,6 +850,20 @@ class ChatGraphService:
                     current_state["depth_tier"] = depth_tier
                 if budget_profile is not None:
                     current_state["budget_profile"] = budget_profile
+                    if budget_profile.get("execution_tier"):
+                        current_state["execution_tier"] = budget_profile["execution_tier"]
+                    if budget_profile.get("response_shape"):
+                        current_state["response_shape"] = budget_profile["response_shape"]
+                    if budget_profile.get("primary_intent"):
+                        current_state["primary_intent"] = budget_profile["primary_intent"]
+                    if budget_profile.get("resolved_question"):
+                        current_state["question"] = str(budget_profile["resolved_question"])
+                        current_state["original_question"] = str(
+                            budget_profile.get("original_question") or question
+                        )
+                    current_state["retrieval_round"] = 0
+                    current_state["escalated_from"] = None
+                    current_state["grade_retrieval_ok"] = None
                 if corpus_size is not None:
                     current_state["corpus_size"] = corpus_size
                 if clarification_needed is not None:
@@ -507,13 +878,30 @@ class ChatGraphService:
                     current_state["editor_mode_hint"] = editor_mode_hint
                 current_state["template_context"] = template_context or ""
                 current_state["template_label"] = template_label
-                # Очищаем предыдущий ответ для нового запроса
-                current_state["response"] = None
-                current_state["rag_context"] = None
-                current_state["garant_context"] = None
-                current_state["thinking_steps"] = None
-                current_state["answer_blocks"] = None
-                self._reset_draft_hitl_for_turn(current_state, mode)
+                if retrieval_task is not None:
+                    current_state["retrieval_task"] = retrieval_task
+                if scoped_file_ids is not None:
+                    current_state["scoped_file_ids"] = scoped_file_ids
+                if scoped_doc_type is not None:
+                    current_state["scoped_doc_type"] = scoped_doc_type
+                if session_context_prompt:
+                    current_state["session_context_prompt"] = session_context_prompt
+                if session_context_meta:
+                    current_state["session_context_meta"] = session_context_meta
+                self._apply_new_turn_state(
+                    current_state,
+                    is_editor_chat=is_editor_chat,
+                    turn_id=active_turn_id,
+                    editor_mode_hint=editor_mode_hint,
+                    mode=mode,
+                )
+                if is_editor_chat:
+                    self._apply_editor_attached_files_context(
+                        current_state,
+                        case_id=case_id,
+                        user_id=str(user.id),
+                        attached_file_ids=attached_file_ids,
+                    )
                 initial_state = current_state
                 logger.info(f"[ChatGraphService] Continuing dialog from checkpoint, thread_id: {thread_id}")
             else:
@@ -524,21 +912,48 @@ class ChatGraphService:
                     question=question,
                     mode=mode,
                     enable_garant=legal_research or mode == "garant",
+                    enable_court_practice=bool(court_practice),
                     enable_citations=True,
                     document_context=document_context,
                     document_id=document_id,
                     selected_text=selected_text,
                     existing_messages=existing_messages,
+                    prebuilt_messages=canonical_messages,
                     editor_mode_hint=editor_mode_hint,
                     template_context=template_context or None,
                     template_label=template_label,
+                    template_key=template_key,
+                    template_system_id=template_system_id,
                     attached_file_ids=attached_file_ids,
                     task_type=task_type,
                     depth_tier=depth_tier,
                     budget_profile=budget_profile,
+                    execution_tier=(budget_profile or {}).get("execution_tier") if budget_profile else None,
                     corpus_size=corpus_size,
                     clarification_needed=clarification_needed,
+                    retrieval_task=retrieval_task,
+                    scoped_file_ids=scoped_file_ids,
+                    scoped_doc_type=scoped_doc_type,
+                    legal_research=legal_research,
+                    court_practice=court_practice,
+                    session_context_prompt=session_context_prompt,
+                    session_context_meta=session_context_meta,
                 )
+                if is_editor_chat and active_turn_id:
+                    self._apply_new_turn_state(
+                        initial_state,
+                        is_editor_chat=True,
+                        turn_id=active_turn_id,
+                        editor_mode_hint=editor_mode_hint,
+                        mode=mode,
+                    )
+                if is_editor_chat:
+                    self._apply_editor_attached_files_context(
+                        initial_state,
+                        case_id=case_id,
+                        user_id=str(user.id),
+                        attached_file_ids=attached_file_ids,
+                    )
                 logger.info(f"[ChatGraphService] Starting new dialog, thread_id: {thread_id}")
         except Exception as e:
             # Если не удалось загрузить состояние, создаём новое
@@ -549,11 +964,13 @@ class ChatGraphService:
                 question=question,
                 mode=mode,
                 enable_garant=legal_research or mode == "garant",
+                enable_court_practice=bool(court_practice),
                 enable_citations=True,
                 document_context=document_context,
                 document_id=document_id,
                 selected_text=selected_text,
                 existing_messages=existing_messages,
+                prebuilt_messages=canonical_messages,
                 editor_mode_hint=editor_mode_hint,
                 template_context=template_context or None,
                 template_label=template_label,
@@ -561,16 +978,49 @@ class ChatGraphService:
                 task_type=task_type,
                 depth_tier=depth_tier,
                 budget_profile=budget_profile,
+                execution_tier=(budget_profile or {}).get("execution_tier") if budget_profile else None,
                 corpus_size=corpus_size,
                 clarification_needed=clarification_needed,
+                retrieval_task=retrieval_task,
+                scoped_file_ids=scoped_file_ids,
+                scoped_doc_type=scoped_doc_type,
+                legal_research=legal_research,
+                court_practice=court_practice,
             )
+            if is_editor_chat and active_turn_id:
+                self._apply_new_turn_state(
+                    initial_state,
+                    is_editor_chat=True,
+                    turn_id=active_turn_id,
+                    editor_mode_hint=editor_mode_hint,
+                    mode=mode,
+                )
+            if is_editor_chat:
+                self._apply_editor_attached_files_context(
+                    initial_state,
+                    case_id=case_id,
+                    user_id=str(user.id),
+                    attached_file_ids=attached_file_ids,
+                )
 
         prep_ms = int((time.monotonic() - prep_started) * 1000)
+        checkpoint_load_ms = prep_ms - after_graph_ms
+        if editor_latency is not None:
+            editor_latency.thread_id = thread_id
+            editor_latency.set_stage(
+                "prep",
+                prep_ms=prep_ms,
+                graph_compile_ms=graph_compile_ms,
+                checkpoint_load_ms=max(0, checkpoint_load_ms),
+                checkpoint_dialog_continued=checkpoint_dialog_continued,
+            )
         if prep_span:
             try:
                 prep_span.update(
                     output={
                         "prep_ms": prep_ms,
+                        "graph_compile_ms": graph_compile_ms,
+                        "checkpoint_load_ms": max(0, checkpoint_load_ms),
                         "thread_id": thread_id,
                         "checkpoint_dialog_continued": checkpoint_dialog_continued,
                     }
@@ -592,15 +1042,79 @@ class ChatGraphService:
         answer_after_reasoning_buffer = ""
         native_reasoning_phase = False
         last_citations_json: Optional[str] = None
+        text_streamed_live = False
         stream_reasoning_ui = bool(getattr(config, "CASE_ASSISTANT_STREAM_REASONING_UI", False))
+        # Token streaming: one channel only — custom writer from generate_response (not messages+custom).
+        stream_modes: List[str] = ["updates"]
+        _case_stream_tokens = bool(getattr(config, "CASE_ASSISTANT_STREAM_CASE_CHAT", True))
+        _editor_custom_stream = bool(
+            turn_emitter
+            and turn_emitter.use_custom_stream_channel()
+            and getattr(config, "EDITOR_CHAT_STREAM_ENABLED", True)
+        )
+        _strict_court_no_tokens = (
+            bool(court_practice)
+            and not bool(legal_research)
+            and not bool(draft_mode)
+            and not bool(document_context)
+        )
+        if _strict_court_no_tokens:
+            stream_modes = ["updates"]
+        elif _editor_custom_stream or _case_stream_tokens:
+            stream_modes = ["updates", "custom"]
+        else:
+            stream_modes = ["messages", "updates"]
 
+        _astream_meta: Dict[str, Any] = {"case_id": case_id, "graph_mode": mode}
+        if is_editor_chat:
+            _astream_meta.update(
+                {
+                    "document_id": document_id,
+                    "editor_mode_hint": editor_mode_hint,
+                    "stream_modes": list(stream_modes),
+                }
+            )
         astream_span = trace_span(
             trace_ctx,
-            name="case_chat_graph_astream",
-            metadata={"case_id": case_id, "graph_mode": mode},
+            name="document_editor_astream" if is_editor_chat else "case_chat_graph_astream",
+            metadata=_astream_meta,
+        )
+        astream_parent_token = (
+            set_trace_span_parent(astream_span) if astream_span is not None else None
         )
         stream_t0 = time.monotonic()
         last_graph_update_t = stream_t0
+        first_sse_to_client_recorded = False
+
+        def _record_first_sse_to_client() -> None:
+            nonlocal first_sse_to_client_recorded
+            if first_sse_to_client_recorded:
+                return
+            first_sse_to_client_recorded = True
+            ms = int((time.monotonic() - stream_t0) * 1000)
+            if editor_latency is not None:
+                editor_latency.set_stage("first_sse_token_to_client", ms=ms)
+
+        if is_editor_chat and trace_ctx:
+            trace_contract_event(
+                trace_ctx,
+                name="llm_generation",
+                metadata=normalize_observability_metadata(
+                    {
+                        "assistant_type": "document_editor",
+                        "editor_mode_hint": editor_mode_hint,
+                        "document_id": document_id,
+                        "thread_id": thread_id,
+                        "turn_id": active_turn_id,
+                    },
+                    step_name="editor_stream_started",
+                    status="running",
+                ),
+                input_payload={"question": (question or "")[:800]},
+            )
+
+        if turn_emitter:
+            yield turn_emitter.turn_started()
 
         try:
             # Token-level streaming: используем stream_mode=["messages", "updates"]
@@ -609,9 +1123,21 @@ class ChatGraphService:
             try:
                 async for stream_mode_type, chunk in graph.astream(
                     initial_state, config=graph_run_config,
-                    stream_mode=["messages", "updates"]
+                    stream_mode=stream_modes,
                 ):
-                    if stream_mode_type == "messages":
+                    if stream_mode_type == "custom":
+                        payload = chunk if isinstance(chunk, dict) else {}
+                        delta = payload.get("textDelta") or payload.get("text_delta")
+                        if delta:
+                            piece = str(delta)
+                            if piece:
+                                full_response += piece
+                                text_streamed_live = True
+                                sse = _format_text_delta_sse(turn_emitter, piece)
+                                if sse:
+                                    _record_first_sse_to_client()
+                                    yield sse
+                    elif stream_mode_type == "messages":
                         # Token-level streaming от LLM
                         msg_chunk, metadata = chunk
                         # Не транслируем в UI токены из внутренних LLM-вызовов (multi-query, подграфы и т.д.) —
@@ -632,18 +1158,32 @@ class ChatGraphService:
                         if hasattr(msg_chunk, "content") and msg_chunk.content:
                             token = msg_chunk.content
                         if token:
+                            piece = str(token)
+                            if not piece:
+                                continue
+                            to_emit = incremental_stream_piece(full_response, piece)
+                            if not to_emit:
+                                continue
                             # Пока идёт reasoning в том же потоке, ответ копим; первый чистый answer-chunk — отдаём весь накопленный текст сразу.
                             if native_reasoning_phase and r_delta:
-                                answer_after_reasoning_buffer += token
+                                answer_after_reasoning_buffer += to_emit
                             elif native_reasoning_phase and not r_delta:
-                                block = answer_after_reasoning_buffer + token
+                                block = answer_after_reasoning_buffer + to_emit
                                 answer_after_reasoning_buffer = ""
                                 native_reasoning_phase = False
                                 full_response += block
-                                yield f"data: {json.dumps({'type': 'text-delta', 'textDelta': block}, ensure_ascii=False)}\n\n"
+                                text_streamed_live = True
+                                sse = _format_text_delta_sse(turn_emitter, block)
+                                if sse:
+                                    _record_first_sse_to_client()
+                                    yield sse
                             else:
-                                full_response += token
-                                yield f"data: {json.dumps({'type': 'text-delta', 'textDelta': token}, ensure_ascii=False)}\n\n"
+                                full_response += to_emit
+                                text_streamed_live = True
+                                sse = _format_text_delta_sse(turn_emitter, to_emit)
+                                if sse:
+                                    _record_first_sse_to_client()
+                                    yield sse
 
                     elif stream_mode_type == "updates":
                         # Node-level updates для метаданных
@@ -652,38 +1192,88 @@ class ChatGraphService:
                                 if not isinstance(node_data, dict):
                                     continue
                                 _now = time.monotonic()
-                                _tctx = get_active_trace_context()
-                                if _tctx:
-                                    trace_contract_event(
-                                        _tctx,
-                                        name="graph_node_completed",
-                                        metadata=normalize_observability_metadata(
-                                            {
-                                                "graph_node": str(node_name),
-                                                "since_stream_start_ms": int((_now - stream_t0) * 1000),
-                                                "since_prev_graph_update_ms": int(
-                                                    (_now - last_graph_update_t) * 1000
-                                                ),
-                                                "state_keys_preview": list(node_data.keys())[:25],
-                                            },
-                                            step_name="graph_node_completed",
-                                            status="success",
-                                        ),
+                                _since_prev_node_ms = int((_now - last_graph_update_t) * 1000)
+                                _gn_extra: Dict[str, Any] = {}
+                                if is_editor_chat:
+                                    from app.services.observability.editor_langfuse_tracing import (
+                                        enrich_editor_graph_node_metadata,
                                     )
+
+                                    _gn_extra.update(
+                                        enrich_editor_graph_node_metadata(
+                                            str(node_name),
+                                            node_data,
+                                            editor_mode_hint=editor_mode_hint,
+                                        )
+                                    )
+                                record_graph_node_completed(
+                                    "case",
+                                    node_name=str(node_name),
+                                    node_data=node_data,
+                                    since_stream_start_ms=int((_now - stream_t0) * 1000),
+                                    since_prev_graph_update_ms=_since_prev_node_ms,
+                                    extra=_gn_extra or None,
+                                )
                                 last_graph_update_t = _now
+                                if editor_latency is not None:
+                                    _node_extra: Dict[str, Any] = {}
+                                    if node_name == "generate_response":
+                                        _elm = node_data.get("editor_latency_meta")
+                                        if isinstance(_elm, dict):
+                                            _llm_sub = _elm.get("llm")
+                                            if isinstance(_llm_sub, dict):
+                                                editor_latency.merge_llm_metrics(_llm_sub)
+                                            else:
+                                                editor_latency.merge_llm_metrics(_elm)
+                                            _prompt_sub = _elm.get("prompt")
+                                            if isinstance(_prompt_sub, dict):
+                                                editor_latency.prompt.update(_prompt_sub)
+                                            for _pk in (
+                                                "postprocess_ms",
+                                                "strip_ms",
+                                                "dc_expand_ms",
+                                                "bracket_repair_ms",
+                                            ):
+                                                if _pk in _elm:
+                                                    editor_latency.stages.setdefault(
+                                                        "postprocess", {}
+                                                    )[_pk] = _elm[_pk]
+                                            for _pk in (
+                                                "ttft_ms",
+                                                "stream_wall_ms",
+                                                "invoke_wall_ms",
+                                                "chunk_count",
+                                                "output_chars",
+                                            ):
+                                                if _pk in _elm:
+                                                    editor_latency.merge_llm_metrics(
+                                                        {_pk: _elm[_pk]}
+                                                    )
+                                            _node_extra["editor_latency_meta"] = True
+                                    editor_latency.add_graph_node(
+                                        str(node_name),
+                                        since_stream_start_ms=int((_now - stream_t0) * 1000),
+                                        since_prev_ms=_since_prev_node_ms,
+                                        extra=_node_extra or None,
+                                    )
 
                                 if node_name == "generate_response" and node_data.get("response") is not None:
                                     answer_after_reasoning_buffer = ""
                                     native_reasoning_phase = False
 
-                                # Обрабатываем response: финальный текст узла — источник истины (после sanitize / цитат).
+                                # Финальный response после sanitize — заменяем preview стрима canonical текстом.
                                 response = node_data.get("response")
-                                if isinstance(response, str) and response != full_response:
-                                    if full_response:
-                                        yield f"data: {json.dumps({'type': 'content_sync', 'content': response}, ensure_ascii=False)}\n\n"
-                                    else:
-                                        yield f"data: {json.dumps({'type': 'text-delta', 'textDelta': response})}\n\n"
-                                    full_response = response
+                                if isinstance(response, str):
+                                    full_response, sync_events = _finalize_generate_response_text(
+                                        resp=response,
+                                        streamed_text=full_response,
+                                        text_streamed_live=text_streamed_live,
+                                        turn_emitter=turn_emitter,
+                                    )
+                                    if sync_events:
+                                        text_streamed_live = True
+                                    for sse in sync_events:
+                                        yield sse
 
                                 # Citations сразу при появлении в графе (RAG → обогащение в generate_response), чтобы UI линковал сноски с первого символа ответа.
                                 node_citations = node_data.get("citations")
@@ -724,12 +1314,28 @@ class ChatGraphService:
                                         for step in thinking_steps:
                                             yield f"data: {json.dumps({'type': 'thinking-step', 'data': step})}\n\n"
 
-                                # Обрабатываем structured_edits (editor mode)
+                                # Patch proposals — only edit intent + producing nodes (turn contract).
                                 structured_edits = node_data.get("structured_edits")
                                 if structured_edits:
-                                    from app.services.chat.events import SSESerializer
-                                    yield SSESerializer.structured_edits(structured_edits)
-                                    logger.info(f"[ChatGraphService] Sent {len(structured_edits)} structured edits")
+                                    if turn_emitter:
+                                        patch_sse = turn_emitter.structured_edits_from_node(
+                                            str(node_name),
+                                            structured_edits,
+                                        )
+                                        if patch_sse:
+                                            yield patch_sse
+                                            logger.info(
+                                                "[ChatGraphService] Sent %s structured edits (turn=%s)",
+                                                turn_emitter.last_patch_count,
+                                                turn_emitter.turn_id,
+                                            )
+                                    else:
+                                        from app.services.chat.events import SSESerializer
+
+                                        yield SSESerializer.structured_edits(structured_edits)
+                                        logger.info(
+                                            f"[ChatGraphService] Sent {len(structured_edits)} structured edits"
+                                        )
 
                                 # Обрабатываем current_phase для прогресса (в UI — только при stream_reasoning_ui)
                                 phase = node_data.get("current_phase")
@@ -749,49 +1355,47 @@ class ChatGraphService:
                             if not isinstance(node_data, dict):
                                 continue
                             _now_fb = time.monotonic()
-                            _tctx_fb = get_active_trace_context()
-                            if _tctx_fb:
-                                trace_contract_event(
-                                    _tctx_fb,
-                                    name="graph_node_completed",
-                                    metadata=normalize_observability_metadata(
-                                        {
-                                            "graph_node": str(node_name),
-                                            "since_stream_start_ms": int((_now_fb - stream_t0) * 1000),
-                                            "since_prev_graph_update_ms": int(
-                                                (_now_fb - last_graph_update_t) * 1000
-                                            ),
-                                            "stream_fallback": "single_mode_updates",
-                                        },
-                                        step_name="graph_node_completed",
-                                        status="success",
-                                    ),
-                                )
+                            record_graph_node_completed(
+                                "case",
+                                node_name=str(node_name),
+                                node_data=node_data,
+                                since_stream_start_ms=int((_now_fb - stream_t0) * 1000),
+                                since_prev_graph_update_ms=int(
+                                    (_now_fb - last_graph_update_t) * 1000
+                                ),
+                                extra={"stream_fallback": "single_mode_updates"},
+                            )
                             last_graph_update_t = _now_fb
 
-                            # Обрабатываем messages
+                            # Обрабатываем messages (legacy single-mode fallback)
                             messages = node_data.get("messages", [])
                             for msg in messages:
                                 if isinstance(msg, AIMessage) and msg.content:
-                                    content = msg.content
-                                    if content != full_response:
-                                        if full_response and content.startswith(full_response):
-                                            delta = content[len(full_response):]
-                                        else:
-                                            delta = content
-                                        if delta:
-                                            yield f"data: {json.dumps({'type': 'text-delta', 'textDelta': delta})}\n\n"
-                                        full_response = content
+                                    content = str(msg.content)
+                                    if content.strip():
+                                        full_response, sync_events = _finalize_generate_response_text(
+                                            resp=content,
+                                            streamed_text=full_response,
+                                            text_streamed_live=text_streamed_live,
+                                            turn_emitter=turn_emitter,
+                                        )
+                                        if sync_events:
+                                            text_streamed_live = True
+                                        for sse in sync_events:
+                                            yield sse
 
                             response = node_data.get("response")
-                            if response and response != full_response:
-                                if full_response and response.startswith(full_response):
-                                    delta = response[len(full_response):]
-                                else:
-                                    delta = response
-                                if delta:
-                                    yield f"data: {json.dumps({'type': 'text-delta', 'textDelta': delta})}\n\n"
-                                full_response = response
+                            if isinstance(response, str) and response.strip():
+                                full_response, sync_events = _finalize_generate_response_text(
+                                    resp=response,
+                                    streamed_text=full_response,
+                                    text_streamed_live=text_streamed_live,
+                                    turn_emitter=turn_emitter,
+                                )
+                                if sync_events:
+                                    text_streamed_live = True
+                                for sse in sync_events:
+                                    yield sse
 
                             node_citations = node_data.get("citations")
                             if node_citations:
@@ -830,8 +1434,17 @@ class ChatGraphService:
 
                             structured_edits = node_data.get("structured_edits")
                             if structured_edits:
-                                from app.services.chat.events import SSESerializer
-                                yield SSESerializer.structured_edits(structured_edits)
+                                if turn_emitter:
+                                    patch_sse = turn_emitter.structured_edits_from_node(
+                                        str(node_name),
+                                        structured_edits,
+                                    )
+                                    if patch_sse:
+                                        yield patch_sse
+                                else:
+                                    from app.services.chat.events import SSESerializer
+
+                                    yield SSESerializer.structured_edits(structured_edits)
 
                             phase = node_data.get("current_phase")
                             if phase:
@@ -843,13 +1456,17 @@ class ChatGraphService:
 
             if answer_after_reasoning_buffer:
                 full_response += answer_after_reasoning_buffer
-                yield f"data: {json.dumps({'type': 'text-delta', 'textDelta': answer_after_reasoning_buffer}, ensure_ascii=False)}\n\n"
+                sse = _format_text_delta_sse(turn_emitter, answer_after_reasoning_buffer)
+                if sse:
+                    yield sse
                 answer_after_reasoning_buffer = ""
 
             # Если ответ пустой, отправляем fallback
             if not full_response:
                 full_response = "Не удалось получить ответ. Попробуйте переформулировать вопрос."
-                yield f"data: {json.dumps({'type': 'text-delta', 'textDelta': full_response})}\n\n"
+                sse = _format_text_delta_sse(turn_emitter, full_response)
+                if sse:
+                    yield sse
 
             # Догоняем citations, если граф не прислал diff по пути (редко)
             if citations:
@@ -871,6 +1488,30 @@ class ChatGraphService:
                     case_id, full_response, session_id, citations, answer_blocks=answer_blocks
                 )
 
+            if turn_emitter:
+                yield turn_emitter.turn_completed(
+                    answer=full_response or "",
+                    citations_count=len(citations or []),
+                    structured_edits_count=turn_emitter.last_patch_count,
+                )
+
+            if editor_latency is not None:
+                from app.services.observability.editor_latency_trace import (
+                    editor_latency_verbose,
+                    emit_editor_turn_summary,
+                    format_latency_debug_sse,
+                )
+
+                editor_latency.set_stage(
+                    "astream",
+                    astream_wall_ms=int((time.monotonic() - stream_t0) * 1000),
+                    response_chars=len(full_response or ""),
+                    text_streamed_live=text_streamed_live,
+                )
+                emit_editor_turn_summary(editor_latency)
+                if editor_latency_verbose():
+                    yield f"data: {format_latency_debug_sse(editor_latency)}\n\n"
+
             # Отправляем финальное событие
             yield f"data: {json.dumps({'type': 'finish', 'finishReason': 'stop'})}\n\n"
 
@@ -886,15 +1527,18 @@ class ChatGraphService:
             if persist_history:
                 self._save_assistant_message(case_id, error_msg, session_id)
         finally:
+            if astream_parent_token is not None:
+                reset_trace_span_parent(astream_parent_token)
             if astream_span:
                 try:
-                    astream_span.update(
-                        output={
-                            "astream_wall_ms": int((time.monotonic() - stream_t0) * 1000),
-                            "response_chars": len(full_response or ""),
-                            "citations_count": len(citations or []),
-                        }
-                    )
+                    _out: Dict[str, Any] = {
+                        "astream_wall_ms": int((time.monotonic() - stream_t0) * 1000),
+                        "response_chars": len(full_response or ""),
+                        "citations_count": len(citations or []),
+                    }
+                    if editor_latency is not None:
+                        _out["editor_latency"] = editor_latency.to_dict()
+                    astream_span.update(output=_out)
                 except Exception:
                     logger.debug("case_chat_graph_astream span update failed", exc_info=True)
                 try:
@@ -909,6 +1553,7 @@ class ChatGraphService:
         user: User,
         deep_think: bool = False,
         legal_research: bool = False,
+        court_practice: bool = False,
         draft_mode: bool = False,
         document_context: str = None,
         document_id: str = None,
@@ -952,18 +1597,17 @@ class ChatGraphService:
             yield create_finish_event("error", "Дело не найдено")
             return
 
-        from app.services.draft_template_context import resolve_draft_template_context
-
-        template_context, template_label = resolve_draft_template_context(
-            self.db,
+        template_context, template_label, template_key = self._resolve_template_context(
+            question=question,
+            draft_mode=draft_mode,
+            document_context=document_context,
             template_system_id=template_system_id,
             template_file_content=template_file_content,
             template_file_id=template_file_id,
-            user_question=question,
         )
         
-        # Получаем session_id
-        session_id = self._get_or_create_session(case_id)
+        # Получаем session_id (legacy stream path — mint when client did not pass one)
+        session_id = self._resolve_case_session(None)
         
         # Сохраняем сообщение пользователя
         self._save_user_message(case_id, question, session_id)
@@ -972,14 +1616,21 @@ class ChatGraphService:
         mode = self._determine_mode(deep_think, legal_research, draft_mode)
         
         # Получаем граф
-        graph = self._get_or_create_graph()
+        graph, _ = self._get_or_create_graph()
         
         # Получаем или создаём thread_id для checkpointing (переиспользуем session_id)
         thread_id = self._get_or_create_thread_id(case_id, session_id)
         config = {
             "configurable": {"thread_id": thread_id},
-            "recursion_limit": 25
+            "recursion_limit": _case_graph_recursion_limit()
         }
+
+        canonical_messages = self._resolve_case_canonical_messages(
+            case_id,
+            session_id,
+            question,
+            hydrate_from_db=True,
+        )
         
         # Загружаем существующее состояние из checkpoint для продолжения диалога
         try:
@@ -998,18 +1649,27 @@ class ChatGraphService:
                     current_state["template_context"] = ""
                 if "template_label" not in current_state:
                     current_state["template_label"] = None
+                if "template_key" not in current_state:
+                    current_state["template_key"] = None
+                if "template_system_id" not in current_state:
+                    current_state["template_system_id"] = None
+                if "template_field_catalog" not in current_state:
+                    current_state["template_field_catalog"] = None
                 if attached_file_ids is not None:
                     current_state["attached_file_ids"] = [str(x) for x in attached_file_ids if x] or None
                 elif "attached_file_ids" not in current_state:
                     current_state["attached_file_ids"] = None
-                # Добавляем новое сообщение пользователя
-                current_messages = current_state.get("messages", [])
-                current_messages.append(HumanMessage(content=question))
-                current_state["messages"] = current_messages
+                if canonical_messages is not None:
+                    self._apply_canonical_messages(current_state, canonical_messages)
+                else:
+                    current_messages = current_state.get("messages", [])
+                    current_messages.append(HumanMessage(content=question))
+                    current_state["messages"] = current_messages
                 # Обновляем вопрос и режим для текущего запроса
                 current_state["question"] = question
                 current_state["mode"] = mode
                 current_state["enable_garant"] = legal_research or mode == "garant"
+                current_state["enable_court_practice"] = bool(court_practice)
                 if document_context:
                     current_state["document_context"] = document_context
                     current_state["editor_mode"] = True
@@ -1037,14 +1697,20 @@ class ChatGraphService:
                     question=question,
                     mode=mode,
                     enable_garant=legal_research or mode == "garant",
+                    enable_court_practice=bool(court_practice),
                     enable_citations=True,
                     document_context=document_context,
                     document_id=document_id,
                     selected_text=selected_text,
                     existing_messages=existing_messages,
+                    prebuilt_messages=canonical_messages,
                     template_context=template_context or None,
                     template_label=template_label,
+                    template_key=template_key,
+                    template_system_id=template_system_id,
                     attached_file_ids=attached_file_ids,
+                    legal_research=legal_research,
+                    court_practice=court_practice,
                 )
                 logger.info(f"[ChatGraphService] Starting new dialog (token stream), thread_id: {thread_id}")
         except Exception as e:
@@ -1056,14 +1722,18 @@ class ChatGraphService:
                 question=question,
                 mode=mode,
                 enable_garant=legal_research or mode == "garant",
+                enable_court_practice=bool(court_practice),
                 enable_citations=True,
                 document_context=document_context,
                 document_id=document_id,
                 selected_text=selected_text,
                 existing_messages=existing_messages,
+                prebuilt_messages=canonical_messages,
                 template_context=template_context or None,
                 template_label=template_label,
                 attached_file_ids=attached_file_ids,
+                legal_research=legal_research,
+                court_practice=court_practice,
             )
         
         full_response = ""
@@ -1166,32 +1836,39 @@ class ChatGraphService:
             yield format_sse_event(StreamEvent(type="error", data={"error": "Дело не найдено"}))
             return
 
-        from app.services.draft_template_context import resolve_draft_template_context
-
-        template_context, template_label = resolve_draft_template_context(
-            self.db,
+        template_context, template_label, template_key = self._resolve_template_context(
+            question=question,
+            draft_mode=bool(kwargs.get("draft_mode")),
+            document_context=kwargs.get("document_context"),
             template_system_id=kwargs.get("template_system_id"),
             template_file_content=kwargs.get("template_file_content"),
             template_file_id=kwargs.get("template_file_id"),
-            user_question=question,
         )
         attached_kw = kwargs.get("attached_file_ids")
         
         # Получаем session_id
-        session_id = self._get_or_create_session(case_id)
+        session_id = self._resolve_case_session(kwargs.get("session_id"))
         self._save_user_message(case_id, question, session_id)
-        
+
         # Определяем режим
         mode = self._determine_mode(
             kwargs.get("deep_think", False),
             kwargs.get("legal_research", False),
-            kwargs.get("draft_mode", False)
+            kwargs.get("draft_mode", False),
         )
         
-        graph = self._get_or_create_graph()
+        graph, _ = self._get_or_create_graph()
         # Получаем или создаём thread_id для checkpointing (переиспользуем session_id)
         thread_id = self._get_or_create_thread_id(case_id, session_id)
-        config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 25}
+        config = {"configurable": {"thread_id": thread_id}, "recursion_limit": _case_graph_recursion_limit()}
+
+        is_editor_chat = bool(kwargs.get("document_context")) and not bool(kwargs.get("draft_mode"))
+        canonical_messages = self._resolve_case_canonical_messages(
+            case_id,
+            session_id,
+            question,
+            hydrate_from_db=not is_editor_chat,
+        )
         
         # Загружаем существующее состояние из checkpoint для продолжения диалога
         try:
@@ -1210,18 +1887,27 @@ class ChatGraphService:
                     current_state["template_context"] = ""
                 if "template_label" not in current_state:
                     current_state["template_label"] = None
+                if "template_key" not in current_state:
+                    current_state["template_key"] = None
+                if "template_system_id" not in current_state:
+                    current_state["template_system_id"] = None
+                if "template_field_catalog" not in current_state:
+                    current_state["template_field_catalog"] = None
                 if attached_kw is not None:
                     current_state["attached_file_ids"] = [str(x) for x in attached_kw if x] or None
                 elif "attached_file_ids" not in current_state:
                     current_state["attached_file_ids"] = None
-                # Добавляем новое сообщение пользователя
-                current_messages = current_state.get("messages", [])
-                current_messages.append(HumanMessage(content=question))
-                current_state["messages"] = current_messages
+                if canonical_messages is not None:
+                    self._apply_canonical_messages(current_state, canonical_messages)
+                else:
+                    current_messages = current_state.get("messages", [])
+                    current_messages.append(HumanMessage(content=question))
+                    current_state["messages"] = current_messages
                 # Обновляем вопрос и режим для текущего запроса
                 current_state["question"] = question
                 current_state["mode"] = mode
                 current_state["enable_garant"] = kwargs.get("legal_research", False) or mode == "garant"
+                current_state["enable_court_practice"] = bool(kwargs.get("court_practice", False))
                 if kwargs.get("document_context"):
                     current_state["document_context"] = kwargs.get("document_context")
                     current_state["editor_mode"] = True
@@ -1249,14 +1935,18 @@ class ChatGraphService:
                     question=question,
                     mode=mode,
                     enable_garant=kwargs.get("legal_research", False) or mode == "garant",
+                    enable_court_practice=bool(kwargs.get("court_practice", False)),
                     enable_citations=True,
                     document_context=kwargs.get("document_context"),
                     document_id=kwargs.get("document_id"),
                     selected_text=kwargs.get("selected_text"),
                     existing_messages=kwargs.get("existing_messages"),
+                    prebuilt_messages=canonical_messages,
                     template_context=template_context or None,
                     template_label=template_label,
                     attached_file_ids=attached_kw,
+                    legal_research=bool(kwargs.get("legal_research", False)),
+                    court_practice=bool(kwargs.get("court_practice", False)),
                 )
                 logger.info(f"[ChatGraphService] Starting new dialog (stream_with_mode), thread_id: {thread_id}")
         except Exception as e:
@@ -1268,14 +1958,18 @@ class ChatGraphService:
                 question=question,
                 mode=mode,
                 enable_garant=kwargs.get("legal_research", False) or mode == "garant",
+                enable_court_practice=bool(kwargs.get("court_practice", False)),
                 enable_citations=True,
                 document_context=kwargs.get("document_context"),
                 document_id=kwargs.get("document_id"),
                 selected_text=kwargs.get("selected_text"),
                 existing_messages=kwargs.get("existing_messages"),
+                prebuilt_messages=canonical_messages,
                 template_context=template_context or None,
                 template_label=template_label,
                 attached_file_ids=attached_kw,
+                legal_research=bool(kwargs.get("legal_research", False)),
+                court_practice=bool(kwargs.get("court_practice", False)),
             )
         
         full_response = ""
@@ -1346,11 +2040,11 @@ class ChatGraphService:
                 return
         
         # Получаем граф
-        graph = self._get_or_create_graph()
+        graph, _ = self._get_or_create_graph()
         
         config = {
             "configurable": {"thread_id": thread_id},
-            "recursion_limit": 25
+            "recursion_limit": _case_graph_recursion_limit()
         }
         
         try:

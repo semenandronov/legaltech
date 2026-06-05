@@ -10,6 +10,8 @@ import {
   Heading2,
   Heading3,
   Strikethrough,
+  Underline,
+  Highlighter,
   AlignLeft,
   AlignCenter,
   AlignRight,
@@ -21,23 +23,49 @@ import {
 } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../UI/tooltip'
 import { useEffect, useRef, useState } from 'react'
+import {
+  applyFontFamily,
+  applyFontSize,
+  toggleBulletList,
+  toggleOrderedList,
+} from './editorTypography'
+import type { PmTextRange } from './editorSelection'
+import { ToolbarTypographyMenu } from './ToolbarTypographyMenu'
 
 interface EditorToolbarProps {
   editor: Editor | null
+  getSavedSelection: () => PmTextRange | null
   hasRisks?: boolean
   onClearRisks?: () => void
   onCommentsChanged?: (comments: Array<{ id: string; from: number; to: number; text: string; createdAt?: string }>) => void
 }
 
-// Prevent toolbar buttons from stealing focus from the editor.
-// This is the standard fix for TipTap toolbar — without it,
-// the first click only returns focus and the command is ignored.
-const preventFocusLoss = (e: React.MouseEvent) => {
+/** Buttons only: keep editor focus. Do NOT use on &lt;select&gt; — blocks native dropdown. */
+const preventButtonFocusLoss = (e: React.MouseEvent) => {
   e.preventDefault()
 }
 
+const FONT_FAMILIES = [
+  { value: 'Times New Roman', label: 'Times New Roman' },
+  { value: 'Arial', label: 'Arial' },
+  { value: 'Calibri', label: 'Calibri' },
+  { value: 'Inter', label: 'Inter' },
+] as const
+
+const FONT_SIZES = [
+  { value: '10pt', label: '10' },
+  { value: '11pt', label: '11' },
+  { value: '12pt', label: '12' },
+  { value: '13pt', label: '13' },
+  { value: '14pt', label: '14' },
+  { value: '16pt', label: '16' },
+  { value: '18pt', label: '18' },
+  { value: '20pt', label: '20' },
+] as const
+
 export const EditorToolbar = ({
   editor,
+  getSavedSelection,
   hasRisks = false,
   onClearRisks,
   onCommentsChanged,
@@ -107,7 +135,7 @@ export const EditorToolbar = ({
     <Tooltip>
       <TooltipTrigger asChild>
         <button
-          onMouseDown={preventFocusLoss}
+          onMouseDown={preventButtonFocusLoss}
           onClick={onClick}
           disabled={disabled}
           aria-label={title}
@@ -133,48 +161,28 @@ export const EditorToolbar = ({
         className="editor-toolbar flex items-center gap-1 p-2 border-b min-h-[54px] sticky top-0 z-30"
         style={{ borderBottomColor: 'var(--color-border)' }}
       >
-        {/* Typography */}
+        {/* Typography — Radix menus (native select + preventDefault broke clicks) */}
         <>
-          <select
+          <ToolbarTypographyMenu
+            editor={editor}
+            label="Шрифт"
             value={currentFontFamily}
-            onMouseDown={preventFocusLoss}
-            onPointerDown={preventFocusLoss}
-            onChange={(e) => {
-              const v = e.target.value
-              setCurrentFontFamily(v)
-              editor.chain().focus().setFontFamily(v).run()
-            }}
-            className="h-9 px-2 text-sm border rounded-md bg-white"
-            style={{ borderColor: 'var(--color-border)' }}
-            aria-label="Шрифт"
-          >
-            <option value="Times New Roman">Times New Roman</option>
-            <option value="Arial">Arial</option>
-            <option value="Calibri">Calibri</option>
-            <option value="Inter">Inter</option>
-          </select>
-          <select
+            options={[...FONT_FAMILIES]}
+            getSavedSelection={getSavedSelection}
+            onValueChange={setCurrentFontFamily}
+            onApply={(v, saved) => applyFontFamily(editor, v, saved)}
+            minWidth={148}
+          />
+          <ToolbarTypographyMenu
+            editor={editor}
+            label="Размер шрифта"
             value={currentFontSize}
-            onMouseDown={preventFocusLoss}
-            onPointerDown={preventFocusLoss}
-            onChange={(e) => {
-              const v = e.target.value
-              setCurrentFontSize(v)
-              editor.chain().focus().setFontSize(v).run()
-            }}
-            className="h-9 px-2 text-sm border rounded-md bg-white"
-            style={{ borderColor: 'var(--color-border)' }}
-            aria-label="Размер шрифта"
-          >
-            <option value="10pt">10</option>
-            <option value="11pt">11</option>
-            <option value="12pt">12</option>
-            <option value="13pt">13</option>
-            <option value="14pt">14</option>
-            <option value="16pt">16</option>
-            <option value="18pt">18</option>
-            <option value="20pt">20</option>
-          </select>
+            options={[...FONT_SIZES]}
+            getSavedSelection={getSavedSelection}
+            onValueChange={setCurrentFontSize}
+            onApply={(v, saved) => applyFontSize(editor, v, saved)}
+            minWidth={56}
+          />
           <div className="w-px h-6 bg-gray-300 mx-1" />
         </>
 
@@ -218,22 +226,59 @@ export const EditorToolbar = ({
 
         {/* Formatting */}
         <ToolbarButton
-          onClick={() => editor.chain().focus().toggleBold().run()}
+          onClick={() => {
+            const saved = getSavedSelection()
+            const chain = editor.chain().focus()
+            if (saved) chain.setTextSelection(saved)
+            chain.toggleBold().run()
+          }}
           isActive={editor.isActive('bold')}
           icon={Bold}
           title="Жирный (Ctrl+B)"
         />
         <ToolbarButton
-          onClick={() => editor.chain().focus().toggleItalic().run()}
+          onClick={() => {
+            const saved = getSavedSelection()
+            const chain = editor.chain().focus()
+            if (saved) chain.setTextSelection(saved)
+            chain.toggleItalic().run()
+          }}
           isActive={editor.isActive('italic')}
           icon={Italic}
           title="Курсив (Ctrl+I)"
         />
         <ToolbarButton
-          onClick={() => editor.chain().focus().toggleStrike().run()}
+          onClick={() => {
+            const saved = getSavedSelection()
+            const chain = editor.chain().focus()
+            if (saved) chain.setTextSelection(saved)
+            chain.toggleStrike().run()
+          }}
           isActive={editor.isActive('strike')}
           icon={Strikethrough}
           title="Зачеркнуть"
+        />
+        <ToolbarButton
+          onClick={() => {
+            const saved = getSavedSelection()
+            const chain = editor.chain().focus()
+            if (saved) chain.setTextSelection(saved)
+            chain.toggleUnderline().run()
+          }}
+          isActive={editor.isActive('underline')}
+          icon={Underline}
+          title="Подчеркнуть (Ctrl+U)"
+        />
+        <ToolbarButton
+          onClick={() => {
+            const saved = getSavedSelection()
+            const chain = editor.chain().focus()
+            if (saved) chain.setTextSelection(saved)
+            chain.toggleHighlight().run()
+          }}
+          isActive={editor.isActive('highlight')}
+          icon={Highlighter}
+          title="Выделить маркером"
         />
 
         <div className="w-px h-6 bg-gray-300 mx-1"></div>
@@ -268,13 +313,13 @@ export const EditorToolbar = ({
 
         {/* Lists */}
         <ToolbarButton
-          onClick={() => editor.chain().focus().toggleBulletList().run()}
+          onClick={() => toggleBulletList(editor, getSavedSelection())}
           isActive={editor.isActive('bulletList')}
           icon={List}
           title="Маркированный список"
         />
         <ToolbarButton
-          onClick={() => editor.chain().focus().toggleOrderedList().run()}
+          onClick={() => toggleOrderedList(editor, getSavedSelection())}
           isActive={editor.isActive('orderedList')}
           icon={ListOrdered}
           title="Нумерованный список"
@@ -318,7 +363,7 @@ export const EditorToolbar = ({
               <span>Риски подсвечены</span>
             </div>
             <button
-              onMouseDown={preventFocusLoss}
+              onMouseDown={preventButtonFocusLoss}
               onClick={onClearRisks}
               className="p-2 rounded hover:bg-amber-100 text-amber-600 transition-colors"
               aria-label="Очистить подсветку рисков"

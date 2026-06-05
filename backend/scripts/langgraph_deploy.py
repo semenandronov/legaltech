@@ -234,12 +234,6 @@ def cmd_test(args):
         print(f"  ❌ chat_graph: {e}")
     
     try:
-        from app.services.langchain_agents.graphs.tabular_graph import create_tabular_graph
-        print("  ✅ tabular_graph")
-    except Exception as e:
-        print(f"  ❌ tabular_graph: {e}")
-    
-    try:
         from app.services.langchain_agents.graphs.workflow_graph import create_workflow_graph
         print("  ✅ workflow_graph")
     except Exception as e:

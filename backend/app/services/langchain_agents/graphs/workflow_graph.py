@@ -45,7 +45,7 @@ generate_plan (генерация плана шагов)
 
 # КОГДА НЕ ИСПОЛЬЗОВАТЬ
 - Простой вопрос-ответ → используй ChatGraph
-- Извлечение в таблицу → используй TabularGraph
+- Извлечение в таблицу → используй TabularReviewService (tabular_cell_pipeline)
 """
 from typing import TypedDict, Literal, Optional, List, Dict, Any, Annotated
 from langgraph.graph import StateGraph, END, START

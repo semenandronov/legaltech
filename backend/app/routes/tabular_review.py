@@ -25,7 +25,7 @@ class TabularReviewCreateRequest(BaseModel):
 
 class ColumnCreateRequest(BaseModel):
     column_label: str
-    column_type: str  # text, number, currency, yes_no, date, tag, verbatim, manual_input
+    column_type: str  # text, number, currency, yes_no, date, tag, verbatim, manual_input, document_type
     prompt: str
     column_config: Optional[dict] = None  # Конфигурация для tag: {options: [{label, color}], allow_custom: bool}
 
@@ -84,7 +84,7 @@ class TemplateCreateRequest(BaseModel):
 
 class ColumnPromptGenerateRequest(BaseModel):
     column_label: str
-    column_type: str  # text, number, currency, yes_no, date, tag, verbatim, manual_input
+    column_type: str  # text, number, currency, yes_no, date, tag, verbatim, manual_input, document_type
 
 
 class ColumnDescriptionRequest(BaseModel):
@@ -446,12 +446,12 @@ async def delete_column(
     """Delete a column (cascade deletes all cells)"""
     try:
         service = TabularReviewService(db)
-        service.delete_column(
+        result = await service.delete_column_and_notify(
             review_id=review_id,
             column_id=column_id,
-            user_id=current_user.id
+            user_id=current_user.id,
         )
-        return {"success": True}
+        return {"success": True, **result}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:

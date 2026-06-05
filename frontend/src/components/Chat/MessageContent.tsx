@@ -4,7 +4,12 @@ import type { Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { SourceInfo } from '../../services/api'
 import { InlineCitationAdapter } from './InlineCitationAdapter'
-import { linkCitationsInline } from './citationLinker'
+import {
+  encodeCitationMarker,
+  encodeLegacyCitationMarker,
+  hasEmbeddedCitationMarkers,
+  linkCitationsInline,
+} from './citationLinker'
 import type { AnswerBlockItem } from './AnswerBlocks'
 
 interface MessageContentProps {
@@ -14,6 +19,11 @@ interface MessageContentProps {
   isStreaming?: boolean
   /** Ограничение кандидатов для линкера (Phase 2 answer_blocks). */
   answerBlocks?: AnswerBlockItem[]
+  /**
+   * Как у глобального ассистента: [N] → клик на месте, без нарезки абзацев (linkCitationsInline).
+   * Для внутреннего ассистента по делу.
+   */
+  preferLegacyCitations?: boolean
 }
 
 const ZW = '\u200B\u200B'
@@ -116,10 +126,11 @@ function buildMarkdownComponents(
     p: ({ children }) => (
       <p
         style={{
-          margin: '0 0 0.75rem 0',
-          lineHeight: 1.65,
+          margin: '0 0 0.85rem 0',
+          lineHeight: 1.68,
           display: 'block',
           color: 'var(--color-text-primary, inherit)',
+          letterSpacing: '0.01em',
         }}
       >
         {w(children)}
@@ -146,7 +157,7 @@ function buildMarkdownComponents(
           fontSize: '1.08rem',
           fontWeight: 650,
           color: 'var(--color-text-primary, inherit)',
-          margin: '1.1rem 0 0.45rem 0',
+          margin: '1.35rem 0 0.55rem 0',
           display: 'block',
           lineHeight: 1.4,
           letterSpacing: '-0.01em',
@@ -161,7 +172,7 @@ function buildMarkdownComponents(
           fontSize: '1.02rem',
           fontWeight: 600,
           color: 'var(--color-text-primary, inherit)',
-          margin: '1rem 0 0.4rem 0',
+          margin: '1.15rem 0 0.45rem 0',
           display: 'block',
           lineHeight: 1.45,
         }}
@@ -186,10 +197,10 @@ function buildMarkdownComponents(
     ul: ({ children }) => (
       <ul
         style={{
-          margin: '0.5rem 0 0.75rem 0',
-          paddingLeft: '1.25rem',
+          margin: '0.55rem 0 0.9rem 0',
+          paddingLeft: '1.35rem',
           display: 'block',
-          lineHeight: 1.65,
+          lineHeight: 1.68,
           listStyleType: 'disc',
           color: 'var(--color-text-primary, inherit)',
         }}
@@ -200,10 +211,10 @@ function buildMarkdownComponents(
     ol: ({ children }) => (
       <ol
         style={{
-          margin: '0.5rem 0 0.75rem 0',
-          paddingLeft: '1.25rem',
+          margin: '0.55rem 0 0.9rem 0',
+          paddingLeft: '1.35rem',
           display: 'block',
-          lineHeight: 1.65,
+          lineHeight: 1.68,
           listStyleType: 'decimal',
           color: 'var(--color-text-primary, inherit)',
         }}
@@ -212,7 +223,7 @@ function buildMarkdownComponents(
       </ol>
     ),
     li: ({ children }) => (
-      <li style={{ margin: '0.35rem 0', display: 'list-item', lineHeight: 1.65, paddingLeft: '4px' }}>
+      <li style={{ margin: '0.4rem 0', display: 'list-item', lineHeight: 1.68, paddingLeft: '4px' }}>
         {w(children)}
       </li>
     ),
@@ -297,15 +308,16 @@ function buildMarkdownComponents(
         style={{
           borderLeft: '3px solid color-mix(in srgb, var(--color-accent, #2563eb) 45%, var(--color-border, #ccc))',
           paddingLeft: '1rem',
-          margin: '0.65rem 0',
+          margin: '0.85rem 0',
           color: 'var(--color-text-secondary, inherit)',
           fontStyle: 'normal',
           display: 'block',
-          paddingTop: '0.35rem',
-          paddingBottom: '0.35rem',
+          paddingTop: '0.45rem',
+          paddingBottom: '0.45rem',
           paddingRight: '0.75rem',
           backgroundColor: 'var(--color-bg-secondary, rgba(0,0,0,0.02))',
           borderRadius: '0 6px 6px 0',
+          lineHeight: 1.68,
         }}
       >
         {w(children)}
@@ -352,7 +364,7 @@ function buildMarkdownComponents(
       const label = tbl.headers[tbl.col] ?? ''
       tbl.col++
       return (
-        <div style={{ lineHeight: 1.7, display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+        <div style={{ lineHeight: 1.72, display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
           {label && (
             <span style={{ fontWeight: 600, flexShrink: 0, color: 'inherit' }}>{label}:</span>
           )}
@@ -365,7 +377,7 @@ function buildMarkdownComponents(
         style={{
           border: 'none',
           borderTop: '1px solid var(--color-border, rgba(0,0,0,0.1))',
-          margin: '1rem 0',
+          margin: '1.35rem 0',
           display: 'block',
         }}
       />
@@ -454,14 +466,15 @@ function legacyBracketToMarkers(text: string, sources: SourceInfo[]): { text: st
   })
 
   const effectiveSources = remappedSources.length > 0 ? remappedSources : sources
-  const ZW = '\u200B\u200B'
   const withMarkers = effectiveSources.length
     ? replaced.replace(/\[(\d+)\]/g, (match, num) => {
         const idx = parseInt(num, 10)
-        if (idx >= 1 && idx <= effectiveSources.length) {
-          return `${ZW}CITE_${idx}_ENDCITE${ZW}`
+        if (idx < 1 || idx > effectiveSources.length) return match
+        const src = effectiveSources[idx - 1]
+        if (src?.citation_id) {
+          return encodeCitationMarker(src.citation_id, idx)
         }
-        return match
+        return encodeLegacyCitationMarker(idx)
       })
     : replaced
 
@@ -474,10 +487,12 @@ const MessageContent: React.FC<MessageContentProps> = ({
   onCitationClick,
   isStreaming = false,
   answerBlocks,
+  preferLegacyCitations = false,
 }) => {
   const { processedText, effectiveSources } = useMemo(() => {
     const hasCitationIds = sources.some((s) => s.citation_id)
-    const useLinker = hasCitationIds && sources.length > 0 && !isStreaming
+    const useLinker =
+      hasCitationIds && sources.length > 0 && !isStreaming && !preferLegacyCitations
 
     if (useLinker) {
       const { markdown, orderedSources } = linkCitationsInline({
@@ -488,10 +503,13 @@ const MessageContent: React.FC<MessageContentProps> = ({
       return { processedText: markdown, effectiveSources: orderedSources }
     }
 
-    let text = lightNormalizeForLegacyCitations(content, sources)
-    const { text: withMarkers, ordered } = legacyBracketToMarkers(text, sources)
+    const normalized = lightNormalizeForLegacyCitations(content, sources)
+    if (hasEmbeddedCitationMarkers(normalized)) {
+      return { processedText: normalized, effectiveSources: sources }
+    }
+    const { text: withMarkers, ordered } = legacyBracketToMarkers(normalized, sources)
     return { processedText: withMarkers, effectiveSources: ordered }
-  }, [content, sources, isStreaming, answerBlocks])
+  }, [content, sources, isStreaming, answerBlocks, preferLegacyCitations])
 
   const markdownComponents = useMemo(
     () => buildMarkdownComponents(effectiveSources, onCitationClick),
@@ -502,7 +520,7 @@ const MessageContent: React.FC<MessageContentProps> = ({
     <div
       className="assistant-markdown"
       style={{
-        maxWidth: '100%',
+        maxWidth: 'min(100%, 52rem)',
         wordWrap: 'break-word',
         overflowWrap: 'break-word',
         fontSize: '0.9375rem',

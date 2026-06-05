@@ -20,8 +20,9 @@ interface ColumnHeaderMenuProps {
   columnId: string
   columnLabel: string
   isPinned?: boolean
+  disabled?: boolean
   sortDirection?: "asc" | "desc" | null
-  onEdit?: () => void
+  onEdit?: (anchorEl: HTMLElement) => void
   onPin?: () => void
   onUnpin?: () => void
   onMarkAllReviewed?: () => void
@@ -35,12 +36,14 @@ export const ColumnHeaderMenu: React.FC<ColumnHeaderMenuProps> = ({
   columnId: _columnId,
   columnLabel: _columnLabel,
   isPinned = false,
+  disabled = false,
   onEdit,
   onPin,
   onUnpin,
   onDelete,
 }) => {
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)
+  const triggerRef = React.useRef<HTMLButtonElement>(null)
   const open = Boolean(anchorEl)
 
   const handleClick = (event: React.MouseEvent<HTMLElement>) => {
@@ -54,7 +57,10 @@ export const ColumnHeaderMenu: React.FC<ColumnHeaderMenuProps> = ({
 
   const handleEdit = () => {
     handleClose()
-    onEdit?.()
+    const anchor = triggerRef.current
+    if (anchor && onEdit) {
+      onEdit(anchor)
+    }
   }
 
   const handlePin = () => {
@@ -74,8 +80,11 @@ export const ColumnHeaderMenu: React.FC<ColumnHeaderMenuProps> = ({
   return (
     <>
       <IconButton
+        ref={triggerRef}
         size="small"
         onClick={handleClick}
+        disabled={disabled}
+        aria-label={`Меню колонки ${_columnLabel}`}
         sx={{
           p: 0.5,
           color: "#6B7280",
@@ -108,7 +117,7 @@ export const ColumnHeaderMenu: React.FC<ColumnHeaderMenuProps> = ({
         
         <Divider />
         
-        <MenuItem onClick={handleDelete} sx={{ color: "error.main" }}>
+        <MenuItem onClick={handleDelete} disabled={disabled} sx={{ color: "error.main" }}>
           <ListItemIcon>
             <DeleteIcon fontSize="small" color="error" />
           </ListItemIcon>

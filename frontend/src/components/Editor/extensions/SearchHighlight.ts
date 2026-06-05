@@ -7,10 +7,37 @@ export interface SearchHighlightResult {
   to: number
 }
 
-export interface SearchHighlightOptions {
+export interface SearchHighlightState {
   results: SearchHighlightResult[]
   currentIndex: number
-  active: boolean
+}
+
+export const searchHighlightPluginKey = new PluginKey<SearchHighlightState>('searchHighlight')
+
+function buildDecorationSet(
+  doc: Transaction['doc'],
+  results: SearchHighlightResult[],
+  currentIndex: number,
+): DecorationSet {
+  if (!results.length) return DecorationSet.empty
+
+  const docSize = doc.content.size
+  const decorations: Decoration[] = []
+
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i]
+    const from = Math.max(0, Math.min(r.from, docSize))
+    const to = Math.max(from, Math.min(r.to, docSize))
+    if (from >= to) continue
+
+    decorations.push(
+      Decoration.inline(from, to, {
+        class: i === currentIndex ? 'search-highlight-current' : 'search-highlight',
+      }),
+    )
+  }
+
+  return decorations.length ? DecorationSet.create(doc, decorations) : DecorationSet.empty
 }
 
 declare module '@tiptap/core' {
@@ -22,55 +49,45 @@ declare module '@tiptap/core' {
   }
 }
 
-export const SearchHighlight = Extension.create<SearchHighlightOptions>({
+export const SearchHighlight = Extension.create({
   name: 'searchHighlight',
 
-  addOptions() {
-    return {
-      results: [],
-      currentIndex: -1,
-      active: false,
-    }
-  },
-
   addProseMirrorPlugins() {
-    const extension = this
-
     return [
-      new Plugin({
-        key: new PluginKey('searchHighlight'),
+      new Plugin<SearchHighlightState>({
+        key: searchHighlightPluginKey,
         state: {
-          init() {
-            return DecorationSet.empty
-          },
-          apply(tr: Transaction) {
-            if (!extension.options.active || !extension.options.results?.length) {
-              return DecorationSet.empty
+          init: () => ({ results: [], currentIndex: -1 }),
+          apply(tr, prev) {
+            const meta = tr.getMeta(searchHighlightPluginKey) as
+              | { results: SearchHighlightResult[]; currentIndex: number }
+              | { clear: true }
+              | undefined
+
+            if (meta && 'clear' in meta) {
+              return { results: [], currentIndex: -1 }
             }
-
-            const docSize = tr.doc.content.size
-            const current = extension.options.currentIndex
-
-            const decorations: Decoration[] = []
-            for (let i = 0; i < extension.options.results.length; i++) {
-              const r = extension.options.results[i]
-              const from = Math.max(0, Math.min(r.from, docSize))
-              const to = Math.max(from, Math.min(r.to, docSize))
-              if (from >= to) continue
-
-              decorations.push(
-                Decoration.inline(from, to, {
-                  class: i === current ? 'search-highlight-current' : 'search-highlight',
-                })
-              )
+            if (meta) {
+              return {
+                results: meta.results,
+                currentIndex: meta.currentIndex,
+              }
             }
-
-            return decorations.length ? DecorationSet.create(tr.doc, decorations) : DecorationSet.empty
+            if (tr.docChanged) {
+              return { results: [], currentIndex: -1 }
+            }
+            return prev
           },
         },
         props: {
           decorations(state) {
-            return this.getState(state)
+            const pluginState = searchHighlightPluginKey.getState(state)
+            if (!pluginState?.results.length) return DecorationSet.empty
+            return buildDecorationSet(
+              state.doc,
+              pluginState.results,
+              pluginState.currentIndex,
+            )
           },
         },
       }),
@@ -81,22 +98,18 @@ export const SearchHighlight = Extension.create<SearchHighlightOptions>({
     return {
       setSearchHighlights:
         (results: SearchHighlightResult[], currentIndex: number) =>
-        ({ tr, dispatch }: { tr: Transaction; dispatch?: (tr: Transaction) => void }) => {
+        ({ tr, dispatch }) => {
           if (dispatch) {
-            this.options.results = results
-            this.options.currentIndex = currentIndex
-            this.options.active = true
+            tr.setMeta(searchHighlightPluginKey, { results, currentIndex })
             dispatch(tr)
           }
           return true
         },
       clearSearchHighlights:
         () =>
-        ({ tr, dispatch }: { tr: Transaction; dispatch?: (tr: Transaction) => void }) => {
+        ({ tr, dispatch }) => {
           if (dispatch) {
-            this.options.active = false
-            this.options.results = []
-            this.options.currentIndex = -1
+            tr.setMeta(searchHighlightPluginKey, { clear: true })
             dispatch(tr)
           }
           return true
@@ -104,4 +117,3 @@ export const SearchHighlight = Extension.create<SearchHighlightOptions>({
     }
   },
 })
-
