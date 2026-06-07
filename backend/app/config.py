@@ -523,6 +523,25 @@ class Config:
     LEGAL_CORPUS_EMBED_SYNONYM_HINTS_ENABLED: bool = os.getenv(
         "LEGAL_CORPUS_EMBED_SYNONYM_HINTS_ENABLED", "true"
     ).strip().lower() == "true"
+    # Справочник: article/clause chunking вместо macro/micro (фаза A).
+    LEGAL_CORPUS_NORM_CHUNKING_ENABLED: bool = os.getenv(
+        "LEGAL_CORPUS_NORM_CHUNKING_ENABLED", "true"
+    ).strip().lower() == "true"
+    LEGAL_CORPUS_NORM_MAX_ARTICLE_CHARS: int = int(
+        os.getenv("LEGAL_CORPUS_NORM_MAX_ARTICLE_CHARS", "12000") or "12000"
+    )
+    # Graph expand при retrieval (фаза B).
+    LEGAL_NORM_GRAPH_EXPAND_ENABLED: bool = os.getenv(
+        "LEGAL_NORM_GRAPH_EXPAND_ENABLED", "true"
+    ).strip().lower() == "true"
+    LEGAL_NORM_GRAPH_EXPAND_LIMIT: int = int(
+        os.getenv("LEGAL_NORM_GRAPH_EXPAND_LIMIT", "8") or "8"
+    )
+    # LLM extractor для неразрешённых отсылок при индексации (фаза E).
+    LEGAL_NORM_LLM_EXTRACTOR_ENABLED: bool = os.getenv(
+        "LEGAL_NORM_LLM_EXTRACTOR_ENABLED", "false"
+    ).strip().lower() == "true"
+    LEGAL_NORM_LLM_EXTRACTOR_MODEL: str = os.getenv("LEGAL_NORM_LLM_EXTRACTOR_MODEL", "").strip()
 
     # Dual legal-aware chunker (LegalChunkerV2, contract v2.1).
     # При True все новые загрузки в дело и Справочник идут через Docling AST → macro/micro.

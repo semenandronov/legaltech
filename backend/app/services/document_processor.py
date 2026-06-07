@@ -123,7 +123,13 @@ class DocumentProcessor:
                         fallback_for_chunker = "\n\n".join(md_parts)
 
                 chunker = LegalChunkerV2()
-                v2_documents = chunker.chunk(
+                case_id_val = str(doc_metadata.get("case_id") or "").strip()
+                use_norm_corpus = (
+                    case_id_val == "GLOBAL_LEGAL_CORPUS"
+                    and bool(getattr(config, "LEGAL_CORPUS_NORM_CHUNKING_ENABLED", True))
+                )
+                chunk_fn = chunker.chunk_corpus_norms if use_norm_corpus else chunker.chunk
+                v2_documents = chunk_fn(
                     content_bytes=content_bytes,
                     filename=filename,
                     base_metadata=doc_metadata,
@@ -135,17 +141,29 @@ class DocumentProcessor:
                     loader_documents=langchain_docs if loader_did_ocr else None,
                 )
                 if v2_documents:
-                    macro_n = sum(1 for d in v2_documents if d.metadata.get("chunk_level") == "macro")
-                    micro_n = sum(1 for d in v2_documents if d.metadata.get("chunk_level") == "micro")
-                    logger.info(
-                        "[LegalChunkerV2] %s: produced %s chunks (macro=%s, micro=%s, profile=%s, preseg=%s)",
-                        filename,
-                        len(v2_documents),
-                        macro_n,
-                        micro_n,
-                        v2_documents[0].metadata.get("chunk_profile") if v2_documents else "?",
-                        v2_documents[0].metadata.get("preseg_strategy") if v2_documents else "?",
-                    )
+                    if use_norm_corpus:
+                        norm_n = sum(
+                            1 for d in v2_documents if d.metadata.get("chunk_level") == "norm"
+                        )
+                        logger.info(
+                            "[LegalChunkerV2] %s: produced %s norm chunks (profile=%s, preseg=%s)",
+                            filename,
+                            norm_n,
+                            v2_documents[0].metadata.get("chunk_profile") if v2_documents else "?",
+                            v2_documents[0].metadata.get("preseg_strategy") if v2_documents else "?",
+                        )
+                    else:
+                        macro_n = sum(1 for d in v2_documents if d.metadata.get("chunk_level") == "macro")
+                        micro_n = sum(1 for d in v2_documents if d.metadata.get("chunk_level") == "micro")
+                        logger.info(
+                            "[LegalChunkerV2] %s: produced %s chunks (macro=%s, micro=%s, profile=%s, preseg=%s)",
+                            filename,
+                            len(v2_documents),
+                            macro_n,
+                            micro_n,
+                            v2_documents[0].metadata.get("chunk_profile") if v2_documents else "?",
+                            v2_documents[0].metadata.get("preseg_strategy") if v2_documents else "?",
+                        )
                     documents = v2_documents
             except Exception as e:
                 logger.warning(

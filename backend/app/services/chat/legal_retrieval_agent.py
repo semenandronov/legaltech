@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from langchain_core.documents import Document
@@ -124,10 +125,15 @@ def _merge_documents(existing: List[Document], new_docs: Sequence[Document]) -> 
 
 def _rank_documents_for_plan(docs: List[Document], plan: LegalRetrievalPlan) -> List[Document]:
     """Поднять содержательные фрагменты; опустить «только утратила силу» при article_lookup."""
+    from app.services.legal_instruments import instrument_priority_weight
 
     def score(doc: Document) -> float:
         text = (doc.page_content or "").strip()
-        s = float((doc.metadata or {}).get("rerank_score") or (doc.metadata or {}).get("score") or 0.0)
+        md = doc.metadata or {}
+        s = float(md.get("rerank_score") or md.get("score") or 0.0)
+        s += instrument_priority_weight(str(md.get("instrument_id") or "") or None) * 0.35
+        if md.get("graph_expanded"):
+            s += 0.25
         if plan.topic == "article_lookup" and plan.user_articles:
             for art in plan.user_articles:
                 if _doc_mentions_article(doc, art):
@@ -141,6 +147,80 @@ def _rank_documents_for_plan(docs: List[Document], plan: LegalRetrievalPlan) -> 
         return s
 
     return sorted(docs, key=score, reverse=True)
+
+
+def _parse_reference_date(value: Any) -> Optional[date]:
+    if value is None:
+        return None
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    s = str(value).strip()
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(s[:10], fmt).date()
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
+
+
+def _filter_docs_by_reference_date(
+    docs: List[Document],
+    reference_date: Optional[date],
+) -> List[Document]:
+    if reference_date is None or not docs:
+        return docs
+    from app.services.legal_instruments import instrument_validity
+    from app.services.legal_norm_graph import is_norm_valid_on_date
+
+    filtered: List[Document] = []
+    for doc in docs:
+        md = doc.metadata or {}
+        vf = _parse_reference_date(md.get("valid_from"))
+        vt = _parse_reference_date(md.get("valid_to"))
+        if vf is None and vt is None:
+            iid = md.get("instrument_id")
+            vf, vt = instrument_validity(str(iid) if iid else None)
+        if is_norm_valid_on_date(valid_from=vf, valid_to=vt, reference_date=reference_date):
+            filtered.append(doc)
+    return filtered
+
+
+def _expand_with_norm_graph(
+    docs: List[Document],
+    *,
+    reference_date: Optional[date],
+    limit: int,
+) -> List[Document]:
+    if not docs or not bool(getattr(config, "LEGAL_NORM_GRAPH_EXPAND_ENABLED", True)):
+        return docs
+    from app.services.legal_norm_graph import expand_norm_neighbors, fetch_documents_by_norm_keys
+
+    keys: List[str] = []
+    for d in docs:
+        k = str((d.metadata or {}).get("norm_node_key") or "").strip()
+        if k:
+            keys.append(k)
+    if not keys:
+        return docs
+
+    neighbor_keys = expand_norm_neighbors(
+        keys[:6],
+        edge_types=("FORWARD_TO", "REFERENCES"),
+        limit=limit,
+        reference_date=reference_date,
+    )
+    if not neighbor_keys:
+        return docs
+
+    extra = fetch_documents_by_norm_keys(neighbor_keys, reference_date=reference_date)
+    return _merge_documents(docs, extra) if extra else docs
 
 
 def _fetch_required_articles_fast(
@@ -425,6 +505,7 @@ def run_legal_corpus_retrieval(
     allow_query_interpreter_first_pass: Optional[bool] = None,
     include_iterative: bool = True,
     instrument_ids: Optional[List[str]] = None,
+    reference_date: Optional[Any] = None,
 ) -> LegalRetrievalResult:
     """
     Единая точка retrieval по GLOBAL_LEGAL_CORPUS с бюджетами и stop-criteria.
@@ -443,6 +524,7 @@ def run_legal_corpus_retrieval(
     )
     t0 = time.monotonic()
     deadline = t0 + (_wall_ms() / 1000.0)
+    ref_date = _parse_reference_date(reference_date)
 
     pre_ids = _filter_instrument_ids(instrument_ids)
     plan, planner_source = resolve_legal_retrieval_plan(
@@ -462,6 +544,7 @@ def run_legal_corpus_retrieval(
         "used_fast_path": False,
         "iterative_added": 0,
         "gap_fill_rounds": 0,
+        "reference_date": ref_date.isoformat() if ref_date else None,
     }
 
     docs: List[Document] = []
@@ -633,6 +716,14 @@ def run_legal_corpus_retrieval(
         )
 
     coverage_note = _build_coverage_note(plan, cov, sufficient=sufficient) if _agentic_plan_enabled() else ""
+
+    docs = _filter_docs_by_reference_date(docs, ref_date)
+    if docs and time.monotonic() < deadline:
+        expand_lim = int(getattr(config, "LEGAL_NORM_GRAPH_EXPAND_LIMIT", 8) or 8)
+        expanded = _expand_with_norm_graph(docs, reference_date=ref_date, limit=expand_lim)
+        if len(expanded) > len(docs):
+            meta["graph_expanded"] = len(expanded) - len(docs)
+            docs = expanded
 
     docs = _rank_documents_for_plan(docs, plan)
     context, included = _format_context_with_budget(

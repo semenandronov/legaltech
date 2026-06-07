@@ -226,6 +226,9 @@ def index_uploaded_file(
         from app.services.legal_instruments import resolve_instrument
 
         inst = resolve_instrument(instrument_id)
+        vf, vt = None, None
+        if inst:
+            vf, vt = inst.valid_from, inst.valid_to
         docs = DocumentLoaderService.load_document(content, safe_name)
         if not docs:
             raise ValueError("Не удалось извлечь текст из файла")
@@ -265,6 +268,11 @@ def index_uploaded_file(
                 md.setdefault("instrument_id", inst.instrument_id)
                 md.setdefault("instrument_short_name", inst.short_name)
                 md.setdefault("instrument_version", "latest")
+                md.setdefault("norm_class", inst.norm_class)
+                if vf:
+                    md.setdefault("valid_from", vf.isoformat())
+                if vt:
+                    md.setdefault("valid_to", vt.isoformat())
             md["corpus_file_id"] = corpus_file_id
             md["source_filename"] = safe_name
             md["corpus_type"] = "legal_reference"
@@ -299,6 +307,34 @@ def index_uploaded_file(
             total,
             corpus_file_id,
         )
+        try:
+            from app.services.legal_instruments import instrument_validity
+            from app.services.legal_norm_graph import (
+                build_edges_for_documents,
+                sync_nodes_from_documents,
+            )
+
+            iid = inst.instrument_id if inst else "other"
+            vf, vt = instrument_validity(iid)
+            sync_nodes_from_documents(
+                file_documents,
+                corpus_file_id=corpus_file_id,
+                instrument_id=iid,
+                valid_from=vf,
+                valid_to=vt,
+            )
+            edge_n = build_edges_for_documents(
+                file_documents,
+                source_instrument_id=iid,
+            )
+            logger.info(
+                "Legal norm graph synced: corpus_file_id=%s nodes=%s edges_added=%s",
+                corpus_file_id,
+                sum(1 for d in file_documents if (d.metadata or {}).get("chunk_level") == "norm"),
+                edge_n,
+            )
+        except Exception as graph_exc:
+            logger.warning("Legal norm graph sync failed (non-fatal): %s", graph_exc, exc_info=True)
         try:
             prewarm_legal_corpus_bm25(force_rebuild=True)
         except Exception as bm25_exc:
@@ -437,6 +473,12 @@ def delete_corpus_file(corpus_file_id: str) -> int:
             {"cid": store.collection_name, "case_id": LEGAL_CORPUS_CASE_ID, "fid": corpus_file_id},
         )
         deleted_chunks = int(result.rowcount or 0)
+    try:
+        from app.services.legal_norm_graph import delete_graph_for_corpus_file
+
+        delete_graph_for_corpus_file(corpus_file_id)
+    except Exception as exc:
+        logger.warning("Legal norm graph delete failed for %s: %s", corpus_file_id, exc)
     _delete_original_corpus_file(corpus_file_id)
     return deleted_chunks
 

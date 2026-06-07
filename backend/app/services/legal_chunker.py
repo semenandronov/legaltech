@@ -227,68 +227,18 @@ class LegalChunkerV2:
         if not isinstance(base_metadata, dict):
             base_metadata = dict(base_metadata or {})
 
-        profile = _select_profile(case_id=case_id, doc_type=doc_type)
-        ext = _file_ext(filename)
-
-        segments: List[_Segment] = []
-        full_text = ""
-        preseg_strategy = "text_recursive_legal"
-
-        # Скан (Yandex/Tesseract): Docling не трогаем — только текст/markdown от loader.
-        # Native text (PyPDF): Docling AST по текстовому слою PDF, без OCR (do_ocr=False).
-        skip_docling = bool(loader_did_ocr)
-        docling_do_ocr = not bool(loader_native_text)
-
-        if not skip_docling and content_bytes and ext in _DOCLING_SUPPORTED_EXTS:
-            try:
-                segments, full_text = _docling_pre_segmentation(
-                    content_bytes, filename, ext, do_ocr=docling_do_ocr
-                )
-                if segments:
-                    preseg_strategy = (
-                        "docling_ast_native_text"
-                        if loader_native_text
-                        else "docling_ast_first"
-                    )
-            except Exception as exc:
-                logger.warning(
-                    "[LegalChunkerV2] Docling pre-segmentation failed for %s: %s — using text fallback",
-                    filename,
-                    exc,
-                )
-                segments = []
-
-        if not segments:
-            text_for_fallback = fallback_text
-            if not text_for_fallback and content_bytes:
-                try:
-                    text_for_fallback = content_bytes.decode("utf-8", errors="ignore")
-                except Exception:
-                    text_for_fallback = None
-            if not text_for_fallback or not text_for_fallback.strip():
-                raise ValueError(
-                    f"LegalChunkerV2: no text available for {filename}; "
-                    f"expected content_bytes (Docling) or fallback_text"
-                )
-            if skip_docling and loader_documents:
-                segments, full_text = _yandex_loader_documents_segmentation(loader_documents)
-                preseg_strategy = "ocr_markdown_recursive_legal"
-            elif _looks_like_markdown(text_for_fallback):
-                segments, full_text = _heading_aware_markdown_segmentation(text_for_fallback)
-                preseg_strategy = (
-                    "ocr_markdown_recursive_legal" if skip_docling else "text_recursive_legal"
-                )
-            else:
-                segments, full_text = _heading_aware_text_segmentation(text_for_fallback)
-                preseg_strategy = (
-                    "ocr_text_recursive_legal" if skip_docling else "text_recursive_legal"
-                )
-
+        segments, full_text, preseg_strategy, profile = _collect_legal_segments(
+            content_bytes=content_bytes,
+            filename=filename,
+            doc_type=doc_type,
+            case_id=case_id,
+            fallback_text=fallback_text,
+            loader_did_ocr=loader_did_ocr,
+            loader_native_text=loader_native_text,
+            loader_documents=loader_documents,
+        )
         if not segments:
             raise ValueError(f"LegalChunkerV2: empty segment list for {filename}")
-
-        segments = _normalize_docling_segments(list(segments), profile)
-        full_text = _join_segments_text(segments)
 
         macros = _build_macro_chunks(segments, profile, base_metadata)
         if not macros:
@@ -359,6 +309,53 @@ class LegalChunkerV2:
             enabled=bool(getattr(config, "LEGAL_CHUNK_EMBED_PREFIX_ENABLED", True)),
         )
 
+        return documents
+
+    def chunk_corpus_norms(
+        self,
+        *,
+        content_bytes: Optional[bytes],
+        filename: str,
+        base_metadata: Dict[str, Any],
+        doc_type: Optional[str] = None,
+        case_id: Optional[str] = None,
+        fallback_text: Optional[str] = None,
+        loader_did_ocr: bool = False,
+        loader_native_text: bool = False,
+        loader_documents: Optional[List[Document]] = None,
+    ) -> List[Document]:
+        """Article/clause-level chunking для GLOBAL_LEGAL_CORPUS (фаза A)."""
+        if not isinstance(base_metadata, dict):
+            base_metadata = dict(base_metadata or {})
+
+        segments, full_text, preseg_strategy, profile = _collect_legal_segments(
+            content_bytes=content_bytes,
+            filename=filename,
+            doc_type=doc_type or "legal_reference",
+            case_id=case_id or "GLOBAL_LEGAL_CORPUS",
+            fallback_text=fallback_text,
+            loader_did_ocr=loader_did_ocr,
+            loader_native_text=loader_native_text,
+            loader_documents=loader_documents,
+        )
+        if not segments:
+            raise ValueError(f"LegalChunkerV2: empty segment list for {filename}")
+
+        documents = _build_norm_documents_from_segments(
+            segments=segments,
+            profile=profile,
+            base_metadata=base_metadata,
+            full_text=full_text,
+            preseg_strategy=preseg_strategy,
+            filename=filename,
+        )
+        if not documents:
+            raise ValueError(f"LegalChunkerV2: norm layer is empty for {filename}")
+
+        _apply_hidden_embedding_context(
+            documents,
+            enabled=bool(getattr(config, "LEGAL_CHUNK_EMBED_PREFIX_ENABLED", True)),
+        )
         return documents
 
 
@@ -593,6 +590,79 @@ def _iter_docling_segments(
 
 def _join_segments_text(segments: Sequence[_Segment]) -> str:
     return "".join(s.text for s in segments)
+
+
+def _collect_legal_segments(
+    *,
+    content_bytes: Optional[bytes],
+    filename: str,
+    doc_type: Optional[str],
+    case_id: Optional[str],
+    fallback_text: Optional[str],
+    loader_did_ocr: bool,
+    loader_native_text: bool,
+    loader_documents: Optional[List[Document]],
+) -> Tuple[List[_Segment], str, str, _Profile]:
+    """Общий pre-segmentation pipeline для macro/micro и norm chunking."""
+    profile = _select_profile(case_id=case_id, doc_type=doc_type)
+    ext = _file_ext(filename)
+
+    segments: List[_Segment] = []
+    full_text = ""
+    preseg_strategy = "text_recursive_legal"
+
+    skip_docling = bool(loader_did_ocr)
+    docling_do_ocr = not bool(loader_native_text)
+
+    if not skip_docling and content_bytes and ext in _DOCLING_SUPPORTED_EXTS:
+        try:
+            segments, full_text = _docling_pre_segmentation(
+                content_bytes, filename, ext, do_ocr=docling_do_ocr
+            )
+            if segments:
+                preseg_strategy = (
+                    "docling_ast_native_text" if loader_native_text else "docling_ast_first"
+                )
+        except Exception as exc:
+            logger.warning(
+                "[LegalChunkerV2] Docling pre-segmentation failed for %s: %s — using text fallback",
+                filename,
+                exc,
+            )
+            segments = []
+
+    if not segments:
+        text_for_fallback = fallback_text
+        if not text_for_fallback and content_bytes:
+            try:
+                text_for_fallback = content_bytes.decode("utf-8", errors="ignore")
+            except Exception:
+                text_for_fallback = None
+        if not text_for_fallback or not text_for_fallback.strip():
+            raise ValueError(
+                f"LegalChunkerV2: no text available for {filename}; "
+                f"expected content_bytes (Docling) or fallback_text"
+            )
+        if skip_docling and loader_documents:
+            segments, full_text = _yandex_loader_documents_segmentation(loader_documents)
+            preseg_strategy = "ocr_markdown_recursive_legal"
+        elif _looks_like_markdown(text_for_fallback):
+            segments, full_text = _heading_aware_markdown_segmentation(text_for_fallback)
+            preseg_strategy = (
+                "ocr_markdown_recursive_legal" if skip_docling else "text_recursive_legal"
+            )
+        else:
+            segments, full_text = _heading_aware_text_segmentation(text_for_fallback)
+            preseg_strategy = (
+                "ocr_text_recursive_legal" if skip_docling else "text_recursive_legal"
+            )
+
+    if not segments:
+        return [], "", preseg_strategy, profile
+
+    segments = _normalize_docling_segments(list(segments), profile)
+    full_text = _join_segments_text(segments)
+    return segments, full_text, preseg_strategy, profile
 
 
 def _renumber_segment_offsets(segments: List[_Segment]) -> List[_Segment]:
@@ -1357,6 +1427,215 @@ def _build_chunk_metadata(
         md["dl_meta"] = dl_meta
 
     return md
+
+
+# --- Corpus norm (article/clause) chunking --------------------------------
+
+_ARTICLE_BOUNDARY_RE = re.compile(r"^\s*Статья\s+", re.IGNORECASE)
+_CLAUSE_BODY_SPLIT_RE = re.compile(
+    r"(?=\n\s*(?:\d+[\.)]\s|Пункт\s+\d+|п\.\s*\d+))",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _is_article_boundary_segment(seg: _Segment) -> bool:
+    if seg.is_heading:
+        title = (seg.section_title or seg.text[:80] or "").strip()
+        m = _SECTION_HEAD_RE.match(title)
+        if m and (m.group("kind") or "").strip().lower() == "статья":
+            return True
+        return bool(_ARTICLE_BOUNDARY_RE.match(title))
+    head = (seg.text or "").lstrip()[:96]
+    m = _SECTION_HEAD_RE.match(head)
+    if m and (m.group("kind") or "").strip().lower() == "статья":
+        return True
+    return bool(_ARTICLE_BOUNDARY_RE.match(head))
+
+
+def _article_number_from_segment_group(segments: Sequence[_Segment]) -> str:
+    for seg in segments:
+        for src in [seg.section_title, (seg.text or "")[:160]]:
+            t = (src or "").strip()
+            if not t:
+                continue
+            m = _SECTION_HEAD_RE.match(t)
+            if m and (m.group("kind") or "").strip().lower() == "статья":
+                num = (m.group("num") or "").strip() or _extract_section_number(t)
+                if num:
+                    return num.replace(",", ".")
+    if segments:
+        num = (segments[0].section_number or "").strip()
+        if num:
+            return num.replace(",", ".")
+    return ""
+
+
+def _split_oversized_article(text: str, max_chars: int) -> List[Tuple[str, str]]:
+    """Разбивает длинную статью по пунктам; возвращает (text, clause_ref)."""
+    t = (text or "").strip()
+    if len(t) <= max_chars:
+        return [(t, "")]
+    parts = [p.strip() for p in _CLAUSE_BODY_SPLIT_RE.split(t) if p.strip()]
+    if len(parts) <= 1:
+        try:
+            from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+            splitter = RecursiveCharacterTextSplitter(
+                chunk_size=max_chars,
+                chunk_overlap=0,
+                separators=["\n\n", "\n", ". ", " "],
+            )
+            return [(p, str(i + 1)) for i, p in enumerate(splitter.split_text(t)) if p.strip()]
+        except Exception:
+            return [(t[:max_chars], ""), (t[max_chars:], "cont")]
+
+    out: List[Tuple[str, str]] = []
+    buf = ""
+    clause_idx = 0
+    for part in parts:
+        if len(buf) + len(part) + 2 > max_chars and buf:
+            out.append((buf.strip(), str(clause_idx) if clause_idx else ""))
+            buf = part
+            clause_idx += 1
+        else:
+            buf = f"{buf}\n\n{part}".strip() if buf else part
+    if buf.strip():
+        out.append((buf.strip(), str(clause_idx) if clause_idx else ""))
+    return out
+
+
+def _group_segments_into_articles(segments: Sequence[_Segment]) -> List[List[_Segment]]:
+    groups: List[List[_Segment]] = []
+    current: List[_Segment] = []
+    saw_article = False
+
+    for seg in segments:
+        if _is_article_boundary_segment(seg) and current:
+            groups.append(current)
+            current = [seg]
+            saw_article = True
+        else:
+            if _is_article_boundary_segment(seg):
+                saw_article = True
+            current.append(seg)
+    if current:
+        groups.append(current)
+
+    if saw_article:
+        return groups
+
+    # Fallback: один norm-чанк на каждый heading-сегмент или весь документ
+    fallback_groups: List[List[_Segment]] = []
+    buf: List[_Segment] = []
+    for seg in segments:
+        if seg.is_heading and buf:
+            fallback_groups.append(buf)
+            buf = [seg]
+        else:
+            buf.append(seg)
+    if buf:
+        fallback_groups.append(buf)
+    return fallback_groups or [list(segments)]
+
+
+def _build_norm_documents_from_segments(
+    *,
+    segments: Sequence[_Segment],
+    profile: _Profile,
+    base_metadata: Dict[str, Any],
+    full_text: str,
+    preseg_strategy: str,
+    filename: str,
+) -> List[Document]:
+    from app.services.legal_norm_cross_ref import make_full_path, make_norm_node_key, normalize_article_number
+
+    max_article_chars = int(getattr(config, "LEGAL_CORPUS_NORM_MAX_ARTICLE_CHARS", 12000) or 12000)
+    doc_id = str(base_metadata.get("doc_id") or base_metadata.get("file_id") or filename)
+    instrument_id = str(base_metadata.get("instrument_id") or "unknown").strip().lower()
+    instrument_short = str(base_metadata.get("instrument_short_name") or instrument_id)
+
+    article_groups = _group_segments_into_articles(segments)
+    documents: List[Document] = []
+    chunk_index = 0
+    fallback_article_idx = 0
+
+    for group in article_groups:
+        text = "".join(s.text for s in group).rstrip("\n") + "\n"
+        if not text.strip():
+            continue
+
+        first = group[0]
+        last = group[-1]
+        section_segment = next((s for s in group if s.section_title), first)
+        section_title = section_segment.section_title or ""
+        parent_path = list(section_segment.parent_path or [])
+        article_number = _article_number_from_segment_group(group)
+        if not article_number:
+            fallback_article_idx += 1
+            article_number = str(fallback_article_idx)
+
+        article_number = normalize_article_number(article_number)
+        full_path_base = make_full_path(instrument_short, parent_path, section_title)
+
+        from app.services.prov_span_utils import collect_prov_spans_from_segments, prov_items_for_char_span
+
+        prov_spans = collect_prov_spans_from_segments(group)
+        char_start = first.char_start
+        char_end = last.char_end
+        scoped_prov = prov_items_for_char_span(prov_spans, char_start, char_end)
+        page_start = first.page_no
+        page_end = last.page_no
+        page_bbox = next((s.page_bbox for s in group if s.page_bbox), None)
+
+        pieces = _split_oversized_article(text, max_article_chars)
+        piece_offset = char_start
+        for piece_text, clause_ref in pieces:
+            if not piece_text.strip():
+                continue
+            norm_unit = "clause" if clause_ref else "article"
+            norm_key = make_norm_node_key(
+                instrument_id,
+                article_number,
+                clause_ref=clause_ref,
+            )
+            fp = full_path_base
+            if clause_ref:
+                fp = f"{fp} > п. {clause_ref}" if fp else f"п. {clause_ref}"
+
+            md = _build_chunk_metadata(
+                base_metadata=base_metadata,
+                profile=profile,
+                full_text=full_text,
+                preseg_strategy=preseg_strategy,
+                level="norm",
+                section_title=section_title,
+                section_number=article_number,
+                parent_path=parent_path,
+                page_start=page_start,
+                page_end=page_end,
+                char_start=piece_offset,
+                char_end=piece_offset + len(piece_text),
+                chunk_text=piece_text,
+                chunk_index=chunk_index,
+                macro_id=None,
+                parent_macro_id=None,
+                doc_id=doc_id,
+                filename=filename,
+                is_table_fragment=any(getattr(s, "is_table_fragment", False) for s in group),
+                prov_items=scoped_prov or None,
+                page_bbox=page_bbox,
+            )
+            md["norm_unit"] = norm_unit
+            md["article_number"] = article_number
+            md["clause_ref"] = clause_ref or ""
+            md["full_path"] = fp
+            md["norm_node_key"] = norm_key
+            md["chunking_contract_version"] = "corpus-norm-v1"
+            documents.append(Document(page_content=piece_text, metadata=md))
+            chunk_index += 1
+            piece_offset += len(piece_text)
+
+    return documents
 
 
 __all__ = ["LegalChunkerV2"]
