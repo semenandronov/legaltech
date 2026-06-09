@@ -168,13 +168,15 @@ class TabularReviewVerifier:
             return issues
         
         if column_type == 'date':
-            # Try to parse as date
-            try:
-                from app.services.date_validator import parse_and_normalize_date
-                normalized = parse_and_normalize_date(value)
-                datetime.strptime(normalized, "%Y-%m-%d")
-            except Exception as e:
-                issues.append(f"Invalid date format: {value}")
+            from app.services.tabular_extraction_policy import is_na_cell_value
+
+            if not is_na_cell_value(value):
+                try:
+                    from app.services.date_validator import parse_and_normalize_date
+                    normalized = parse_and_normalize_date(value)
+                    datetime.strptime(normalized, "%Y-%m-%d")
+                except Exception:
+                    issues.append(f"Invalid date format: {value}")
         
         elif column_type == 'currency':
             # Check if it's a valid number
@@ -193,10 +195,9 @@ class TabularReviewVerifier:
                 issues.append(f"Invalid number format: {value}")
         
         elif column_type == 'yes_no':
-            # Check if it's a valid yes/no value
-            value_lower = value.lower().strip()
-            valid_values = ['yes', 'no', 'unknown', 'да', 'нет']
-            if value_lower not in valid_values and value_lower not in ['true', 'false', '1', '0']:
+            from app.services.tabular_review_models import YES_NO_UNKNOWN, validate_yes_no
+
+            if validate_yes_no(value) == YES_NO_UNKNOWN:
                 issues.append(f"Invalid yes/no value: {value}")
         
         # Add INN validation if needed (could be detected from column label)
@@ -216,8 +217,11 @@ class TabularReviewVerifier:
         
         try:
             if column_type == 'date':
-                # Both should be valid dates
                 from app.services.date_validator import parse_and_normalize_date
+                from app.services.tabular_extraction_policy import is_na_cell_value
+
+                if is_na_cell_value(cell_value) or is_na_cell_value(normalized_value):
+                    return is_na_cell_value(cell_value) and is_na_cell_value(normalized_value)
                 norm_from_cell = parse_and_normalize_date(cell_value)
                 return norm_from_cell == normalized_value
             
@@ -233,10 +237,15 @@ class TabularReviewVerifier:
                     return False
             
             elif column_type == 'yes_no':
-                # Both should normalize to same value
-                from app.services.tabular_review_models import validate_yes_no
-                norm_from_cell = validate_yes_no(cell_value)
-                return norm_from_cell == normalized_value
+                from app.services.tabular_review_models import (
+                    YES_NO_UNKNOWN,
+                    validate_yes_no,
+                    yes_no_normalized_key,
+                )
+                canon = validate_yes_no(cell_value)
+                if canon == YES_NO_UNKNOWN:
+                    return False
+                return yes_no_normalized_key(canon) == (normalized_value or "").strip().lower()
             
         except Exception as e:
             logger.warning(f"Error verifying normalization: {e}")

@@ -10,8 +10,6 @@ from app.utils.database import get_db
 from app.utils.auth import get_current_user, decode_token
 from app.models.user import User
 from app.config import config as app_config
-from sqlalchemy.orm import Session
-from datetime import datetime
 from typing import Optional
 import json
 import logging
@@ -386,9 +384,6 @@ async def stream_tabular_review_updates(
             present_users = presence_service.get_present_users(review_id)
             await websocket_manager.broadcast_presence_update(review_id, {"users": present_users})
         
-        # Poll for updates (in production, use database triggers or pub/sub)
-        last_update_time = None
-        
         # Send periodic presence updates
         async def send_presence_updates():
             while True:
@@ -411,89 +406,27 @@ async def stream_tabular_review_updates(
         
         if user_id:
             presence_task = asyncio.create_task(send_presence_updates())
-        
-        # Handle incoming messages (for future features like lock requests)
+
         async def handle_messages():
             while True:
                 try:
-                    data = await websocket.receive_json()
-                    # Handle incoming messages (e.g., lock requests)
-                    # Can be extended for future features
-                except Exception as e:
-                    logger.debug(f"WebSocket message handling error: {e}")
+                    await websocket.receive_json()
+                    # Reserved for future client commands (e.g. lock requests).
+                except WebSocketDisconnect:
+                    logger.info("WebSocket tabular review disconnected for review %s", review_id)
                     break
-        
+                except Exception as exc:
+                    logger.debug("WebSocket tabular review receive ended for %s: %s", review_id, exc)
+                    break
+
         message_task = asyncio.create_task(handle_messages())
-        
-        while True:
-            try:
-                # Check for new cells
-                from app.models.tabular_review import TabularCell
-                
-                cell_query = db.query(TabularCell).filter(
-                    TabularCell.tabular_review_id == review_id
-                )
-                
-                if last_update_time:
-                    cell_query = cell_query.filter(TabularCell.updated_at > last_update_time)
-                
-                new_cells = cell_query.all()
-                
-                if new_cells:
-                    for cell in new_cells:
-                        await websocket.send_json({
-                            "type": "cell_updated",
-                            "cell_id": cell.id,
-                            "file_id": cell.file_id,
-                            "column_id": cell.column_id,
-                            "cell_value": cell.cell_value,
-                            "reasoning": cell.reasoning,
-                            "source_references": cell.source_references,
-                            "status": cell.status,
-                            "confidence_score": float(cell.confidence_score) if cell.confidence_score else None,
-                        })
-                    
-                    last_update_time = datetime.utcnow()
-                
-                # Check for new columns
-                from app.models.tabular_review import TabularColumn
-                column_query = db.query(TabularColumn).filter(
-                    TabularColumn.tabular_review_id == review_id
-                )
-                if last_update_time:
-                    column_query = column_query.filter(TabularColumn.created_at > last_update_time)
-                new_columns = column_query.all()
-                
-                if new_columns:
-                    for column in new_columns:
-                        await websocket.send_json({
-                            "type": "column_added",
-                            "column": {
-                                "id": column.id,
-                                "column_label": column.column_label,
-                                "column_type": column.column_type,
-                                "prompt": column.prompt,
-                                "column_config": column.column_config,
-                                "order_index": column.order_index,
-                            }
-                        })
-                
-                # Sleep before next poll
-                await asyncio.sleep(1)
-                
-            except WebSocketDisconnect:
-                logger.info(f"WebSocket tabular review disconnected for review {review_id}")
-                break
-            except Exception as e:
-                logger.error(f"Error in tabular review WebSocket: {e}", exc_info=True)
-                try:
-                    await websocket.send_json({
-                        "type": "error",
-                        "message": str(e)
-                    })
-                except:
-                    pass
-                await asyncio.sleep(1)
+
+        # Realtime updates are pushed via websocket_manager from tabular_review_service.
+        # Keep this handler alive until the client disconnects.
+        try:
+            await message_task
+        except asyncio.CancelledError:
+            pass
                 
     except Exception as e:
         logger.error(f"WebSocket tabular review error for review {review_id}: {e}", exc_info=True)

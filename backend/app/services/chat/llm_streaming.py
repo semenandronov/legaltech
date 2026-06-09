@@ -10,9 +10,39 @@ Contract:
 from __future__ import annotations
 
 import time
-from typing import Any, Callable, Dict, Iterator, List, Optional
+from typing import Any, AsyncIterator, Callable, Dict, Iterator, List, Optional
 
 StreamWriter = Callable[[Dict[str, Any]], None]
+
+
+def extract_text_from_llm_chunk(msg_chunk: Any) -> str:
+    """Text from one LangChain stream chunk (string or multimodal content blocks)."""
+    try:
+        base = getattr(msg_chunk, "message", None)
+        if base is None:
+            base = msg_chunk
+        if isinstance(base, tuple) and base:
+            base = base[0]
+        content = getattr(base, "content", None)
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: List[str] = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    t = item.get("text")
+                    if isinstance(t, str) and t:
+                        parts.append(t)
+            return "".join(parts)
+        if content is not None:
+            s = str(content)
+            if s and s != "None":
+                return s
+    except Exception:
+        pass
+    return ""
 
 
 def incremental_stream_piece(accumulated: str, raw_piece: str) -> str:
@@ -43,10 +73,23 @@ def iter_llm_text_chunks(llm: Any, messages: List[Any]) -> Iterator[str]:
     """Yield incremental text pieces from llm.stream (normalized, never cumulative)."""
     accumulated = ""
     for chunk in llm.stream(messages):
-        if not hasattr(chunk, "content") or not chunk.content:
+        piece = extract_text_from_llm_chunk(chunk)
+        if not piece:
             continue
-        raw = chunk.content
-        piece = raw if isinstance(raw, str) else str(raw)
+        incremental = incremental_stream_piece(accumulated, piece)
+        if not incremental:
+            continue
+        accumulated += incremental
+        yield incremental
+
+
+async def async_iter_llm_text_chunks(llm: Any, messages: List[Any]) -> AsyncIterator[str]:
+    """Yield incremental text pieces from llm.astream (normalized, never cumulative)."""
+    accumulated = ""
+    async for chunk in llm.astream(messages):
+        piece = extract_text_from_llm_chunk(chunk)
+        if not piece:
+            continue
         incremental = incremental_stream_piece(accumulated, piece)
         if not incremental:
             continue

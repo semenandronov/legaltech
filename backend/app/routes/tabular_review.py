@@ -25,7 +25,7 @@ class TabularReviewCreateRequest(BaseModel):
 
 class ColumnCreateRequest(BaseModel):
     column_label: str
-    column_type: str  # text, number, currency, yes_no, date, tag, verbatim, manual_input, document_type
+    column_type: str  # text, number, currency, yes_no, date, tag, verbatim, manual_input
     prompt: str
     column_config: Optional[dict] = None  # Конфигурация для tag: {options: [{label, color}], allow_custom: bool}
 
@@ -42,6 +42,7 @@ class CellUpdateRequest(BaseModel):
 
 class ColumnUpdateRequest(BaseModel):
     column_label: Optional[str] = None
+    column_type: Optional[str] = None
     prompt: Optional[str] = None
     column_config: Optional[dict] = None
 
@@ -84,7 +85,20 @@ class TemplateCreateRequest(BaseModel):
 
 class ColumnPromptGenerateRequest(BaseModel):
     column_label: str
-    column_type: str  # text, number, currency, yes_no, date, tag, verbatim, manual_input, document_type
+    column_type: str  # text, number, currency, yes_no, date, tag, verbatim, manual_input
+
+
+class ColumnInferTypeRequest(BaseModel):
+    prompt: str
+    column_label: Optional[str] = None
+
+
+class ColumnInferTypeResponse(BaseModel):
+    column_type: str
+    confidence: float
+    reason: str
+    source: str
+    suggested_label: Optional[str] = None
 
 
 class ColumnDescriptionRequest(BaseModel):
@@ -360,7 +374,10 @@ async def add_column(
             "order_index": column.order_index,
         }
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        msg = str(e)
+        if "not found" in msg.lower() or "access denied" in msg.lower():
+            raise HTTPException(status_code=404, detail=msg)
+        raise HTTPException(status_code=400, detail=msg)
     except Exception as e:
         logger.error(f"Error adding column: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to add column")
@@ -418,6 +435,7 @@ async def update_column(
             column_id=column_id,
             user_id=current_user.id,
             column_label=request.column_label,
+            column_type=request.column_type,
             prompt=request.prompt,
             column_config=request.column_config
         )
@@ -430,7 +448,10 @@ async def update_column(
             "order_index": column.order_index,
         }
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        msg = str(e)
+        if "not found" in msg.lower() or "access denied" in msg.lower():
+            raise HTTPException(status_code=404, detail=msg)
+        raise HTTPException(status_code=400, detail=msg)
     except Exception as e:
         logger.error(f"Error updating column: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to update column")
@@ -510,23 +531,63 @@ async def run_extraction(
         raise HTTPException(status_code=500, detail="Failed to run extraction")
 
 
-@router.post("/{review_id}/columns/{column_id}/run")
+@router.post("/{review_id}/columns/{column_id}/run", status_code=202)
 async def run_column_extraction(
     review_id: str,
     column_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Run extraction for a specific column across all documents"""
+    """Start background extraction for a column across all documents."""
+    import asyncio
+
+    from app.services.tabular_extraction_runtime import (
+        run_column_extraction_background,
+        try_acquire_column_run,
+        release_column_run,
+    )
+
     try:
+        if not await try_acquire_column_run(review_id, column_id):
+            raise HTTPException(
+                status_code=409,
+                detail="Extraction for this column is already in progress",
+            )
+
         service = TabularReviewService(db)
-        result = await service.run_column_extraction(review_id, column_id, current_user.id)
-        return result
+        plan = service.plan_column_extraction(review_id, column_id, current_user.id)
+
+        if plan.get("status") == "skipped":
+            await release_column_run(review_id, column_id)
+            return {
+                "status": "skipped",
+                "column_id": column_id,
+                "total_tasks": 0,
+                "saved_count": 0,
+                "error_count": 0,
+                "cells": [],
+            }
+
+        asyncio.create_task(
+            run_column_extraction_background(review_id, column_id, current_user.id)
+        )
+        return {
+            "status": "started",
+            "column_id": column_id,
+            "total_tasks": plan.get("total_tasks", 0),
+        }
+    except HTTPException:
+        raise
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        await release_column_run(review_id, column_id)
+        msg = str(e)
+        if "not found" in msg.lower() or "access denied" in msg.lower():
+            raise HTTPException(status_code=404, detail=msg)
+        raise HTTPException(status_code=400, detail=msg)
     except Exception as e:
-        logger.error(f"Error running column extraction: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to run column extraction")
+        await release_column_run(review_id, column_id)
+        logger.error(f"Error starting column extraction: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to start column extraction")
 
 
 @router.get("/{review_id}/table-data")
@@ -1885,6 +1946,26 @@ class TabularChatRequest(BaseModel):
     question: str
 
 
+@router.get("/{review_id}/chat/history")
+async def get_tabular_chat_history(
+    review_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Load persisted tabular review chat history for this table."""
+    try:
+        from app.services.tabular_chat_service import TabularChatService
+
+        service = TabularChatService(db)
+        messages = service.get_chat_history(review_id, current_user.id)
+        return {"messages": messages}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error loading tabular chat history: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to load chat history")
+
+
 @router.post("/{review_id}/chat")
 async def chat_over_table(
     review_id: str,
@@ -1892,7 +1973,7 @@ async def chat_over_table(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Chat over table - ask questions about table data"""
+    """Chat over table - ask questions about table data (non-streaming fallback)."""
     try:
         from app.services.tabular_chat_service import TabularChatService
         
@@ -1908,6 +1989,60 @@ async def chat_over_table(
     except Exception as e:
         logger.error(f"Error in chat over table: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to analyze table")
+
+
+@router.post("/{review_id}/chat/stream")
+async def chat_over_table_stream(
+    review_id: str,
+    request: TabularChatRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """SSE stream for tabular review chat — tokens as they arrive."""
+    from fastapi.responses import StreamingResponse
+
+    from app.services.chat.events import SSESerializer
+    from app.services.tabular_chat_service import TabularChatService
+    from app.utils.database import SessionLocal
+
+    user_id = str(current_user.id)
+    question = (request.question or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="question is required")
+
+    async def event_generator():
+        db = SessionLocal()
+        try:
+            yield ": stream-open\n\n"
+            service = TabularChatService(db)
+            async for event in service.stream_analyze_table(review_id, question, user_id):
+                event_type = event.get("type")
+                if event_type == "text_delta":
+                    text = event.get("text") or ""
+                    if text:
+                        yield SSESerializer.text_delta(text)
+                elif event_type == "done":
+                    yield SSESerializer.tabular_chat_done(
+                        answer=str(event.get("answer") or ""),
+                        citations=list(event.get("citations") or []),
+                        table_stats=dict(event.get("table_stats") or {}),
+                    )
+                elif event_type == "error":
+                    yield SSESerializer.error(str(event.get("message") or "Tabular chat failed"))
+        except Exception as e:
+            logger.error("Error in tabular chat stream: %s", e, exc_info=True)
+            yield SSESerializer.error("Failed to analyze table")
+        finally:
+            db.close()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 class CreateFromDescriptionRequest(BaseModel):
@@ -2034,6 +2169,35 @@ async def create_from_description(
             status_code=500,
             detail=f"Ошибка при создании таблицы через агента: {e}",
         )
+
+@router.post("/columns/infer-type", response_model=ColumnInferTypeResponse)
+async def infer_column_type(
+    request: ColumnInferTypeRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Infer the best column_type contract from label + extraction question."""
+    del current_user  # auth gate only
+    from app.services.tabular_column_type_contract import infer_column_type_heuristic
+
+    label = (request.column_label or "").strip()
+    prompt = (request.prompt or "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+
+    inferred = infer_column_type_heuristic(label, prompt)
+    suggested_label = label or None
+    if not suggested_label and prompt:
+        first_line = prompt.split("\n", 1)[0].strip()
+        suggested_label = first_line[:80] if first_line else None
+
+    return ColumnInferTypeResponse(
+        column_type=inferred.column_type,
+        confidence=inferred.confidence,
+        reason=inferred.reason,
+        source=inferred.source,
+        suggested_label=suggested_label,
+    )
+
 
 @router.post("/columns/generate-prompt")
 async def generate_column_prompt(

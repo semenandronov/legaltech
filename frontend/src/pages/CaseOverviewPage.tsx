@@ -29,6 +29,7 @@ import {
 } from '../lib/postCreatePendingFiles'
 import { createDocumentFromFile } from '../services/documentEditorApi'
 import { tabularReviewApi } from '../services/tabularReviewApi'
+import { CaseTabularHubModal } from '../components/TabularReview/CaseTabularHubModal'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import DocumentViewer from '../components/Documents/DocumentViewer'
 import { DocumentWithMetadata } from '../components/Documents/DocumentsList'
@@ -108,8 +109,8 @@ const PRESETS = [
   },
   {
     id: 'tabular',
-    title: 'Tabular Review',
-    description: 'Структурированный анализ в табличном формате',
+    title: 'Таблица',
+    description: 'Один вопрос — ко всем документам дела',
     path: (id: string) => `/cases/${id}/tabular-review`,
   },
 ]
@@ -211,6 +212,7 @@ const CaseOverviewPage = () => {
   const [pickerSelectedIds, setPickerSelectedIds] = useState<Set<string>>(new Set())
   const [pickerSearch, setPickerSearch] = useState('')
   const [creatingReview, setCreatingReview] = useState(false)
+  const [showTabularHub, setShowTabularHub] = useState(false)
 
   useEffect(() => {
     if (!caseId) return
@@ -655,7 +657,13 @@ const CaseOverviewPage = () => {
                 {PRESETS.map(preset => (
                   <button
                     key={preset.id}
-                    onClick={() => navigate(preset.path(caseId!))}
+                    onClick={() => {
+                      if (preset.id === 'tabular') {
+                        setShowTabularHub(true)
+                        return
+                      }
+                      navigate(preset.path(caseId!))
+                    }}
                     className="rounded-lg border flex flex-col items-start p-4 gap-2 text-left transition-all duration-150 hover:bg-[var(--color-bg-hover)]"
                     style={{
                       borderColor: 'var(--color-border)',
@@ -1631,7 +1639,7 @@ const CaseOverviewPage = () => {
             <div className="grid grid-cols-2 gap-4">
               {/* Tabular Review */}
               <button
-                onClick={() => { setShowQueryTypeModal(false); setShowFilePicker(true) }}
+                onClick={() => { setShowQueryTypeModal(false); setShowTabularHub(true) }}
                 className="rounded-xl border p-5 text-left transition-all duration-150 hover:bg-[var(--color-bg-hover)] hover:shadow-sm"
                 style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-bg-primary)' }}
               >
@@ -1645,10 +1653,10 @@ const CaseOverviewPage = () => {
                   <ChevronRight className="w-4 h-4" style={{ color: 'var(--color-text-muted)' }} />
                 </div>
                 <p className="text-sm font-semibold mb-1" style={{ color: 'var(--color-text-primary)' }}>
-                  Tabular Review
+                  Таблица
                 </p>
                 <p className="text-xs leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>
-                  Анализируйте каждый файл по отдельности, задавая одинаковые вопросы к каждому документу
+                  Один вопрос ко всем документам: сравнение, фильтр и экспорт
                 </p>
               </button>
 
@@ -1934,6 +1942,19 @@ const CaseOverviewPage = () => {
           </div>
         </div>
       </Drawer>
+
+      {caseId && (
+        <CaseTabularHubModal
+          open={showTabularHub}
+          onClose={() => setShowTabularHub(false)}
+          caseId={caseId}
+          files={files.map((f) => ({ id: f.id, filename: f.filename }))}
+          reviews={reviews}
+          loadingReviews={loadingReviews}
+          onReviewOpen={(reviewId) => navigate(`/cases/${caseId}/tabular-review/${reviewId}`)}
+          onReviewsChanged={loadAll}
+        />
+      )}
     </div>
   )
 }

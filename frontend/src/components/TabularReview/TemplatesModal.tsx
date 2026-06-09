@@ -33,6 +33,11 @@ import {
   Close as CloseIcon,
 } from '@mui/icons-material'
 import { tabularReviewApi } from '@/services/tabularReviewApi'
+import {
+  applyTabularTemplateToReview,
+  fetchBankruptcyTemplateCatalog,
+  getBuiltinTemplateById,
+} from '@/utils/tabularTemplateApply'
 import { toast } from 'sonner'
 
 // Re-export for use in other components
@@ -78,6 +83,7 @@ const CATEGORY_NAMES: Record<string, string> = {
   due_diligence: 'Due Diligence',
   research: 'Исследование',
   compliance: 'Compliance',
+  bankruptcy_rf: 'Банкротство (РФ)',
   custom: 'Прочее',
 }
 
@@ -115,7 +121,29 @@ export const TemplatesModal: React.FC<TemplatesModalProps> = ({
       if (activeTab === 1) params.featured = true
       
       const data = await tabularReviewApi.getTemplates(params)
-      setTemplates(data)
+      const bankruptcyCatalog = await fetchBankruptcyTemplateCatalog()
+      const builtinAsApi: TabularTemplate[] = bankruptcyCatalog
+        .filter((t) => t.source === 'builtin')
+        .map((t) => {
+          const builtin = getBuiltinTemplateById(t.id)
+          return {
+            id: t.id,
+            name: t.name,
+            description: t.description,
+            columns: builtin?.columns ?? [],
+            is_public: true,
+            is_system: true,
+            is_featured: t.featured,
+            category: t.category,
+            tags: t.tags,
+          }
+        })
+      const apiNames = new Set(data.map((t) => t.name.toLowerCase()))
+      const merged = [
+        ...data,
+        ...builtinAsApi.filter((b) => !apiNames.has(b.name.toLowerCase())),
+      ]
+      setTemplates(merged)
     } catch (error: any) {
       console.error('Error loading templates:', error)
       toast.error('Ошибка при загрузке шаблонов')
@@ -129,9 +157,13 @@ export const TemplatesModal: React.FC<TemplatesModalProps> = ({
     
     setIsApplying(true)
     try {
-      console.log("Applying template from modal:", { reviewId, templateId: template.id, templateName: template.name, columnsCount: template.columns.length })
-      await tabularReviewApi.applyTemplate(reviewId, template.id)
-      toast.success(`Шаблон "${template.name}" применен: добавлено ${template.columns.length} колонок`)
+      const isBuiltin = template.id.startsWith('builtin-')
+      if (isBuiltin) {
+        await applyTabularTemplateToReview(reviewId, template.id, 'builtin')
+      } else {
+        await tabularReviewApi.applyTemplate(reviewId, template.id)
+      }
+      toast.success(`Шаблон «${template.name}» применён: добавлено ${template.columns.length} колонок`)
       onTemplateApplied?.()
       onClose()
       setSelectedTemplate(null)

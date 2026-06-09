@@ -19,7 +19,6 @@ import { tabularReviewApi } from "@/services/tabularReviewApi"
 
 const COLUMN_TYPES = [
   { value: "text", label: "Свободный ответ", icon: "≡" },
-  { value: "document_type", label: "Тип документа", icon: "📋" },
   { value: "number", label: "Длительность", icon: "🕐" },
   { value: "currency", label: "Валюта", icon: "$" },
   { value: "yes_no", label: "Классификация", icon: "☑" },

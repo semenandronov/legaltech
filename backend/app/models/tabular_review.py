@@ -37,7 +37,7 @@ class TabularColumn(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     tabular_review_id = Column(String, ForeignKey("tabular_reviews.id", ondelete="CASCADE"), nullable=False, index=True)
     column_label = Column(String(255), nullable=False)  # "Loan Type", "Key Terms", etc.
-    column_type = Column(String(50), nullable=False)  # text, number, currency, yes_no, date, tag, verbatim, manual_input, document_type
+    column_type = Column(String(50), nullable=False)  # text, number, currency, yes_no, date, tag, verbatim, manual_input
     prompt = Column(Text, nullable=False)  # вопрос/prompt для AI
     column_config = Column(JSON, nullable=True)  # Конфигурация для типа tag: {options: [{label, color}], allow_custom: bool}
     order_index = Column(Integer, nullable=False)
@@ -47,6 +47,24 @@ class TabularColumn(Base):
     # Relationships
     review = relationship("TabularReview", back_populates="columns")
     cells = relationship("TabularCell", back_populates="column", cascade="all, delete-orphan")
+    review_queue_items = relationship(
+        "ReviewQueueItem",
+        back_populates="column",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    cell_comments = relationship(
+        "CellComment",
+        back_populates="column",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    cell_history_records = relationship(
+        "CellHistory",
+        back_populates="column",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
 
 class TabularCell(Base):
@@ -163,7 +181,7 @@ class CellHistory(Base):
     # Relationships
     review = relationship("TabularReview", backref="cell_history_records")
     file = relationship("File", backref="cell_history_records")
-    column = relationship("TabularColumn", backref="cell_history_records")
+    column = relationship("TabularColumn", back_populates="cell_history_records")
     user = relationship("User", backref="cell_history_records")
 
 
@@ -186,7 +204,7 @@ class CellComment(Base):
     # Relationships
     review = relationship("TabularReview", backref="cell_comments")
     file = relationship("File", backref="cell_comments")
-    column = relationship("TabularColumn", backref="cell_comments")
+    column = relationship("TabularColumn", back_populates="cell_comments")
     author = relationship("User", foreign_keys=[created_by], backref="cell_comments_authored")
     resolver = relationship("User", foreign_keys=[resolved_by], backref="cell_comments_resolved")
 
@@ -207,10 +225,10 @@ class ReviewQueueItem(Base):
     reviewed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     
-    # Relationships
+      # Relationships
     review = relationship("TabularReview", backref="review_queue_items")
     file = relationship("File", backref="review_queue_items")
-    column = relationship("TabularColumn", backref="review_queue_items")
+    column = relationship("TabularColumn", back_populates="review_queue_items")
     cell = relationship("TabularCell", backref="review_queue_items")
     reviewer = relationship("User", backref="review_queue_items")
 

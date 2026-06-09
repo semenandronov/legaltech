@@ -10,27 +10,24 @@ import { InlineCellEditor } from "../components/TabularReview/InlineCellEditor"
 import { DocumentSelector } from "../components/TabularReview/DocumentSelector"
 import { TabularDocumentViewer } from "../components/TabularReview/TabularDocumentViewer"
 import { TemplatesModal } from "../components/TabularReview/TemplatesModal"
-import { CreateTableModeDialog } from "../components/TabularReview/CreateTableModeDialog"
-import { AutomaticTableCreationDialog } from "../components/TabularReview/AutomaticTableCreationDialog"
+import { CaseTabularHubModal } from "../components/TabularReview/CaseTabularHubModal"
+import { TabularReviewHelpPanel } from "../components/TabularReview/TabularReviewHelpPanel"
+import { TabularReviewContextChat } from "../components/TabularReview/TabularReviewContextChat"
 import { ExportTableDialog } from "../components/TabularReview/ExportTableDialog"
 import { tabularReviewApi, TableData, TabularColumn } from "../services/tabularReviewApi"
 import { appendColumnsToTableData, applyColumnCellsToTableData, applySingleColumnCellToTableData, buildProcessingCellKeys, clearProcessingCellKey, clearProcessingCellKeysForColumn, removeColumnFromTableData } from "../utils/tabularTableState"
+import {
+  countResolvedColumnCells,
+  startColumnExtractionPoll,
+  type ColumnExtractionPollController,
+} from "../utils/tabularColumnExtractionPoll"
 import { buildTabularViewerCellData, type TabularCellClickPayload } from "../utils/tabularCellViewerData"
 import { useTabularReviewWebSocket } from "../hooks/useTabularReviewWebSocket"
-import { getCase } from "../services/api"
+import { getCase, getDocuments } from "../services/api"
 import { Card } from "../components/UI/Card"
 import Spinner from "../components/UI/Spinner"
 import { toast } from "sonner"
-import { ArrowLeft, Edit2, X, Trash2, Check } from "lucide-react"
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "../components/UI/dialog"
-import Input from "../components/UI/Input"
-import { Button } from "../components/UI/Button"
+import { Edit2, X, Check, LayoutTemplate } from "lucide-react"
 import { Drawer } from "@mui/material"
 
 const TabularReviewPage: React.FC = () => {
@@ -83,7 +80,6 @@ const TabularReviewPage: React.FC = () => {
   } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const loadingRef = useRef(false)
-  const [workMode, setWorkMode] = useState<"manual" | "agent">("manual")
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [isEditingName, setIsEditingName] = useState(false)
   const [editNameValue, setEditNameValue] = useState("")
@@ -98,12 +94,11 @@ const TabularReviewPage: React.FC = () => {
     updated_at?: string
   }>>([])
   const [loadingReviews, setLoadingReviews] = useState(false)
-  const [showReviewSelector, setShowReviewSelector] = useState(true)
-  const [showNameDialog, setShowNameDialog] = useState(false)
-  const [reviewName, setReviewName] = useState("")
-  const [pendingFileIds, setPendingFileIds] = useState<string[]>([])
-  const [showCreateModeDialog, setShowCreateModeDialog] = useState(false)
-  const [showAutomaticCreationDialog, setShowAutomaticCreationDialog] = useState(false)
+  const [showHelpPanel, setShowHelpPanel] = useState(false)
+  const [showTableChat, setShowTableChat] = useState(true)
+  const [caseFilesForHub, setCaseFilesForHub] = useState<Array<{ id: string; filename: string }>>([])
+  const columnPollControllersRef = useRef<Map<string, ColumnExtractionPollController>>(new Map())
+  const wsCompletedColumnRef = useRef<Set<string>>(new Set())
 
   const handleRealtimeCellUpdated = useCallback((update: Parameters<typeof applySingleColumnCellToTableData>[1]) => {
     setTableData((prev) => (prev ? applySingleColumnCellToTableData(prev, update) : prev))
@@ -149,36 +144,40 @@ const TabularReviewPage: React.FC = () => {
     finishColumnExtractionUi(columnId)
   }, [editingColumn?.id, finishColumnExtractionUi])
 
-  useTabularReviewWebSocket({
-    reviewId: reviewId ?? null,
-    enabled: Boolean(reviewId),
-    onCellUpdated: handleRealtimeCellUpdated,
-    onExtractionCellFinished: handleRealtimeExtractionCellFinished,
-    onColumnDeleted: handleRealtimeColumnDeleted,
-  })
-
   // Fetch case name for breadcrumb
   useEffect(() => {
     if (!caseId) return
     getCase(caseId).then(c => setCaseName(c.title || "")).catch(() => {})
   }, [caseId])
 
-  // Load existing reviews when caseId is available but no reviewId
-  useEffect(() => {
-    const loadReviews = async () => {
-      if (!caseId || reviewId) return // Only load if we have caseId but no reviewId
-      try {
-        setLoadingReviews(true)
-        const data = await tabularReviewApi.listReviews(caseId)
-        setExistingReviews(data.reviews)
-      } catch (err: any) {
-        console.error("Error loading reviews:", err)
-        toast.error("Не удалось загрузить список таблиц")
-      } finally {
-        setLoadingReviews(false)
-      }
+  const reloadReviews = useCallback(async () => {
+    if (!caseId) return
+    try {
+      setLoadingReviews(true)
+      const data = await tabularReviewApi.listReviews(caseId)
+      setExistingReviews(data.reviews)
+    } catch (err: unknown) {
+      console.error("Error loading reviews:", err)
+      toast.error("Не удалось загрузить список таблиц")
+    } finally {
+      setLoadingReviews(false)
     }
-    loadReviews()
+  }, [caseId])
+
+  useEffect(() => {
+    if (!caseId || reviewId) return
+    reloadReviews()
+  }, [caseId, reviewId, reloadReviews])
+
+  useEffect(() => {
+    if (!caseId || reviewId) return
+    getDocuments(caseId)
+      .then((res) => {
+        setCaseFilesForHub(
+          (res.documents || []).map((d) => ({ id: d.id, filename: d.filename })),
+        )
+      })
+      .catch(() => setCaseFilesForHub([]))
   }, [caseId, reviewId])
 
   // Предупреждение при закрытии с несохранёнными изменениями
@@ -197,82 +196,13 @@ const TabularReviewPage: React.FC = () => {
     if (reviewId && !loadingRef.current) {
       loadReviewData()
     } else if (caseId && !reviewId && !loadingRef.current) {
-      // If no reviewId, show document selector to create new review
-      setLoading(false) // No loading needed for new review creation
-      createNewReview()
+      setLoading(false)
     } else if (!caseId) {
       // No caseId, can't do anything
       setLoading(false)
       setError("Case ID не найден")
     }
   }, [reviewId, caseId]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const createNewReview = async () => {
-    if (!caseId) return
-    
-    // Show mode selection dialog instead of directly opening document selector
-    // This is called from useEffect when no reviewId, but we want to show selector first
-    // So we do nothing here - handleCreateNew will be called from button click
-  }
-
-  const handleDeleteReview = async (reviewIdToDelete: string, event: React.MouseEvent) => {
-    event.stopPropagation() // Prevent card click
-    
-    if (!confirm(`Вы уверены, что хотите удалить таблицу "${existingReviews.find(r => r.id === reviewIdToDelete)?.name}"? Это действие нельзя отменить.`)) {
-      return
-    }
-    
-    try {
-      await tabularReviewApi.deleteReview(reviewIdToDelete)
-      toast.success("Таблица удалена")
-      // Reload reviews list
-      const data = await tabularReviewApi.listReviews(caseId)
-      setExistingReviews(data.reviews)
-    } catch (err: any) {
-      toast.error("Не удалось удалить таблицу: " + (err.message || ""))
-    }
-  }
-
-  const handleDocumentSelectorConfirm = async (fileIds: string[]) => {
-    if (!caseId) return
-    
-    console.log('handleDocumentSelectorConfirm called with fileIds:', fileIds)
-    setShowDocumentSelector(false)
-    setPendingFileIds(fileIds)
-    setReviewName("")
-    setShowNameDialog(true)
-    console.log('showNameDialog set to true')
-  }
-
-  const handleCreateReviewWithName = async () => {
-    console.log('handleCreateReviewWithName called', { caseId, reviewName, pendingFileIds })
-    if (!caseId || !reviewName.trim()) {
-      toast.error("Введите название таблицы")
-      return
-    }
-    
-    try {
-      setShowNameDialog(false)
-      setLoading(true)
-      console.log('Calling tabularReviewApi.createReview...')
-      const review = await tabularReviewApi.createReview(
-        caseId,
-        reviewName.trim(),
-        undefined,
-        pendingFileIds
-      )
-      console.log('Review created:', review)
-      setSelectedFileIds(pendingFileIds)
-      setPendingFileIds([])
-      navigate(`/cases/${caseId}/tabular-review/${review.id}`, { replace: true })
-    } catch (err: any) {
-      console.error('Error creating review:', err)
-      setError(err.message || "Ошибка при создании review")
-      toast.error("Не удалось создать Tabular Review")
-    } finally {
-      setLoading(false)
-    }
-  }
 
   const handleUpdateDocuments = async (fileIds: string[]) => {
     if (!reviewId) return
@@ -315,6 +245,141 @@ const TabularReviewPage: React.FC = () => {
       loadingRef.current = false
     }
   }
+
+  const refreshTableDataQuiet = useCallback(async (): Promise<TableData | null> => {
+    if (!reviewId) return null
+    try {
+      const data = await tabularReviewApi.getTableData(reviewId)
+      setTableData(data)
+      if (data.review.selected_file_ids) {
+        setSelectedFileIds(data.review.selected_file_ids)
+      }
+      return data
+    } catch (err) {
+      console.error("Error refreshing table data:", err)
+      return null
+    }
+  }, [reviewId])
+
+  const stopColumnPoll = useCallback((columnId: string) => {
+    columnPollControllersRef.current.get(columnId)?.stop()
+    columnPollControllersRef.current.delete(columnId)
+  }, [])
+
+  const syncProcessingKeysFromTable = useCallback((columnId: string, data: TableData) => {
+    setProcessingCellKeys((prev) => {
+      let next = prev
+      for (const row of data.rows) {
+        const cell = row.cells[columnId]
+        if (cell?.status && cell.status !== "pending") {
+          next = clearProcessingCellKey(next, columnId, row.file_id)
+        }
+      }
+      return next
+    })
+  }, [])
+
+  const showColumnExtractionSuccessToast = useCallback((filled: number, saved: number) => {
+    const empty = Math.max(0, saved - filled)
+    if (empty > 0) {
+      toast.success(
+        `Готово: ${filled} из ${saved} ячеек с ответом. ${empty} — в документе нет ответа на вопрос (N/A).`,
+      )
+      return
+    }
+    toast.success(`Колонка заполнена: ${filled} ответов по документам`)
+  }, [])
+
+  const startColumnPoll = useCallback(
+    (columnId: string, expectedTasks: number) => {
+      stopColumnPoll(columnId)
+      const controller = startColumnExtractionPoll({
+        columnId,
+        expectedTasks,
+        fetchTableData: refreshTableDataQuiet,
+        onTableData: (data) => syncProcessingKeysFromTable(columnId, data),
+        onComplete: async () => {
+          if (wsCompletedColumnRef.current.has(columnId)) {
+            stopColumnPoll(columnId)
+            return
+          }
+          const data = await refreshTableDataQuiet()
+          stopColumnPoll(columnId)
+          finishColumnExtractionUi(columnId)
+          setProcessing(false)
+          if (data) {
+            const resolved = countResolvedColumnCells(data, columnId)
+            showColumnExtractionSuccessToast(resolved, resolved)
+          } else {
+            toast.success("Колонка заполнена")
+          }
+        },
+        onTimeout: () => {
+          stopColumnPoll(columnId)
+          finishColumnExtractionUi(columnId)
+          setProcessing(false)
+          toast.error("Превышено время ожидания заполнения колонки")
+        },
+      })
+      columnPollControllersRef.current.set(columnId, controller)
+    },
+    [
+      finishColumnExtractionUi,
+      refreshTableDataQuiet,
+      showColumnExtractionSuccessToast,
+      stopColumnPoll,
+      syncProcessingKeysFromTable,
+    ],
+  )
+
+  const handleColumnExtractionCompleted = useCallback(
+    async (data: {
+      column_id: string
+      status: string
+      saved_count?: number
+      filled_count?: number
+      error_count?: number
+      message?: string
+    }) => {
+      wsCompletedColumnRef.current.add(data.column_id)
+      stopColumnPoll(data.column_id)
+      await refreshTableDataQuiet()
+      finishColumnExtractionUi(data.column_id)
+      setProcessing(false)
+      if (data.status === "completed") {
+        const filled = data.filled_count ?? data.saved_count ?? 0
+        const saved = data.saved_count ?? filled
+        showColumnExtractionSuccessToast(filled, saved)
+      } else if (data.status === "failed") {
+        toast.error(data.message || "Ошибка при заполнении колонки")
+      }
+      window.setTimeout(() => {
+        wsCompletedColumnRef.current.delete(data.column_id)
+      }, 2000)
+    },
+    [
+      finishColumnExtractionUi,
+      refreshTableDataQuiet,
+      showColumnExtractionSuccessToast,
+      stopColumnPoll,
+    ],
+  )
+
+  useTabularReviewWebSocket({
+    reviewId: reviewId ?? null,
+    enabled: Boolean(reviewId),
+    onCellUpdated: handleRealtimeCellUpdated,
+    onExtractionCellFinished: handleRealtimeExtractionCellFinished,
+    onColumnExtractionCompleted: handleColumnExtractionCompleted,
+    onColumnDeleted: handleRealtimeColumnDeleted,
+  })
+
+  useEffect(() => {
+    return () => {
+      columnPollControllersRef.current.forEach((controller) => controller.stop())
+      columnPollControllersRef.current.clear()
+    }
+  }, [])
 
   const handleCellEditSave = async (fileId: string, columnId: string, value: string) => {
     if (!reviewId) return
@@ -458,6 +523,7 @@ const TabularReviewPage: React.FC = () => {
         editingColumn.id,
         {
           column_label: column.column_label,
+          column_type: column.column_type,
           prompt: column.prompt,
           column_config: column.column_config,
         }
@@ -513,258 +579,25 @@ const TabularReviewPage: React.FC = () => {
     )
   }
 
-  // If no reviewId, show interface to create new review or select existing
   if (!reviewId && caseId) {
-    const handleSelectReview = (selectedReviewId: string) => {
-      navigate(`/cases/${caseId}/tabular-review/${selectedReviewId}`, { replace: true })
-    }
-
-    const handleCreateNew = () => {
-      setShowCreateModeDialog(true)
-    }
-
-    const handleSelectManualMode = () => {
-      setShowReviewSelector(false)
-      setShowDocumentSelector(true)
-    }
-
-    const handleSelectAutomaticMode = () => {
-      setShowAutomaticCreationDialog(true)
-    }
-
-    const handleAutomaticTableCreated = (newReviewId: string) => {
-      navigate(`/cases/${caseId}/tabular-review/${newReviewId}`, { replace: true })
-    }
-
     return (
       <div className="h-screen bg-bg-primary flex">
         <UnifiedSidebar navItems={navItems} title="Legal AI" showBackButton={false} />
-        <div className="flex-1 flex flex-col bg-bg-primary">
-          <div className="border-b border-border bg-bg-elevated/80 backdrop-blur-sm p-6">
-            <div className="flex items-center justify-between gap-4">
-              <div className="flex items-center gap-4">
-                <button
-                  onClick={navigateBackToConversation}
-                  className="p-2 rounded-lg hover:bg-bg-hover transition-colors duration-200 text-text-secondary hover:text-text-primary flex items-center gap-2"
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                  {returnTo ? "Назад в переписку" : "Назад к делу"}
-                </button>
-                <h1 className="font-display text-h1 text-text-primary">Tabular Review</h1>
-              </div>
-              {reviewId && (
-                <div className="flex items-center gap-2 text-sm">
-                  <span className="text-text-secondary">Режим работы:</span>
-                  <div className="flex border border-border rounded-md overflow-hidden">
-                    <button
-                      onClick={() => setWorkMode("manual")}
-                      className={`px-4 py-2 transition-colors ${
-                        workMode === "manual"
-                          ? "bg-accent text-bg-primary font-medium"
-                          : "bg-bg-elevated text-text-secondary hover:bg-bg-hover"
-                      }`}
-                    >
-                      Ручной
-                    </button>
-                    <button
-                      onClick={() => setWorkMode("agent")}
-                      className={`px-4 py-2 transition-colors border-l border-border ${
-                        workMode === "agent"
-                          ? "bg-accent text-bg-primary font-medium"
-                          : "bg-bg-elevated text-text-secondary hover:bg-bg-hover"
-                      }`}
-                    >
-                      Через агента
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-          <div className="flex-1 overflow-auto p-8 fade-in-up">
-            {showReviewSelector ? (
-              <div className="max-w-4xl mx-auto">
-                <div className="flex items-center justify-between mb-6">
-                  <div>
-                    <h2 className="font-display text-h1 text-text-primary mb-2">Выберите или создайте таблицу</h2>
-                    <p className="text-body text-text-secondary">
-                      Выберите существующую таблицу или создайте новую для этого дела
-                    </p>
-                  </div>
-                  <button
-                    onClick={handleCreateNew}
-                    className="px-6 py-3 bg-accent text-bg-primary font-medium rounded-lg hover:bg-accent-hover transition-all duration-300"
-                  >
-                    Создать новую таблицу
-                  </button>
-                </div>
-
-                {loadingReviews ? (
-                  <div className="flex items-center justify-center py-12">
-                    <Spinner size="lg" />
-                  </div>
-                ) : existingReviews.length === 0 ? (
-                  <Card className="p-8 hoverable">
-                    <div className="text-center">
-                      <h3 className="font-display text-h2 text-text-primary mb-2">
-                        Нет созданных таблиц
-                      </h3>
-                      <p className="text-body text-text-secondary mb-6">
-                        Создайте первую таблицу для этого дела
-                      </p>
-                      <button
-                        onClick={handleCreateNew}
-                        className="px-6 py-3 bg-accent text-bg-primary font-medium rounded-lg hover:bg-accent-hover transition-all duration-300"
-                      >
-                        Создать таблицу
-                      </button>
-                    </div>
-                  </Card>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {existingReviews.map((review, index) => (
-                      <Card
-                        key={review.id}
-                        className="p-6 cursor-pointer hoverable transition-all duration-300 relative"
-                        style={{ animationDelay: `${index * 0.05}s` }}
-                        onClick={() => handleSelectReview(review.id)}
-                      >
-                        <button
-                          onClick={(e) => handleDeleteReview(review.id, e)}
-                          className="absolute top-4 right-4 p-2 rounded-lg hover:bg-error-bg text-error hover:text-error transition-all duration-150 z-10"
-                          title="Удалить таблицу"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                        <div className="flex items-start justify-between mb-3 pr-8">
-                          <h3 className="font-display text-h3 text-text-primary">{review.name}</h3>
-                          <span className={`text-xs px-3 py-1 rounded-full font-medium ${
-                            review.status === 'completed' ? 'bg-success-bg text-success border border-success/30' :
-                            review.status === 'processing' ? 'bg-warning-bg text-warning border border-warning/30' :
-                            'bg-bg-secondary text-text-secondary border border-border'
-                          }`}>
-                            {review.status}
-                          </span>
-                        </div>
-                        {review.description && (
-                          <p className="text-sm text-text-secondary mb-3 line-clamp-2">
-                            {review.description}
-                          </p>
-                        )}
-                        {review.updated_at && (
-                          <p className="text-xs text-text-secondary">
-                            Обновлено: {new Date(review.updated_at).toLocaleDateString('ru-RU')}
-                          </p>
-                        )}
-                      </Card>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="max-w-md mx-auto">
-                <Card className="p-6 hoverable">
-                  <div className="text-center">
-                    <h3 className="font-display text-h2 text-text-primary mb-2">
-                      Выберите документы для таблицы
-                    </h3>
-                    <p className="text-body text-text-secondary mb-6">
-                      Выберите документы из дела, которые будут включены в Tabular Review
-                    </p>
-                    <div className="flex gap-3 justify-center">
-                      <button
-                        onClick={() => setShowReviewSelector(true)}
-                        className="px-4 py-2 bg-bg-elevated border border-border text-text-secondary font-medium rounded-lg hover:bg-bg-hover transition-all duration-300"
-                      >
-                        Назад
-                      </button>
-                      <button
-                        onClick={() => setShowDocumentSelector(true)}
-                        className="px-4 py-2 bg-accent text-bg-primary font-medium rounded-lg hover:bg-accent-hover transition-all duration-300"
-                      >
-                        Выбрать документы
-                      </button>
-                    </div>
-                  </div>
-                </Card>
-              </div>
-            )}
-          </div>
-          {caseId && (
-            <DocumentSelector
-              isOpen={showDocumentSelector}
-              onClose={() => {
-                setShowDocumentSelector(false)
-                setShowReviewSelector(true)
-              }}
-              onConfirm={handleDocumentSelectorConfirm}
-              reviewId=""
-              initialSelectedIds={[]}
-              caseId={caseId}
-            />
-          )}
-
-          {/* Create Mode Selection Dialog */}
-          {caseId && (
-            <CreateTableModeDialog
-              isOpen={showCreateModeDialog}
-              onClose={() => setShowCreateModeDialog(false)}
-              onSelectManual={handleSelectManualMode}
-              onSelectAutomatic={handleSelectAutomaticMode}
-            />
-          )}
-
-          {/* Automatic Table Creation Dialog */}
-          {caseId && (
-            <AutomaticTableCreationDialog
-              isOpen={showAutomaticCreationDialog}
-              onClose={() => setShowAutomaticCreationDialog(false)}
-              caseId={caseId}
-              onTableCreated={handleAutomaticTableCreated}
-            />
-          )}
-
-          {/* Name Dialog for creating new review */}
-          <Dialog open={showNameDialog} onOpenChange={setShowNameDialog}>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Введите название таблицы</DialogTitle>
-              </DialogHeader>
-              <div className="py-4">
-                <Input
-                  label="Название таблицы"
-                  value={reviewName}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setReviewName(e.target.value)}
-                  placeholder="Например: Анализ договоров"
-                  onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
-                    if (e.key === 'Enter' && reviewName.trim()) {
-                      handleCreateReviewWithName()
-                    }
-                  }}
-                  autoFocus
-                />
-              </div>
-              <DialogFooter>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setShowNameDialog(false)
-                    setPendingFileIds([])
-                    setReviewName("")
-                  }}
-                >
-                  Отмена
-                </Button>
-                <Button
-                  onClick={handleCreateReviewWithName}
-                  disabled={!reviewName.trim()}
-                >
-                  Создать
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+        <div className="flex-1 flex items-center justify-center">
+          {loadingReviews && <Spinner size="lg" />}
         </div>
+        <CaseTabularHubModal
+          open
+          onClose={() => navigate(`/cases/${caseId}`)}
+          caseId={caseId}
+          files={caseFilesForHub}
+          reviews={existingReviews}
+          loadingReviews={loadingReviews}
+          onReviewOpen={(id) =>
+            navigate(`/cases/${caseId}/tabular-review/${id}`, { replace: true })
+          }
+          onReviewsChanged={reloadReviews}
+        />
       </div>
     )
   }
@@ -836,7 +669,7 @@ const TabularReviewPage: React.FC = () => {
   return (
     <div className="h-screen bg-bg-primary flex">
       <UnifiedSidebar navItems={navItems} title="Legal AI" showBackButton={false} />
-      <div className="flex flex-col h-full flex-1 bg-bg-primary">
+      <div className="flex flex-col h-full flex-1 min-h-0 overflow-hidden bg-bg-primary">
         {/* Header */}
         <div className="border-b border-border px-6 pt-5 pb-5" style={{ backgroundColor: 'var(--color-bg-primary)' }}>
           {/* Breadcrumb */}
@@ -917,22 +750,80 @@ const TabularReviewPage: React.FC = () => {
 
         {/* Toolbar */}
         <TabularReviewToolbar
+          onOpenHelp={() => setShowHelpPanel(true)}
+          onToggleChat={() => setShowTableChat((v) => !v)}
+          chatOpen={showTableChat}
           onOpenFilter={(el) => {
             setFilterAnchorEl(el)
             setFilterPopoverOpen(true)
           }}
           onUpdateDocuments={reviewId ? () => setShowDocumentSelector(true) : undefined}
-          onAddColumns={() => setShowColumnBuilder(true)}
+          onAddColumns={() => setShowTableAddColumn(true)}
           onExport={reviewId ? () => setShowExportDialog(true) : undefined}
           processing={processing}
         />
 
+        <TabularReviewHelpPanel
+          open={showHelpPanel}
+          onClose={() => setShowHelpPanel(false)}
+        />
+
         {/* Main Content Area */}
-        <div className="flex-1 overflow-hidden flex">
-          {/* Table, Cell Detail, and Document Split View */}
-          <div className="flex-1 overflow-hidden flex">
-            {/* Table */}
+        <div
+          className="flex-1 min-h-0 overflow-hidden"
+          style={{
+            display: 'grid',
+            gridTemplateColumns: showTableChat && reviewId && tableData ? 'minmax(0, 1fr) 380px' : 'minmax(0, 1fr)',
+          }}
+        >
+          <div className="min-h-0 overflow-hidden flex flex-col">
             <div className="overflow-hidden p-6 flex-1 bg-bg-primary min-h-0 flex flex-col">
+              {tableData.columns.length === 0 && (
+                <div
+                  className="mb-4 rounded-xl border p-5 shrink-0"
+                  style={{
+                    borderColor: 'var(--color-border)',
+                    backgroundColor: 'var(--color-bg-elevated)',
+                  }}
+                >
+                  <h3
+                    className="text-sm font-semibold mb-1"
+                    style={{ color: 'var(--color-text-primary)' }}
+                  >
+                    Добавьте первую колонку
+                  </h3>
+                  <p className="text-sm mb-4" style={{ color: 'var(--color-text-muted)' }}>
+                    Колонка — один вопрос ко всем документам. После создания нажмите ▶ у заголовка,
+                    чтобы ИИ заполнил ячейки. Или возьмите готовый шаблон для банкротства.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowTableAddColumn(true)}
+                      className="px-4 py-2 text-sm font-medium rounded-lg"
+                      style={{
+                        backgroundColor: 'var(--color-text-primary)',
+                        color: 'var(--color-bg-primary)',
+                      }}
+                    >
+                      Добавить колонку
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowTemplatesModal(true)}
+                      className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border"
+                      style={{
+                        borderColor: 'var(--color-border)',
+                        color: 'var(--color-text-primary)',
+                        backgroundColor: 'var(--color-bg-primary)',
+                      }}
+                    >
+                      <LayoutTemplate className="w-4 h-4" />
+                      Готовые шаблоны
+                    </button>
+                  </div>
+                </div>
+              )}
               <TabularReviewTable
                   reviewId={reviewId}
                   tableData={tableData}
@@ -1016,21 +907,40 @@ const TabularReviewPage: React.FC = () => {
                     beginColumnExtractionUi(columnId, fileIds)
                     try {
                       const result = await tabularReviewApi.runColumnExtraction(reviewId, columnId)
-                      const filled = result.filled_count ?? result.saved_count
-                      const pending = Math.max(0, result.saved_count - filled)
+                      if (result.status === "started") {
+                        toast.info(
+                          `Заполнение колонки: ${result.total_tasks} документов (до 5 параллельно)`,
+                        )
+                        startColumnPoll(columnId, result.total_tasks)
+                        return
+                      }
+                      if (result.status === "skipped") {
+                        finishColumnExtractionUi(columnId)
+                        setProcessing(false)
+                        return
+                      }
+                      const filled = result.filled_count ?? result.saved_count ?? 0
+                      const saved = result.saved_count ?? filled
+                      const pending = Math.max(0, saved - filled)
                       toast.success(
                         pending > 0
                           ? `Колонка заполнена: ${filled} ответов, ${pending} требуют проверки`
-                          : `Колонка заполнена: ${filled} ответов`
+                          : `Колонка заполнена: ${filled} ответов`,
                       )
                       if (result.cells?.length) {
                         setTableData((prev) =>
-                          prev ? applyColumnCellsToTableData(prev, columnId, result.cells) : prev
+                          prev ? applyColumnCellsToTableData(prev, columnId, result.cells!) : prev,
                         )
                       }
+                      finishColumnExtractionUi(columnId)
+                      setProcessing(false)
                     } catch (err: any) {
-                      toast.error("Ошибка при заполнении колонки: " + (err.message || ""))
-                    } finally {
+                      const msg = err.message || ""
+                      if (msg.includes("409") || msg.toLowerCase().includes("already in progress")) {
+                        toast.error("Колонка уже заполняется")
+                      } else {
+                        toast.error("Ошибка при заполнении колонки: " + msg)
+                      }
                       finishColumnExtractionUi(columnId)
                       setProcessing(false)
                     }
@@ -1039,9 +949,22 @@ const TabularReviewPage: React.FC = () => {
                   processingCellKeys={processingCellKeys}
                 />
             </div>
-
-
           </div>
+
+          {showTableChat && reviewId && tableData && (
+            <aside
+              className="min-h-0 h-full border-l flex flex-col overflow-hidden shadow-sm"
+              style={{
+                borderColor: 'var(--color-border)',
+                backgroundColor: 'var(--color-bg-elevated)',
+              }}
+            >
+              <TabularReviewContextChat
+                reviewId={reviewId}
+                reviewName={tableData.review.name}
+              />
+            </aside>
+          )}
         </div>
 
         {/* Document viewer — slides in from the right, overlays the page */}
@@ -1082,6 +1005,18 @@ const TabularReviewPage: React.FC = () => {
             </>
           )}
         </Drawer>
+
+        {showTableAddColumn && reviewId && (
+          <ColumnBuilder
+            isOpen
+            mode="modal"
+            onClose={() => setShowTableAddColumn(false)}
+            onSave={async (column) => {
+              await handleAddColumn(column)
+              setShowTableAddColumn(false)
+            }}
+          />
+        )}
 
         {/* Edit column: single-column wizard (2-step, anchored to column header) */}
         {editingColumn != null && (
@@ -1128,15 +1063,20 @@ const TabularReviewPage: React.FC = () => {
                 aiColumns.map(async (col) => {
                   try {
                     const result = await tabularReviewApi.runColumnExtraction(reviewId, col.id)
+                    if (result.status === "started") {
+                      startColumnPoll(col.id, result.total_tasks)
+                      return
+                    }
                     if (result.cells?.length) {
                       setTableData((prev) =>
-                        prev ? applyColumnCellsToTableData(prev, col.id, result.cells) : prev
+                        prev ? applyColumnCellsToTableData(prev, col.id, result.cells!) : prev,
                       )
                     }
-                  } finally {
+                    finishColumnExtractionUi(col.id)
+                  } catch {
                     finishColumnExtractionUi(col.id)
                   }
-                })
+                }),
               )
             }}
             initialQuestionsText={bulkBuilderInitialPrompt}
@@ -1148,7 +1088,7 @@ const TabularReviewPage: React.FC = () => {
           <DocumentSelector
             isOpen={showDocumentSelector}
             onClose={() => setShowDocumentSelector(false)}
-            onConfirm={reviewId ? handleUpdateDocuments : handleDocumentSelectorConfirm}
+            onConfirm={handleUpdateDocuments}
             reviewId={reviewId || ""}
             initialSelectedIds={selectedFileIds}
             caseId={caseId}

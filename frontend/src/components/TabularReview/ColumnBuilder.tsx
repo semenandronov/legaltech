@@ -4,14 +4,8 @@ import { Popover } from "@mui/material"
 import { Button } from "@/components/UI/Button"
 import Input from "@/components/UI/Input"
 import { Textarea } from "@/components/UI/Textarea"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/UI/Select"
 import { toast } from "sonner"
+import { tabularReviewApi } from "@/services/tabularReviewApi"
 
 interface ColumnBuilderProps {
   isOpen: boolean
@@ -46,14 +40,54 @@ interface ColumnBuilderProps {
 }
 
 const COLUMN_TYPES = [
-  { value: "text", label: "Текст", icon: "📝" },
-  { value: "number", label: "Число", icon: "#" },
-  { value: "currency", label: "Валюта", icon: "$" },
-  { value: "yes_no", label: "Да/Нет", icon: "✓" },
-  { value: "date", label: "Дата", icon: "📅" },
-  { value: "tag", label: "Тег", icon: "🏷️" },
-  { value: "verbatim", label: "Дословно", icon: "💬" },
-  { value: "manual_input", label: "Ручной ввод", icon: "✏️" },
+  {
+    value: "text",
+    label: "Текст",
+    icon: "📝",
+    description: "Краткий ответ словами: стороны, суть, условия.",
+  },
+  {
+    value: "number",
+    label: "Число",
+    icon: "#",
+    description: "Количество, проценты, номера без валюты.",
+  },
+  {
+    value: "currency",
+    label: "Валюта",
+    icon: "$",
+    description: "Суммы с валютой: требования, платежи, штрафы.",
+  },
+  {
+    value: "yes_no",
+    label: "Да/Нет",
+    icon: "✓",
+    description: "Есть ли в документе указанный факт.",
+  },
+  {
+    value: "date",
+    label: "Дата",
+    icon: "📅",
+    description: "Дата подписания, вынесения акта, срока.",
+  },
+  {
+    value: "tag",
+    label: "Тег",
+    icon: "🏷️",
+    description: "Категория из заранее заданного списка.",
+  },
+  {
+    value: "verbatim",
+    label: "Дословно",
+    icon: "💬",
+    description: "Точная цитата из документа без перефразирования.",
+  },
+  {
+    value: "manual_input",
+    label: "Ручной ввод",
+    icon: "✏️",
+    description: "Заполняете сами, без автоматического извлечения.",
+  },
 ]
 
 // Цвета для тегов (как у Legora)
@@ -99,6 +133,8 @@ export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn, anchorEl
     ]
   )
   const [newTagLabel, setNewTagLabel] = useState("")
+  const [inferringType, setInferringType] = useState(false)
+  const [typeInferenceReason, setTypeInferenceReason] = useState<string | null>(null)
   
   // При открытии: сброс или подстановка данных (создание и редактирование — один поток)
   useEffect(() => {
@@ -119,7 +155,8 @@ export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn, anchorEl
       setStep(effectiveStep)
       setPrompt(effectivePrompt)
       setColumnLabel(effectiveStep === 2 && effectivePrompt ? suggestLabelFromPrompt(effectivePrompt) : "")
-      setColumnType("verbatim")
+      setColumnType("text")
+      setTypeInferenceReason(null)
       setTagOptions([
         { label: "Email", color: TAG_COLORS[0] },
         { label: "Contract", color: TAG_COLORS[1] },
@@ -128,14 +165,42 @@ export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn, anchorEl
     }
   }, [isOpen, editingColumn, startAtStep, initialPrompt])
 
-  const handleContinueToStep2 = () => {
+  useEffect(() => {
+    if (!isOpen || editingColumn) return
+    const effectiveStep = startAtStep || 1
+    const effectivePrompt = (initialPrompt || "").trim()
+    if (effectiveStep !== 2 || !effectivePrompt) return
+    const label = suggestLabelFromPrompt(effectivePrompt)
+    void inferTypeForStep2(label, effectivePrompt)
+  }, [isOpen, editingColumn, startAtStep, initialPrompt])
+
+  const inferTypeForStep2 = async (label: string, question: string) => {
+    setInferringType(true)
+    setTypeInferenceReason(null)
+    try {
+      const inferred = await tabularReviewApi.inferColumnType(question, label || undefined)
+      setColumnType(inferred.column_type)
+      setTypeInferenceReason(inferred.reason)
+      if (!label.trim() && inferred.suggested_label) {
+        setColumnLabel(inferred.suggested_label)
+      }
+    } catch (error) {
+      console.error("Failed to infer column type:", error)
+      setColumnType("text")
+    } finally {
+      setInferringType(false)
+    }
+  }
+
+  const handleContinueToStep2 = async () => {
     if (!prompt.trim()) {
       toast.error("Введите вопрос для колонки")
       return
     }
-    setColumnLabel(suggestLabelFromPrompt(prompt))
-    setColumnType("verbatim")
+    const label = suggestLabelFromPrompt(prompt)
+    setColumnLabel(label)
     setStep(2)
+    await inferTypeForStep2(label, prompt)
   }
 
   const handleBackToStep1 = () => {
@@ -211,14 +276,14 @@ export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn, anchorEl
   const step1Content = (
     <>
       <p className="text-sm text-muted-foreground mb-4">
-        Опишите, какую информацию должна извлекать колонка.
+        Один вопрос — одна колонка. ИИ ответит отдельно по каждому документу в таблице.
       </p>
       <div className="space-y-4">
         <div>
           <Textarea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Например: какая дата подписания договора?"
+            placeholder="Например: дата подписания этого документа"
             rows={4}
             className="resize-none"
           />
@@ -235,9 +300,28 @@ export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn, anchorEl
     </>
   )
 
+  const step2Footer = (
+    <div
+      className="flex justify-end gap-2 pt-3 mt-1 border-t border-border shrink-0"
+      style={{ backgroundColor: 'var(--color-bg-elevated, #fff)' }}
+    >
+      {!startAtStep || startAtStep < 2 ? (
+        <Button variant="ghost" onClick={handleBackToStep1} disabled={saving}>
+          Назад
+        </Button>
+      ) : null}
+      <Button variant="outline" onClick={onClose} disabled={saving}>
+        Отмена
+      </Button>
+      <Button onClick={handleSave} disabled={saving || !columnLabel.trim()}>
+        {saving ? "Сохранение…" : "Сохранить"}
+      </Button>
+    </div>
+  )
+
   // Шаг 2: название колонки и тип (создание и редактирование)
   const step2Content = (
-    <>
+    <div className="flex flex-col">
       <div className="space-y-4">
         <div>
           <label className="text-sm font-medium mb-2 block">Название колонки</label>
@@ -249,24 +333,52 @@ export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn, anchorEl
         </div>
         <div>
           <label className="text-sm font-medium mb-2 block">Тип колонки</label>
-          <Select value={columnType} onValueChange={(v) => handleColumnTypeChange(v)}>
-            <SelectTrigger
-              onClick={(e) => e.stopPropagation()}
-              onPointerDown={(e) => e.stopPropagation()}
-            >
-              <SelectValue placeholder="Выберите тип" />
-            </SelectTrigger>
-            <SelectContent onPointerDownOutside={() => {}} onEscapeKeyDown={() => {}}>
-              {COLUMN_TYPES.map((type) => (
-                <SelectItem key={type.value} value={type.value}>
-                  <span className="flex items-center gap-2">
-                    <span>{type.icon}</span>
-                    <span>{type.label}</span>
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {inferringType && (
+            <p className="text-xs text-muted-foreground mb-2">Подбираем тип по вопросу…</p>
+          )}
+          {!inferringType && typeInferenceReason && (
+            <p className="text-xs text-muted-foreground mb-2">Рекомендация: {typeInferenceReason}</p>
+          )}
+          <div className="grid grid-cols-2 gap-2">
+            {COLUMN_TYPES.map((type) => {
+              const isSelected = columnType === type.value
+              return (
+                <button
+                  key={type.value}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleColumnTypeChange(type.value)
+                  }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  className={[
+                    "rounded-lg border px-3 py-2.5 transition-all duration-150 text-left h-full",
+                    isSelected
+                      ? "border-[var(--color-accent)] bg-[var(--color-accent-subtle,rgba(99,102,241,0.12))] shadow-sm"
+                      : "border-border bg-background hover:border-[var(--color-accent)] hover:bg-[var(--color-bg-hover)]",
+                  ].join(" ")}
+                >
+                  <div className="flex items-start gap-2 min-w-0">
+                    <span className="text-base leading-none shrink-0 mt-0.5" aria-hidden>
+                      {type.icon}
+                    </span>
+                    <div className="min-w-0">
+                      <span
+                        className={`text-sm font-medium block ${
+                          isSelected ? "text-[var(--color-accent)]" : "text-foreground"
+                        }`}
+                      >
+                        {type.label}
+                      </span>
+                      <p className="text-xs text-muted-foreground mt-1 leading-snug">
+                        {type.description}
+                      </p>
+                    </div>
+                  </div>
+                </button>
+              )
+            })}
+          </div>
         </div>
         {columnType === "tag" && (
           <div>
@@ -294,21 +406,9 @@ export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn, anchorEl
             </div>
           </div>
         )}
-        <div className="flex justify-end gap-2 pt-2">
-          {!startAtStep || startAtStep < 2 ? (
-            <Button variant="ghost" onClick={handleBackToStep1} disabled={saving}>
-              Назад
-            </Button>
-          ) : null}
-          <Button variant="outline" onClick={onClose} disabled={saving}>
-            Отмена
-          </Button>
-          <Button onClick={handleSave} disabled={saving || !columnLabel.trim()}>
-            {saving ? "Сохранение…" : "Сохранить"}
-          </Button>
-        </div>
       </div>
-    </>
+      {step2Footer}
+    </div>
   )
 
   const usePopover = anchorEl && typeof anchorEl.isConnected === 'boolean' && anchorEl.isConnected
@@ -353,15 +453,9 @@ export function ColumnBuilder({ isOpen, onClose, onSave, editingColumn, anchorEl
     )
   }
 
-  if (usePopover && mode === 'popover') {
-    return (
-      <Popover open={isOpen} anchorEl={anchorEl} onClose={onClose} {...popoverPropsWithContainer}>
-        <div className="px-1"><h3 className="text-sm font-semibold mb-3">Название и тип колонки</h3>{step2Content}</div>
-      </Popover>
-    )
-  }
+  // Шаг 2 всегда в широкой модалке — не в узком поповере/оверлее таблицы
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Название и тип колонки" size="sm">
+    <Modal isOpen={isOpen} onClose={onClose} title="Название и тип колонки" size="lg" fitContent>
       {step2Content}
     </Modal>
   )

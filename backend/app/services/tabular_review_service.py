@@ -199,6 +199,14 @@ class TabularReviewService:
         
         if not review:
             raise ValueError(f"Tabular review {review_id} not found or access denied")
+
+        from app.services.tabular_column_type_contract import (
+            validate_column_config,
+            validate_column_type,
+        )
+
+        column_type = validate_column_type(column_type)
+        validate_column_config(column_type, column_config)
         
         # Get max order_index
         max_order = self.db.query(TabularColumn.order_index).filter(
@@ -282,10 +290,11 @@ class TabularReviewService:
         column_id: str,
         user_id: str,
         column_label: Optional[str] = None,
+        column_type: Optional[str] = None,
         prompt: Optional[str] = None,
         column_config: Optional[Dict[str, Any]] = None
     ) -> TabularColumn:
-        """Update a column (rename, update prompt, config)"""
+        """Update a column (rename, type, prompt, config)"""
         # Verify review belongs to user
         review = self.db.query(TabularReview).filter(
             and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
@@ -308,6 +317,18 @@ class TabularReviewService:
         # Update fields
         if column_label is not None:
             column.column_label = column_label
+        if column_type is not None:
+            from app.services.tabular_column_type_contract import (
+                validate_column_config,
+                validate_column_type,
+            )
+
+            normalized_type = validate_column_type(column_type)
+            effective_config = (
+                column_config if column_config is not None else column.column_config
+            )
+            validate_column_config(normalized_type, effective_config)
+            column.column_type = normalized_type
         if prompt is not None:
             column.prompt = prompt
         if column_config is not None:
@@ -345,6 +366,27 @@ class TabularReviewService:
 
         column_label = column.column_label
         deleted_order = column.order_index
+
+        # Explicit deletes: ORM backrefs on review_queue_items would NULL FKs (NOT NULL → 500).
+        from app.models.tabular_review import (
+            CellComment,
+            CellHistory,
+            ReviewQueueItem,
+            TabularCell,
+        )
+
+        self.db.query(ReviewQueueItem).filter(
+            ReviewQueueItem.column_id == column_id,
+        ).delete(synchronize_session=False)
+        self.db.query(CellComment).filter(
+            CellComment.column_id == column_id,
+        ).delete(synchronize_session=False)
+        self.db.query(CellHistory).filter(
+            CellHistory.column_id == column_id,
+        ).delete(synchronize_session=False)
+        self.db.query(TabularCell).filter(
+            TabularCell.column_id == column_id,
+        ).delete(synchronize_session=False)
 
         self.db.delete(column)
         self.db.flush()
@@ -626,112 +668,36 @@ class TabularReviewService:
     ) -> Dict[str, Any]:
         """
         Normalize LLM extraction result to match TabularCellExtractionModel schema.
-        
-        GigaChat sometimes returns different field names:
-        - 'answer' instead of 'cell_value'
-        - 'citations' instead of 'source_references'
-        - missing 'reasoning' field
-        
-        This method maps these variations to the expected schema.
         """
-        normalized = {}
-        
-        import re as _re
+        from app.services.tabular_column_type_contract import finalize_extraction_dict
 
-        def _is_blank_placeholder(val: str) -> bool:
-            """Return True if val is a template placeholder rather than a real value.
-            E.g. '___', '__ ___20__г.', '—', '-', '....', 'N/A', blank string.
-            """
-            stripped = val.strip()
-            if not stripped or stripped.upper() in ('N/A', 'НЕТ ДАННЫХ', 'ОТСУТСТВУЕТ', 'НЕ УКАЗАНО', '-', '—', '–'):
-                return True
-            # Only underscores, dashes, dots, spaces, digits, 'г', 'г.' — typical blank date template
-            if _re.match(r'^[_\-\.\s\d«»«»гГ\.]+$', stripped) and _re.search(r'_{2,}', stripped):
-                return True
-            return False
+        merged = dict(result_dict)
+        if not merged.get("reasoning"):
+            merged["reasoning"] = (
+                f"Извлечено из документа '{file.filename}' для колонки '{column.column_label}'"
+            )
 
-        # Map cell_value (primary field)
-        if 'cell_value' in result_dict and result_dict['cell_value']:
-            normalized['cell_value'] = result_dict['cell_value']
-        elif 'answer' in result_dict and result_dict['answer']:
-            normalized['cell_value'] = result_dict['answer']
-        elif 'value' in result_dict and result_dict['value']:
-            normalized['cell_value'] = result_dict['value']
-        elif 'result' in result_dict and result_dict['result']:
-            normalized['cell_value'] = result_dict['result']
-        elif 'text' in result_dict and result_dict['text']:
-            normalized['cell_value'] = result_dict['text']
-        else:
-            # Last resort - try to extract any string value
-            for key, val in result_dict.items():
-                if isinstance(val, str) and val and key not in ['reasoning', 'column_type', 'extraction_method']:
-                    normalized['cell_value'] = val
-                    break
-            if 'cell_value' not in normalized:
-                normalized['cell_value'] = "N/A"
-
-        # ── Post-extraction validation ──────────────────────────────────────
-        # Normalize blank placeholders across all column types
-        raw_val = str(normalized.get('cell_value', '')).strip()
-        if _is_blank_placeholder(raw_val):
-            normalized['cell_value'] = 'N/A'
-            if not normalized.get('reasoning'):
-                normalized['reasoning'] = (
-                    'В документе найдено только пустое поле-шаблон (прочерки, подчёркивания). '
-                    'Конкретная информация не указана.'
-                )
-
-        # For date columns: value must be YYYY-MM-DD; anything else → N/A
-        if column.column_type == 'date' and normalized.get('cell_value') not in ('N/A', ''):
-            date_val = normalized['cell_value'].strip()
-            if not _re.match(r'^\d{4}-\d{2}-\d{2}$', date_val):
-                normalized['reasoning'] = (
-                    f'Значение "{date_val}" не является датой в формате YYYY-MM-DD. '
-                    + (normalized.get('reasoning') or 'Дата не найдена в документе.')
-                )
-                normalized['cell_value'] = 'N/A'
-        
-        # Map reasoning
-        if 'reasoning' in result_dict and result_dict['reasoning']:
-            normalized['reasoning'] = result_dict['reasoning']
-        elif 'explanation' in result_dict and result_dict['explanation']:
-            normalized['reasoning'] = result_dict['explanation']
-        elif 'rationale' in result_dict and result_dict['rationale']:
-            normalized['reasoning'] = result_dict['rationale']
-        else:
-            # Generate default reasoning
-            normalized['reasoning'] = f"Извлечено из документа '{file.filename}' для колонки '{column.column_label}'"
-        
-        # Map source_references (coerce LLM quirks: string / single dict → list)
-        refs_raw = None
-        if result_dict.get('source_references'):
-            refs_raw = result_dict['source_references']
-        elif result_dict.get('citations'):
-            refs_raw = result_dict['citations']
-        elif result_dict.get('sources'):
-            refs_raw = result_dict['sources']
-        normalized['source_references'] = self._coerce_source_references(refs_raw)
-        
-        # Map confidence
-        if 'confidence' in result_dict:
+        if "confidence" in merged:
             try:
-                normalized['confidence'] = float(result_dict['confidence'])
+                merged["confidence"] = float(merged["confidence"])
             except (ValueError, TypeError):
-                normalized['confidence'] = 0.8
-        else:
-            normalized['confidence'] = 0.8
-        
-        # Copy other optional fields if present
-        for field in ['normalized_value', 'verbatim_extract', 'source_section', 'extraction_method']:
-            if field in result_dict and result_dict[field] is not None:
-                normalized[field] = result_dict[field]
+                merged["confidence"] = 0.8
 
-        for int_field in ('source_page', 'source_start_line', 'source_end_line'):
-            if int_field in result_dict and result_dict[int_field] is not None:
-                normalized[int_field] = coerce_optional_int(result_dict[int_field])
-        
-        logger.debug(f"Normalized extraction result: {list(result_dict.keys())} -> {list(normalized.keys())}")
-        return normalized
+        for int_field in ("source_page", "source_start_line", "source_end_line"):
+            if int_field in merged and merged[int_field] is not None:
+                merged[int_field] = coerce_optional_int(merged[int_field])
+
+        finalized = finalize_extraction_dict(
+            merged,
+            column_type=str(column.column_type),
+            column_config=column.column_config if isinstance(column.column_config, dict) else None,
+        )
+        logger.debug(
+            "Normalized extraction result: %s -> %s",
+            list(result_dict.keys()),
+            list(finalized.keys()),
+        )
+        return finalized
     
     async def extract_cell_value(
         self,
@@ -759,12 +725,11 @@ class TabularReviewService:
                 "text": "свободный текст",
                 "number": "числовое значение",
                 "currency": "денежная сумма с валютой (например: '100000 USD' или '50 000 руб.')",
-                "yes_no": "только 'Yes' или 'No'",
+                "yes_no": "только «Да» или «Нет» (русский канон)",
                 "date": "дата в формате YYYY-MM-DD или DD.MM.YYYY",
                 "tag": "один тег из предопределенного списка",
                 "verbatim": "точная цитата из документа с указанием источника",
                 "manual_input": "ручной ввод (не используется AI)",
-                "document_type": "категория юридического документа по содержанию",
             }
             
             type_desc = column_type_descriptions.get(column.column_type, "свободный текст")
@@ -803,14 +768,10 @@ class TabularReviewService:
 """,
                 "yes_no": """
 КРИТИЧЕСКИ ВАЖНО для типа yes_no:
-- cell_value ДОЛЖЕН быть ТОЛЬКО "Yes" или "No" или "Unknown"
-- Если информация найдена и ответ положительный - используй "Yes"
-- Если информация найдена и ответ отрицательный - используй "No"
-- Если информация не найдена в документе - используй "Unknown"
-- НИКАКИХ других вариантов: не "Да", не "Нет", не "true", не "false", не "1", не "0", не "есть", не "нету"
-- Только строго: "Yes", "No", или "Unknown"
-- Примеры ПРАВИЛЬНО: "Yes", "No", "Unknown"
-- Примеры НЕПРАВИЛЬНО: "Да", "Нет", "да", "нет", "true", "false", "1", "0", "есть", "отсутствует"
+- cell_value ДОЛЖЕН быть ТОЛЬКО «Да», «Нет» или N/A
+- Положительный ответ по документу — «Да»; отрицательный — «Нет»; данных нет — N/A
+- Не используй Yes/No, true/false, 1/0, Unknown
+- Примеры ПРАВИЛЬНО: «Да», «Нет», N/A
 """,
                 "tag": """
 КРИТИЧЕСКИ ВАЖНО для типа tag:
@@ -832,7 +793,7 @@ class TabularReviewService:
 ВАЖНО:
 1. Если информация не найдена, верни "N/A" для cell_value
 2. СТРОГО соблюдай формат для типа {column.column_type} - это КРИТИЧЕСКИ ВАЖНО
-3. Для yes_no: только "Yes" или "No" или "Unknown"
+3. Для yes_no: только «Да», «Нет» или N/A
 4. Для verbatim: приведи точную цитату из документа
 5. Для tag: используй ТОЛЬКО опции из списка выше
 6. ВСЕГДА указывай reasoning - подробное объяснение, откуда взялась информация
@@ -1351,11 +1312,15 @@ class TabularReviewService:
             if not norm_val and candidate.cell_value:
                 # Try to normalize on the fly
                 if column_type == 'date':
-                    try:
-                        from app.services.date_validator import parse_and_normalize_date
-                        norm_val = parse_and_normalize_date(candidate.cell_value)
-                    except:
-                        norm_val = candidate.cell_value.strip().lower()
+                    from app.services.tabular_extraction_policy import is_na_cell_value
+                    if is_na_cell_value(candidate.cell_value):
+                        norm_val = "n/a"
+                    else:
+                        try:
+                            from app.services.date_validator import parse_and_normalize_date
+                            norm_val = parse_and_normalize_date(candidate.cell_value)
+                        except Exception:
+                            norm_val = candidate.cell_value.strip().lower()
                 elif column_type in ['currency', 'number']:
                     try:
                         norm_val = candidate.cell_value.replace(' ', '').replace(',', '.')
@@ -1363,7 +1328,17 @@ class TabularReviewService:
                     except:
                         norm_val = candidate.cell_value.strip().lower()
                 elif column_type == 'yes_no':
-                    norm_val = candidate.cell_value.strip().lower()
+                    from app.services.tabular_review_models import (
+                        YES_NO_UNKNOWN,
+                        validate_yes_no,
+                        yes_no_normalized_key,
+                    )
+                    validated = validate_yes_no(candidate.cell_value or "")
+                    norm_val = (
+                        yes_no_normalized_key(validated)
+                        if validated != YES_NO_UNKNOWN
+                        else candidate.cell_value.strip().lower()
+                    )
                 else:
                     # For text, use lowercase for comparison
                     norm_val = candidate.cell_value.strip().lower()
@@ -1416,12 +1391,35 @@ class TabularReviewService:
             verification_outcome=verification_outcome,
         )
     
+    def _tabular_pipeline_error_response(
+        self,
+        *,
+        file: File,
+        column: TabularColumn,
+        error: str,
+        log_level: str = "error",
+    ) -> Dict[str, Any]:
+        log_fn = logger.warning if log_level == "warning" else logger.error
+        log_fn(
+            "Tabular pipeline failed for file %s column %s: %s",
+            file.id,
+            column.id,
+            error,
+        )
+        return {
+            "file_id": file.id,
+            "column_id": column.id,
+            "cell_value": None,
+            "error": error,
+        }
+
     async def extract_cell_value_improved(
         self,
         file: File,
         column: TabularColumn,
         strategy: str = 'multi_query',
         rag_service=None,
+        column_run=None,
     ) -> Dict[str, Any]:
         """
         Canonical tabular cell pipeline: assistant RAG → structured extract → verify → payload.
@@ -1429,7 +1427,11 @@ class TabularReviewService:
         strategy is retained for API compatibility; retrieval uses case-assistant hybrid funnel.
         """
         if not self.llm:
-            return await self.extract_cell_value(file, column)
+            return self._tabular_pipeline_error_response(
+                file=file,
+                column=column,
+                error="LLM not configured",
+            )
 
         if rag_service is None:
             from app.services.rag_service import get_rag_service
@@ -1443,6 +1445,7 @@ class TabularReviewService:
                 file=file,
                 column=column,
                 normalize_fn=self._normalize_extraction_result,
+                column_run=column_run,
             )
 
             logger.info(
@@ -1466,32 +1469,26 @@ class TabularReviewService:
         except ValueError as err:
             code = str(err)
             if code == "No text content":
-                logger.warning("File %s has no text content", file.id)
-                return {
-                    "file_id": file.id,
-                    "column_id": column.id,
-                    "cell_value": None,
-                    "error": "No text content",
-                }
+                return self._tabular_pipeline_error_response(
+                    file=file,
+                    column=column,
+                    error="No text content",
+                    log_level="warning",
+                )
             if code == "No chunks available for extraction":
-                logger.warning(
-                    "No chunks for file %s (case %s); extraction aborted",
-                    file.id,
-                    file.case_id,
+                return self._tabular_pipeline_error_response(
+                    file=file,
+                    column=column,
+                    error="No chunks available for extraction",
+                    log_level="warning",
                 )
-                return {
-                    "file_id": file.id,
-                    "column_id": column.id,
-                    "cell_value": None,
-                    "error": "No chunks available for extraction",
-                }
             if code == "empty_context":
-                logger.warning(
-                    "Empty RAG context for file %s column %s; legacy fallback",
-                    file.id,
-                    column.id,
+                return self._tabular_pipeline_error_response(
+                    file=file,
+                    column=column,
+                    error="Empty RAG context",
+                    log_level="warning",
                 )
-                return await self.extract_cell_value(file, column)
             raise
 
         except Exception as e:
@@ -1502,13 +1499,18 @@ class TabularReviewService:
                 e,
                 exc_info=True,
             )
-            return await self.extract_cell_value(file, column)
+            return self._tabular_pipeline_error_response(
+                file=file,
+                column=column,
+                error=str(e),
+            )
 
     async def extract_cell_value_smart(
         self,
         file: File,
         column: TabularColumn,
         rag_service=None,
+        column_run=None,
     ) -> Dict[str, Any]:
         """
         Smart extraction with automatic strategy selection
@@ -1522,6 +1524,7 @@ class TabularReviewService:
             column,
             strategy=strategy,
             rag_service=rag_service,
+            column_run=column_run,
         )
 
     async def extract_workflow_tabular_step(
@@ -1752,6 +1755,7 @@ class TabularReviewService:
         file: File,
         column: TabularColumn,
         rag_service,
+        column_run=None,
     ) -> TabularColumnExtractionOutcome:
         """Run one cell extraction; always returns file_id (never raises to caller)."""
         try:
@@ -1759,6 +1763,7 @@ class TabularReviewService:
                 file,
                 column,
                 rag_service=rag_service,
+                column_run=column_run,
             )
             return TabularColumnExtractionOutcome.from_result(file.id, result)
         except Exception as exc:
@@ -1794,6 +1799,34 @@ class TabularReviewService:
                     "saved_count": saved_count,
                     "error_count": error_count,
                 },
+            },
+        )
+
+    async def _broadcast_column_extraction_completed(
+        self,
+        review_id: str,
+        *,
+        column_id: str,
+        status: str,
+        saved_count: int,
+        filled_count: int,
+        error_count: int,
+        total_tasks: int,
+        message: Optional[str] = None,
+    ) -> None:
+        from app.services.websocket_manager import websocket_manager
+
+        await websocket_manager.broadcast_to_review(
+            review_id,
+            {
+                "type": "column_extraction_completed",
+                "column_id": column_id,
+                "status": status,
+                "saved_count": saved_count,
+                "filled_count": filled_count,
+                "error_count": error_count,
+                "total_tasks": total_tasks,
+                "message": message,
             },
         )
 
@@ -1892,17 +1925,12 @@ class TabularReviewService:
 
             from app.services.rag_service import get_rag_service
             from app.services.document_processor import get_document_processor
-            from app.services.bm25_case_prewarm import ensure_bm25_index
+            from app.services.bm25_case_prewarm import prepare_bm25_for_tabular_extraction
 
             rag_service = get_rag_service()
             document_processor = get_document_processor()
-            await asyncio.to_thread(
-                ensure_bm25_index,
-                document_processor,
-                review.case_id,
-                force_rebuild=False,
-            )
-            
+            prepare_bm25_for_tabular_extraction(document_processor, review.case_id)
+
             tasks = [
                 self.extract_cell_value_smart(file, column, rag_service=rag_service)
                 for file in files
@@ -1994,30 +2022,92 @@ class TabularReviewService:
         logger.info("Review queue built: %s items for review %s", len(queue_items), review_id)
         return len(queue_items)
     
-    async def run_column_extraction(self, review_id: str, column_id: str, user_id: str) -> Dict[str, Any]:
-        """Run extraction for a specific column across all documents"""
-        # Verify review belongs to user
+    def plan_column_extraction(
+        self,
+        review_id: str,
+        column_id: str,
+        user_id: str,
+    ) -> Dict[str, Any]:
+        """Validate column run and return metadata (no LLM work)."""
         review = self.db.query(TabularReview).filter(
             and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
         ).first()
-        
+
         if not review:
             raise ValueError(f"Tabular review {review_id} not found or access denied")
-        
-        # Get the specific column
+
         column = self.db.query(TabularColumn).filter(
             and_(
                 TabularColumn.id == column_id,
-                TabularColumn.tabular_review_id == review_id
+                TabularColumn.tabular_review_id == review_id,
             )
         ).first()
-        
+
         if not column:
             raise ValueError(f"Column {column_id} not found in review {review_id}")
 
-        # manual_input columns are filled by hand — skip AI extraction
-        if column.column_type == 'manual_input':
+        if column.column_type == "manual_input":
             return {
+                "status": "skipped",
+                "column_id": column_id,
+                "total_tasks": 0,
+            }
+
+        file_ids = review.selected_file_ids if review.selected_file_ids else None
+        files = fetch_files_for_extraction(self.db, review.case_id, file_ids)
+        if not files:
+            raise ValueError("No files found for this case")
+
+        return {
+            "status": "ready",
+            "column_id": column_id,
+            "total_tasks": len(files),
+            "case_id": review.case_id,
+        }
+
+    async def _extract_single_column_cell_with_slot(
+        self,
+        file: File,
+        column: TabularColumn,
+        rag_service,
+        column_run=None,
+    ) -> TabularColumnExtractionOutcome:
+        from app.services.tabular_extraction_runtime import tabular_cell_semaphore
+
+        async with tabular_cell_semaphore():
+            return await self._extract_single_column_cell(
+                file,
+                column,
+                rag_service,
+                column_run=column_run,
+            )
+
+    async def execute_column_extraction(
+        self,
+        review_id: str,
+        column_id: str,
+        user_id: str,
+    ) -> Dict[str, Any]:
+        """Run extraction for one column (bounded parallelism, WS updates)."""
+        review = self.db.query(TabularReview).filter(
+            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
+        ).first()
+
+        if not review:
+            raise ValueError(f"Tabular review {review_id} not found or access denied")
+
+        column = self.db.query(TabularColumn).filter(
+            and_(
+                TabularColumn.id == column_id,
+                TabularColumn.tabular_review_id == review_id,
+            )
+        ).first()
+
+        if not column:
+            raise ValueError(f"Column {column_id} not found in review {review_id}")
+
+        if column.column_type == "manual_input":
+            result = {
                 "status": "skipped",
                 "saved_count": 0,
                 "error_count": 0,
@@ -2025,44 +2115,69 @@ class TabularReviewService:
                 "column_id": column_id,
                 "cells": [],
             }
+            await self._broadcast_column_extraction_completed(
+                review_id,
+                column_id=column_id,
+                status="skipped",
+                saved_count=0,
+                filled_count=0,
+                error_count=0,
+                total_tasks=0,
+            )
+            return result
 
         file_ids = review.selected_file_ids if review.selected_file_ids else None
         files = fetch_files_for_extraction(self.db, review.case_id, file_ids)
-
         if not files:
             raise ValueError("No files found for this case")
 
         from app.services.rag_service import get_rag_service
         from app.services.document_processor import get_document_processor
-        from app.services.bm25_case_prewarm import ensure_bm25_index
+        from app.services.bm25_case_prewarm import prepare_bm25_for_tabular_extraction
+        from app.services.tabular_cell_pipeline import tabular_rerank_enabled
+        from app.services.tabular_extraction_runtime import tabular_max_parallel_cells
 
         rag_service = get_rag_service()
         document_processor = get_document_processor()
-        bm25_ok = await asyncio.to_thread(
-            ensure_bm25_index,
-            document_processor,
-            review.case_id,
-            force_rebuild=False,
-        )
+        bm25_ok = prepare_bm25_for_tabular_extraction(document_processor, review.case_id)
+
+        from app.services.tabular_column_run_context import prepare_tabular_column_run_context
+
+        try:
+            column_run = await asyncio.to_thread(prepare_tabular_column_run_context, column)
+        except ValueError as exc:
+            if str(exc) == "empty_query":
+                raise ValueError("Column prompt is required for extraction") from exc
+            raise
+        except RuntimeError as exc:
+            raise ValueError(f"Query embedding failed: {exc}") from exc
+
         logger.info(
-            "Tabular column extraction: column=%s files=%s bm25_ready=%s rerank=%s (shared RAG)",
+            "Tabular column extraction: column=%s files=%s bm25_ready=%s rerank=%s parallel=%s embed_once=true",
             column_id,
             len(files),
             bm25_ok,
-            getattr(config, "TABULAR_RERANK_ENABLED", False),
+            tabular_rerank_enabled(),
+            tabular_max_parallel_cells(),
         )
 
         extraction_tasks = [
             asyncio.create_task(
-                self._extract_single_column_cell(file, column, rag_service)
+                self._extract_single_column_cell_with_slot(
+                    file,
+                    column,
+                    rag_service,
+                    column_run,
+                )
             )
             for file in files
         ]
 
         logger.info(
-            "Starting parallel extraction for column %s: %s tasks (incremental save + WS)",
+            "Starting column extraction %s: %s tasks (max %s concurrent)",
             column_id,
             len(extraction_tasks),
+            tabular_max_parallel_cells(),
         )
 
         saved_count = 0
@@ -2086,10 +2201,11 @@ class TabularReviewService:
             if payload is not None:
                 cells_payload.append(payload)
 
+        filled_count = count_nonempty_cells(cells_payload)
         logger.info(
             "Column extraction completed: %s cells saved, %s filled, %s errors",
             saved_count,
-            count_nonempty_cells(cells_payload),
+            filled_count,
             error_count,
         )
 
@@ -2103,15 +2219,35 @@ class TabularReviewService:
                 exc_info=True,
             )
 
-        return {
+        result = {
             "status": "completed",
             "saved_count": saved_count,
-            "filled_count": count_nonempty_cells(cells_payload),
+            "filled_count": filled_count,
             "error_count": error_count,
             "total_tasks": total_tasks,
             "column_id": column_id,
             "cells": cells_payload,
         }
+        await self._broadcast_column_extraction_completed(
+            review_id,
+            column_id=column_id,
+            status="completed",
+            saved_count=saved_count,
+            filled_count=filled_count,
+            error_count=error_count,
+            total_tasks=total_tasks,
+        )
+        return result
+
+    async def run_column_extraction(
+        self,
+        review_id: str,
+        column_id: str,
+        user_id: str,
+    ) -> Dict[str, Any]:
+        """Synchronous column run (tests / direct calls)."""
+        self.plan_column_extraction(review_id, column_id, user_id)
+        return await self.execute_column_extraction(review_id, column_id, user_id)
     
     def update_selected_files(
         self,
@@ -2370,17 +2506,12 @@ class TabularReviewService:
 
         from app.services.rag_service import get_rag_service
         from app.services.document_processor import get_document_processor
-        from app.services.bm25_case_prewarm import ensure_bm25_index
+        from app.services.bm25_case_prewarm import prepare_bm25_for_tabular_extraction
 
         rag_service = get_rag_service()
         document_processor = get_document_processor()
-        await asyncio.to_thread(
-            ensure_bm25_index,
-            document_processor,
-            review.case_id,
-            force_rebuild=False,
-        )
-        
+        prepare_bm25_for_tabular_extraction(document_processor, review.case_id)
+
         # Create tasks for parallel processing
         tasks = [
             self.extract_cell_value_smart(file, column, rag_service=rag_service)

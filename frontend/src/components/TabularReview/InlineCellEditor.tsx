@@ -27,6 +27,15 @@ interface InlineCellEditorProps {
   initialValue?: string
 }
 
+function normalizeYesNoEditorValue(raw: string): string {
+  const v = (raw || "").trim()
+  if (!v) return ""
+  if (v === "Yes" || v.toLowerCase() === "yes") return "Да"
+  if (v === "No" || v.toLowerCase() === "no") return "Нет"
+  if (v === "Unknown" || v.toUpperCase() === "N/A" || v === "Н/Д") return "N/A"
+  return v
+}
+
 export const InlineCellEditor: React.FC<InlineCellEditorProps> = ({
   cell,
   column,
@@ -34,20 +43,24 @@ export const InlineCellEditor: React.FC<InlineCellEditorProps> = ({
   onCancel,
   initialValue,
 }) => {
-  const [value, setValue] = useState<string>(initialValue || cell?.cell_value || "")
+  const rawInitial = initialValue ?? cell?.cell_value ?? ""
+  const [value, setValue] = useState<string>(
+    column.column_type === "yes_no" ? normalizeYesNoEditorValue(rawInitial) : rawInitial
+  )
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    setValue(initialValue || cell?.cell_value || "")
-  }, [cell, initialValue])
+    const next = initialValue ?? cell?.cell_value ?? ""
+    setValue(column.column_type === "yes_no" ? normalizeYesNoEditorValue(next) : next)
+  }, [cell, initialValue, column.column_type])
 
   const handleSave = async () => {
     if (saving) return
-    
+
     setError(null)
     setSaving(true)
-    
+
     try {
       await onSave(value)
     } catch (err: any) {
@@ -66,7 +79,6 @@ export const InlineCellEditor: React.FC<InlineCellEditorProps> = ({
     }
   }
 
-  // Render based on column type
   const renderInput = () => {
     switch (column.column_type) {
       case "text":
@@ -79,7 +91,7 @@ export const InlineCellEditor: React.FC<InlineCellEditorProps> = ({
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={`Enter ${column.column_label.toLowerCase()}...`}
+            placeholder={`Введите ${column.column_label.toLowerCase()}…`}
             variant="outlined"
             size="small"
             autoFocus
@@ -89,15 +101,29 @@ export const InlineCellEditor: React.FC<InlineCellEditorProps> = ({
         )
 
       case "number":
-      case "currency":
         return (
           <TextField
-            type="number"
             fullWidth
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={`Enter ${column.column_label.toLowerCase()}...`}
+            placeholder="Число без валюты (например: 1 000 или 12,5)"
+            variant="outlined"
+            size="small"
+            autoFocus
+            error={!!error}
+            helperText={error}
+          />
+        )
+
+      case "currency":
+        return (
+          <TextField
+            fullWidth
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Сумма с валютой как в документе (например: 150 000 руб. или 1 000 USD)"
             variant="outlined"
             size="small"
             autoFocus
@@ -132,15 +158,14 @@ export const InlineCellEditor: React.FC<InlineCellEditorProps> = ({
             fullWidth
             size="small"
           >
-            <ToggleButton value="Yes">Yes</ToggleButton>
-            <ToggleButton value="No">No</ToggleButton>
-            <ToggleButton value="Unknown">Unknown</ToggleButton>
+            <ToggleButton value="Да">Да</ToggleButton>
+            <ToggleButton value="Нет">Нет</ToggleButton>
+            <ToggleButton value="N/A">N/A</ToggleButton>
           </ToggleButtonGroup>
         )
 
-      case "tag":
+      case "tag": {
         const options = column.column_config?.options || []
-        // Single tag - use select
         return (
           <FormControl fullWidth size="small">
             <InputLabel>{column.column_label}</InputLabel>
@@ -151,7 +176,7 @@ export const InlineCellEditor: React.FC<InlineCellEditorProps> = ({
               label={column.column_label}
               autoFocus
             >
-              {options.map((option: any) => (
+              {options.map((option: { label: string; color?: string }) => (
                 <MenuItem key={option.label} value={option.label}>
                   <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                     <Box
@@ -169,6 +194,7 @@ export const InlineCellEditor: React.FC<InlineCellEditorProps> = ({
             </Select>
           </FormControl>
         )
+      }
 
       default:
         return (
@@ -177,7 +203,7 @@ export const InlineCellEditor: React.FC<InlineCellEditorProps> = ({
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={`Enter ${column.column_label.toLowerCase()}...`}
+            placeholder={`Введите ${column.column_label.toLowerCase()}…`}
             variant="outlined"
             size="small"
             autoFocus
@@ -202,7 +228,7 @@ export const InlineCellEditor: React.FC<InlineCellEditorProps> = ({
     >
       <Stack spacing={1}>
         {renderInput()}
-        
+
         <Stack direction="row" spacing={1} justifyContent="flex-end">
           <Button
             size="small"
@@ -211,7 +237,7 @@ export const InlineCellEditor: React.FC<InlineCellEditorProps> = ({
             disabled={saving}
             startIcon={<CloseIcon />}
           >
-            Cancel
+            Отмена
           </Button>
           <Button
             size="small"
@@ -220,11 +246,10 @@ export const InlineCellEditor: React.FC<InlineCellEditorProps> = ({
             disabled={saving}
             startIcon={<CheckIcon />}
           >
-            {saving ? "Saving..." : "Save"}
+            {saving ? "Сохранение…" : "Сохранить"}
           </Button>
         </Stack>
       </Stack>
     </Box>
   )
 }
-

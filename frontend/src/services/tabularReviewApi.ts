@@ -382,6 +382,7 @@ export const tabularReviewApi = {
     columnId: string,
     updates: {
       column_label?: string
+      column_type?: string
       prompt?: string
       column_config?: {
         options?: Array<{ label: string; color: string }>
@@ -441,13 +442,13 @@ export const tabularReviewApi = {
     reviewId: string,
     columnId: string
   ): Promise<{
-    status: string
-    saved_count: number
+    status: 'started' | 'skipped' | 'completed' | 'failed'
+    saved_count?: number
     filled_count?: number
-    error_count: number
+    error_count?: number
     total_tasks: number
     column_id: string
-    cells: Array<{
+    cells?: Array<{
       file_id: string
       column_id: string
       cell_value?: string | null
@@ -873,7 +874,25 @@ export const tabularReviewApi = {
     }
   },
 
-  // Chat over table
+  async getTabularChatHistory(
+    reviewId: string,
+  ): Promise<{
+    messages: Array<{
+      id: string
+      role: 'user' | 'assistant'
+      content: string
+      citations?: Array<{ file: string; file_id: string }>
+    }>
+  }> {
+    try {
+      const response = await apiClient.get(`/api/tabular-review/${reviewId}/chat/history`)
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  // Chat over table (non-streaming fallback)
   async chatOverTable(
     reviewId: string,
     question: string
@@ -895,7 +914,116 @@ export const tabularReviewApi = {
     }
   },
 
+  async chatOverTableStream(
+    reviewId: string,
+    question: string,
+    callbacks: {
+      onTextDelta?: (delta: string) => void
+      onDone?: (payload: {
+        answer: string
+        citations: Array<{ file: string; file_id: string }>
+        table_stats: { total_rows: number; total_columns: number }
+      }) => void
+      onError?: (message: string) => void
+    },
+    signal?: AbortSignal,
+  ): Promise<{
+    answer: string
+    citations: Array<{ file: string; file_id: string }>
+    table_stats: { total_rows: number; total_columns: number }
+  }> {
+    const token = localStorage.getItem('access_token')
+    const response = await fetch(`${BASE_URL}/api/tabular-review/${reviewId}/chat/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Access-Token': token || '',
+      },
+      body: JSON.stringify({ question }),
+      signal,
+    })
+
+    if (!response.ok) {
+      const message = `HTTP error! status: ${response.status}`
+      callbacks.onError?.(message)
+      throw new Error(message)
+    }
+
+    const reader = response.body?.getReader()
+    const decoder = new TextDecoder()
+    if (!reader) {
+      throw new Error('No response body')
+    }
+
+    let answer = ''
+    let citations: Array<{ file: string; file_id: string }> = []
+    let table_stats = { total_rows: 0, total_columns: 0 }
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const chunks = buffer.split('\n\n')
+      buffer = chunks.pop() || ''
+
+      for (const chunk of chunks) {
+        for (const line of chunk.split('\n')) {
+          if (!line.startsWith('data: ')) continue
+          try {
+            const data = JSON.parse(line.slice(6))
+            if (data.type === 'error' || data.error) {
+              const errMsg = String(data.error || data.message || 'Ошибка чата')
+              callbacks.onError?.(errMsg)
+              throw new Error(errMsg)
+            }
+            const delta = data.textDelta ?? data.text_delta
+            if (delta) {
+              const piece = String(delta)
+              answer += piece
+              callbacks.onTextDelta?.(piece)
+            }
+            if (data.type === 'tabular_chat_done') {
+              answer = String(data.answer ?? answer)
+              citations = Array.isArray(data.citations) ? data.citations : citations
+              table_stats = data.table_stats ?? table_stats
+              callbacks.onDone?.({ answer, citations, table_stats })
+            }
+          } catch (e) {
+            if (e instanceof SyntaxError) continue
+            throw e
+          }
+        }
+      }
+    }
+
+    return { answer, citations, table_stats }
+  },
+
   // Generate column prompt using AI
+  // Infer column type from label + prompt (server-side heuristic contract)
+  async inferColumnType(
+    prompt: string,
+    columnLabel?: string
+  ): Promise<{
+    column_type: string
+    confidence: number
+    reason: string
+    source: string
+    suggested_label?: string
+  }> {
+    try {
+      const response = await apiClient.post(`/api/tabular-review/columns/infer-type`, {
+        prompt,
+        column_label: columnLabel,
+      })
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
   async generateColumnPrompt(
     columnLabel: string,
     columnType: string

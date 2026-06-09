@@ -45,6 +45,13 @@ import {
   ContentCopy as ContentCopyIcon,
 } from '@mui/icons-material'
 import { TabularRow, TabularColumn, TabularCell, CellDetails, SourceReference } from "@/services/tabularReviewApi"
+
+/** ISO YYYY-MM-DD → DD.MM.YYYY for date column display */
+function formatTabularDateDisplay(value: string): string {
+  const m = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!m) return value
+  return `${m[3]}.${m[2]}.${m[1]}`
+}
 import { tabularReviewApi } from "@/services/tabularReviewApi"
 import {
   normalizeCellSourceReferences,
@@ -56,14 +63,12 @@ import { TagCell } from "./TagCell"
 import { CellHistoryPanel } from "./CellHistoryPanel"
 import { AdvancedFiltersPanel, AdvancedFilters } from "./AdvancedFiltersPanel"
 import { useKeyboardNavigation } from "@/hooks/useKeyboardNavigation"
-import { ColumnBuilder } from "./ColumnBuilder"
 import { FilterPopover } from "./FilterPopover"
 import { ColumnHeaderMenu } from "./ColumnHeaderMenu"
 
 // Approximate row height used for virtualization and overlay sizing
 const ROW_HEIGHT_ESTIMATE = 50
-const ADD_COLUMN_OVERLAY_ROWS = 7
-// Базовая ширина колонок (подогнана под ширину модального окна ColumnBuilder)
+// Базовая ширина колонок
 const DEFAULT_COLUMN_WIDTH = 380
 
 interface TabularReviewTableProps {
@@ -108,9 +113,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
   const [globalFilter, setGlobalFilter] = React.useState("")
   const [_loadingCell, setLoadingCell] = React.useState(false)
 
-  const handleInlineCancel = React.useCallback(() => {
-    onCloseAddColumnPopover?.()
-  }, [onCloseAddColumnPopover])
   const [historyPanelOpen, setHistoryPanelOpen] = React.useState(false)
   const [historyCellInfo, setHistoryCellInfo] = React.useState<{
     fileId: string
@@ -553,6 +555,19 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         const cell: TabularCell = row.getValue(col.id)
         let cellValue = cell?.cell_value || "-"
 
+        if (col.column_type === "yes_no" && typeof cellValue === "string") {
+          const yn = cellValue.trim()
+          if (yn === "Yes") cellValue = "Да"
+          else if (yn === "No") cellValue = "Нет"
+        }
+
+        if (col.column_type === "date" && typeof cellValue === "string") {
+          const trimmed = cellValue.trim()
+          if (trimmed && trimmed.toUpperCase() !== "N/A") {
+            cellValue = formatTabularDateDisplay(trimmed)
+          }
+        }
+
         // IMPORTANT: UI should never try to parse JSON-in-string cell values.
         // Cleanliness/normalization must happen on the backend (structured output + normalization).
 
@@ -763,7 +778,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
 
     const baseColumns = [rowIndexColumn, fileColumn, ...dynamicColumns]
     return onAddColumnClick ? [...baseColumns, addColumnColumn] : baseColumns
-  }, [tableData.columns, reviewId, onCellClick, onRemoveDocument, onColumnEdit, onColumnDelete, onAddColumnClick, onRunColumn, runningColumnIds, processingCellKeys, handleInlineCancel, showAddColumnPopover])
+  }, [tableData.columns, reviewId, onCellClick, onRemoveDocument, onColumnEdit, onColumnDelete, onAddColumnClick, onRunColumn, runningColumnIds, processingCellKeys])
 
   const table = useReactTable({
     data: tableRows,
@@ -994,8 +1009,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                       >
                         {row.getVisibleCells().map((cell) => {
                           const isAddColumnCell = cell.column.id === 'add_column'
-                          const isOverlayHost =
-                            isAddColumnCell && !!showAddColumnPopover && row.index === 0
 
                           return (
                             <TableCell
@@ -1035,47 +1048,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                                 cell.column.columnDef.cell,
                                 cell.getContext()
                               )}
-
-                              {isOverlayHost && onSaveNewColumn && onCloseAddColumnPopover && (
-                                <Box
-                                  sx={{
-                                    position: 'absolute',
-                                    top: 0,
-                                    left: 0,
-                                    width: '100%',
-                                    height:
-                                      ROW_HEIGHT_ESTIMATE * ADD_COLUMN_OVERLAY_ROWS,
-                                    zIndex: 50,
-                                    pointerEvents: 'auto',
-                                  }}
-                                >
-                                  <Box
-                                    sx={{
-                                      width: '100%',
-                                      height: '100%',
-                                      borderRadius: '10px',
-                                      boxShadow:
-                                        '0 8px 32px rgba(0,0,0,0.15)',
-                                      bgcolor: '#FFFFFF',
-                                      p: 2.5,
-                                      display: 'flex',
-                                      flexDirection: 'column',
-                                      overflowY: 'auto',
-                                    }}
-                                    onClick={(e) => e.stopPropagation()}
-                                  >
-                                    <ColumnBuilder
-                                      isOpen={showAddColumnPopover}
-                                      onClose={handleInlineCancel}
-                                      onSave={async (column) => {
-                                        await onSaveNewColumn(column)
-                                        onCloseAddColumnPopover()
-                                      }}
-                                      mode="inline"
-                                    />
-                                  </Box>
-                                </Box>
-                              )}
                             </TableCell>
                           )
                         })}
@@ -1104,8 +1076,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                   >
                     {row.getVisibleCells().map((cell) => {
                       const isAddColumnCell = cell.column.id === 'add_column'
-                      const isOverlayHost =
-                        isAddColumnCell && !!showAddColumnPopover && row.index === 0
 
                       return (
                         <TableCell
@@ -1144,47 +1114,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
                           {flexRender(
                             cell.column.columnDef.cell,
                             cell.getContext()
-                          )}
-
-                          {isOverlayHost && onSaveNewColumn && onCloseAddColumnPopover && (
-                            <Box
-                              sx={{
-                                position: 'absolute',
-                                top: 0,
-                                left: 0,
-                                width: '100%',
-                                height:
-                                  ROW_HEIGHT_ESTIMATE * ADD_COLUMN_OVERLAY_ROWS,
-                                zIndex: 50,
-                                pointerEvents: 'auto',
-                              }}
-                            >
-                              <Box
-                                sx={{
-                                  width: '100%',
-                                  height: '100%',
-                                  borderRadius: '10px',
-                                  boxShadow:
-                                    '0 8px 32px rgba(0,0,0,0.15)',
-                                  bgcolor: '#FFFFFF',
-                                  p: 2.5,
-                                  display: 'flex',
-                                  flexDirection: 'column',
-                                  overflowY: 'auto',
-                                }}
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <ColumnBuilder
-                                  isOpen={showAddColumnPopover}
-                                  onClose={handleInlineCancel}
-                                  onSave={async (column) => {
-                                    await onSaveNewColumn(column)
-                                    onCloseAddColumnPopover()
-                                  }}
-                                  mode="inline"
-                                />
-                              </Box>
-                            </Box>
                           )}
                         </TableCell>
                       )

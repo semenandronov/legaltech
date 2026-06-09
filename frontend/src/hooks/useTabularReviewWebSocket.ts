@@ -9,6 +9,7 @@ interface TabularReviewWebSocketMessage {
     | 'column_deleted'
     | 'extraction_progress'
     | 'extraction_cell_finished'
+    | 'column_extraction_completed'
     | 'error'
     | 'table_created'
   cell_id?: string
@@ -53,6 +54,10 @@ interface TabularReviewWebSocketMessage {
   }
   message?: string
   review_id?: string
+  saved_count?: number
+  filled_count?: number
+  error_count?: number
+  total_tasks?: number
 }
 
 interface UseTabularReviewWebSocketOptions {
@@ -72,6 +77,15 @@ interface UseTabularReviewWebSocketOptions {
     total: number
     saved_count?: number
     error_count?: number
+  }) => void
+  onColumnExtractionCompleted?: (data: {
+    column_id: string
+    status: string
+    saved_count?: number
+    filled_count?: number
+    error_count?: number
+    total_tasks?: number
+    message?: string
   }) => void
   onTableCreated?: (table: NonNullable<TabularReviewWebSocketMessage['table']>) => void
   onError?: (error: string) => void
@@ -99,6 +113,19 @@ function parseCellUpdatedMessage(data: TabularReviewWebSocketMessage): TabularCe
   }
 }
 
+function resolveWebSocketHost(): string {
+  // In Vite dev, route WS through the dev-server proxy (/ws → backend) for reliable auth + delivery.
+  if (import.meta.env.DEV && import.meta.env.VITE_TABULAR_WS_USE_PROXY !== 'false') {
+    return window.location.host
+  }
+  const apiHost = import.meta.env.VITE_API_URL?.replace(/^https?:\/\//, '')
+  return apiHost || window.location.host
+}
+
+function isBenignWebSocketClose(event: CloseEvent): boolean {
+  return event.code === 1000 || event.code === 1001 || event.code === 1006
+}
+
 export const useTabularReviewWebSocket = ({
   reviewId,
   enabled = true,
@@ -107,6 +134,7 @@ export const useTabularReviewWebSocket = ({
   onColumnAdded,
   onColumnDeleted,
   onExtractionProgress,
+  onColumnExtractionCompleted,
   onTableCreated,
   onError,
 }: UseTabularReviewWebSocketOptions) => {
@@ -114,13 +142,62 @@ export const useTabularReviewWebSocket = ({
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const reconnectAttempts = useRef(0)
+  const connectGenerationRef = useRef(0)
+  const intentionalCloseRef = useRef(false)
   const maxReconnectAttempts = 5
+
+  const callbacksRef = useRef({
+    onCellUpdated,
+    onExtractionCellFinished,
+    onColumnAdded,
+    onColumnDeleted,
+    onExtractionProgress,
+    onColumnExtractionCompleted,
+    onTableCreated,
+    onError,
+  })
+  callbacksRef.current = {
+    onCellUpdated,
+    onExtractionCellFinished,
+    onColumnAdded,
+    onColumnDeleted,
+    onExtractionProgress,
+    onColumnExtractionCompleted,
+    onTableCreated,
+    onError,
+  }
+
+  const clearReconnectTimer = useCallback(() => {
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current)
+      reconnectTimeoutRef.current = null
+    }
+  }, [])
+
+  const closeActiveSocket = useCallback(() => {
+    const active = wsRef.current
+    if (!active) return
+    wsRef.current = null
+    active.onopen = null
+    active.onmessage = null
+    active.onerror = null
+    active.onclose = null
+    if (active.readyState === WebSocket.CONNECTING || active.readyState === WebSocket.OPEN) {
+      active.close(1000, 'client disconnect')
+    }
+  }, [])
 
   const connect = useCallback(() => {
     if (!enabled || !reviewId) return
 
+    clearReconnectTimer()
+    closeActiveSocket()
+
+    const generation = ++connectGenerationRef.current
+    intentionalCloseRef.current = false
+
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const host = import.meta.env.VITE_API_URL?.replace(/^https?:\/\//, '') || window.location.host
+    const host = resolveWebSocketHost()
     const token = localStorage.getItem('access_token')
     const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : ''
     const wsUrl = `${protocol}//${host}/ws/tabular-review/${reviewId}${tokenQuery}`
@@ -129,13 +206,20 @@ export const useTabularReviewWebSocket = ({
       const ws = new WebSocket(wsUrl)
 
       ws.onopen = () => {
+        if (generation !== connectGenerationRef.current) {
+          ws.close(1000, 'stale connection')
+          return
+        }
         setIsConnected(true)
         reconnectAttempts.current = 0
       }
 
       ws.onmessage = (event) => {
+        if (generation !== connectGenerationRef.current) return
+
         try {
           const data: TabularReviewWebSocketMessage = JSON.parse(event.data)
+          const callbacks = callbacksRef.current
 
           switch (data.type) {
             case 'connected':
@@ -143,15 +227,15 @@ export const useTabularReviewWebSocket = ({
 
             case 'cell_updated': {
               const update = parseCellUpdatedMessage(data)
-              if (update && onCellUpdated) {
-                onCellUpdated(update)
+              if (update && callbacks.onCellUpdated) {
+                callbacks.onCellUpdated(update)
               }
               break
             }
 
             case 'extraction_cell_finished':
-              if (onExtractionCellFinished && data.column_id && data.file_id) {
-                onExtractionCellFinished({
+              if (callbacks.onExtractionCellFinished && data.column_id && data.file_id) {
+                callbacks.onExtractionCellFinished({
                   column_id: data.column_id,
                   file_id: data.file_id,
                   success: Boolean(data.success),
@@ -160,32 +244,46 @@ export const useTabularReviewWebSocket = ({
               break
 
             case 'column_added':
-              if (onColumnAdded && data.column) {
-                onColumnAdded(data.column)
+              if (callbacks.onColumnAdded && data.column) {
+                callbacks.onColumnAdded(data.column)
               }
               break
 
             case 'column_deleted':
-              if (onColumnDeleted && data.column_id) {
-                onColumnDeleted(data.column_id)
+              if (callbacks.onColumnDeleted && data.column_id) {
+                callbacks.onColumnDeleted(data.column_id)
               }
               break
 
             case 'extraction_progress':
-              if (onExtractionProgress && data.progress) {
-                onExtractionProgress(data.progress)
+              if (callbacks.onExtractionProgress && data.progress) {
+                callbacks.onExtractionProgress(data.progress)
+              }
+              break
+
+            case 'column_extraction_completed':
+              if (callbacks.onColumnExtractionCompleted && data.column_id) {
+                callbacks.onColumnExtractionCompleted({
+                  column_id: data.column_id,
+                  status: data.status ?? 'completed',
+                  saved_count: data.saved_count,
+                  filled_count: data.filled_count,
+                  error_count: data.error_count,
+                  total_tasks: data.total_tasks,
+                  message: data.message,
+                })
               }
               break
 
             case 'table_created':
-              if (onTableCreated && data.table) {
-                onTableCreated(data.table)
+              if (callbacks.onTableCreated && data.table) {
+                callbacks.onTableCreated(data.table)
               }
               break
 
             case 'error':
-              if (onError) {
-                onError(data.message || 'Ошибка WebSocket')
+              if (callbacks.onError) {
+                callbacks.onError(data.message || 'Ошибка WebSocket')
               }
               break
 
@@ -194,65 +292,61 @@ export const useTabularReviewWebSocket = ({
           }
         } catch (error) {
           console.error('Error parsing Tabular Review WebSocket message:', error)
-          if (onError) {
-            onError('Ошибка при обработке сообщения')
-          }
+          callbacksRef.current.onError?.('Ошибка при обработке сообщения')
         }
       }
 
       ws.onerror = () => {
+        if (generation !== connectGenerationRef.current) return
         setIsConnected(false)
       }
 
-      ws.onclose = () => {
-        setIsConnected(false)
+      ws.onclose = (event) => {
+        if (generation !== connectGenerationRef.current) return
 
-        if (reconnectAttempts.current < maxReconnectAttempts && enabled && reviewId) {
+        setIsConnected(false)
+        if (wsRef.current === ws) {
+          wsRef.current = null
+        }
+
+        if (intentionalCloseRef.current || !enabled || !reviewId) {
+          return
+        }
+
+        if (isBenignWebSocketClose(event) && reconnectAttempts.current < maxReconnectAttempts) {
           reconnectAttempts.current++
           const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 10000)
           reconnectTimeoutRef.current = setTimeout(() => {
             connect()
           }, delay)
-        } else if (reconnectAttempts.current >= maxReconnectAttempts) {
-          if (onError) {
-            onError('Не удалось подключиться к обновлениям таблицы')
-          }
+          return
+        }
+
+        if (reconnectAttempts.current >= maxReconnectAttempts && callbacksRef.current.onError) {
+          callbacksRef.current.onError('Не удалось подключиться к обновлениям таблицы')
         }
       }
 
       wsRef.current = ws
     } catch (error) {
       console.error('Error creating Tabular Review WebSocket:', error)
-      if (onError) {
-        onError('Ошибка при создании соединения')
-      }
+      callbacksRef.current.onError?.('Ошибка при создании соединения')
     }
-  }, [
-    reviewId,
-    enabled,
-    onCellUpdated,
-    onExtractionCellFinished,
-    onColumnAdded,
-    onColumnDeleted,
-    onExtractionProgress,
-    onTableCreated,
-    onError,
-  ])
+  }, [reviewId, enabled, clearReconnectTimer, closeActiveSocket])
 
   const disconnect = useCallback(() => {
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current)
-    }
-    if (wsRef.current) {
-      wsRef.current.close()
-      wsRef.current = null
-    }
+    intentionalCloseRef.current = true
+    connectGenerationRef.current++
+    clearReconnectTimer()
+    closeActiveSocket()
     setIsConnected(false)
-  }, [])
+  }, [clearReconnectTimer, closeActiveSocket])
 
   useEffect(() => {
     if (enabled && reviewId) {
       connect()
+    } else {
+      disconnect()
     }
 
     return () => {

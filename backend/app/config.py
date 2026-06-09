@@ -880,9 +880,12 @@ class Config:
     TABULAR_CONTEXT_MAX_CHARS: int = int(
         os.getenv("TABULAR_CONTEXT_MAX_CHARS", "6000") or "6000"
     )
-    # Tabular: cross-encoder rerank per cell (off by default — use hybrid top-k; set true to re-enable).
+    # Tabular: cross-encoder rerank per cell (off by default — 17 parallel cells + rerank is very slow locally).
     TABULAR_RERANK_ENABLED: bool = (
         os.getenv("TABULAR_RERANK_ENABLED", "false").strip().lower() == "true"
+    )
+    TABULAR_MAX_PARALLEL_CELLS: int = int(
+        os.getenv("TABULAR_MAX_PARALLEL_CELLS", "5") or "5"
     )
     TABULAR_EVIDENCE_REQUIRED: bool = (
         os.getenv("TABULAR_EVIDENCE_REQUIRED", "true").strip().lower() == "true"
@@ -1048,6 +1051,24 @@ class Config:
         os.getenv("DRAFT_FULL_HTML_FALLBACK_ENABLED", "false").strip().lower() == "true"
     )
     DRAFT_PLAN_FIELD_PROBE_COUNT: int = int(os.getenv("DRAFT_PLAN_FIELD_PROBE_COUNT", "5") or "5")
+    DRAFT_SECTION_MAX_PARALLEL: int = int(os.getenv("DRAFT_SECTION_MAX_PARALLEL", "5") or "5")
+    DRAFT_LINTER_ENABLED: bool = (
+        os.getenv("DRAFT_LINTER_ENABLED", "true").strip().lower() == "true"
+    )
+    DRAFT_SCRATCH_LLM_BLUEPRINT: bool = (
+        os.getenv("DRAFT_SCRATCH_LLM_BLUEPRINT", "true").strip().lower() == "true"
+    )
+    DRAFT_FINANCIAL_CALCULATOR_ENABLED: bool = (
+        os.getenv("DRAFT_FINANCIAL_CALCULATOR_ENABLED", "true").strip().lower() == "true"
+    )
+    # unified = один LLM-проход с полным RAG (как case assistant); decomposed = legacy sections
+    DRAFT_GENERATION_MODE: str = (
+        os.getenv("DRAFT_GENERATION_MODE", "unified").strip().lower() or "unified"
+    )
+    DRAFT_UNIFIED_RAG_MAX_CHARS: int = int(
+        os.getenv("DRAFT_UNIFIED_RAG_MAX_CHARS", "24000") or "24000"
+    )
+    DRAFT_UNIFIED_MAX_TOKENS: int = int(os.getenv("DRAFT_UNIFIED_MAX_TOKENS", "0") or "0")
     # False (default): draft mode сразу генерирует документ без отдельного плана и кнопки «Одобрить».
     DRAFT_PLAN_APPROVAL_ENABLED: bool = (
         os.getenv("DRAFT_PLAN_APPROVAL_ENABLED", "false").strip().lower() == "true"

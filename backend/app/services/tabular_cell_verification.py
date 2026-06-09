@@ -27,10 +27,13 @@ class EvidenceAssessment:
     has_verbatim: bool
     has_chunk_provenance: bool
     quote_grounded_in_document: bool
+    date_grounded_in_document: bool = False
 
     @property
     def has_sufficient_evidence(self) -> bool:
         if self.has_chunk_provenance or self.has_verbatim:
+            return True
+        if self.date_grounded_in_document:
             return True
         if self.has_model_references and self.quote_grounded_in_document:
             return True
@@ -61,10 +64,18 @@ def quote_exists_in_document(quote: str, file: File, *, min_len: int = 12) -> bo
     return q in doc
 
 
+def date_value_grounded_in_document(normalized_iso: str, file: File) -> bool:
+    from app.services.date_validator import normalized_date_in_document
+
+    return normalized_date_in_document(normalized_iso, file.original_text or "")
+
+
 def assess_evidence(
     result: TabularCellExtractionModel,
     file: File,
     included_docs: List[Document],
+    *,
+    column_type: Optional[str] = None,
 ) -> EvidenceAssessment:
     refs = result.source_references if isinstance(result.source_references, list) else []
     has_model_refs = any(
@@ -95,12 +106,18 @@ def assess_evidence(
         anchor = (result.cell_value or "").strip()[:240]
 
     grounded = quote_exists_in_document(anchor, file) if anchor else False
+    date_grounded = False
+    if column_type == "date":
+        normalized = (result.normalized_value or result.cell_value or "").strip()
+        if normalized and not is_na_cell_value(normalized):
+            date_grounded = date_value_grounded_in_document(normalized, file)
 
     return EvidenceAssessment(
         has_model_references=has_model_refs,
         has_verbatim=has_verbatim,
         has_chunk_provenance=has_provenance,
         quote_grounded_in_document=grounded,
+        date_grounded_in_document=date_grounded,
     )
 
 
@@ -124,7 +141,7 @@ def apply_evidence_first_policy(
     if not column_requires_evidence(column):
         return CellVerificationOutcome(result=result, issues=issues)
 
-    evidence = assess_evidence(result, file, included_docs)
+    evidence = assess_evidence(result, file, included_docs, column_type=column.column_type)
 
     if evidence.has_sufficient_evidence:
         return CellVerificationOutcome(result=result, issues=issues, evidence=evidence)

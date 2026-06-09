@@ -182,6 +182,17 @@ class CitationsEvent(BaseModel):
         return f"data: {json.dumps({'type': 'citations', 'citations': [c.model_dump() for c in self.citations]}, ensure_ascii=False)}\n\n"
 
 
+class TabularChatDoneEvent(BaseModel):
+    """Финальное событие стрима чата по табличному обзору."""
+    type: Literal["tabular_chat_done"] = "tabular_chat_done"
+    answer: str = Field(..., description="Полный текст ответа")
+    citations: List[Dict[str, str]] = Field(default_factory=list)
+    table_stats: Dict[str, int] = Field(default_factory=dict)
+
+    def to_sse(self) -> str:
+        return f"data: {json.dumps(self.model_dump(), ensure_ascii=False)}\n\n"
+
+
 class AnswerBlock(BaseModel):
     """Фрагмент ответа с привязкой к citation_id (Phase 2)."""
 
@@ -513,6 +524,18 @@ class SSESerializer:
     def text_delta(text: str) -> str:
         """Быстрый метод для text delta"""
         return TextDeltaEvent(text_delta=text).to_sse()
+
+    @staticmethod
+    def tabular_chat_done(
+        answer: str,
+        citations: List[Dict[str, str]],
+        table_stats: Dict[str, int],
+    ) -> str:
+        return TabularChatDoneEvent(
+            answer=answer,
+            citations=citations,
+            table_stats=table_stats,
+        ).to_sse()
     
     @staticmethod
     def error(message: str, error_type: Optional[str] = None) -> str:

@@ -1,14 +1,30 @@
 """Pydantic models for Tabular Review structured output"""
 from typing import Any, Optional, Dict
-from pydantic import BaseModel, Field, field_validator, model_validator
-from datetime import datetime
 import re
 import logging
 
-from app.services.date_validator import parse_and_normalize_date
-from app.services.document_type_labels import doc_type_display_label
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from app.services.tabular_column_type_contract import (
+    is_blank_placeholder,
+    strict_normalize_cell_value,
+)
 
 logger = logging.getLogger(__name__)
+
+# Канон yes_no для UI и новых извлечений (legacy Yes/No в БД принимаются без миграции).
+YES_NO_VALUE_YES = "Да"
+YES_NO_VALUE_NO = "Нет"
+YES_NO_UNKNOWN = "Unknown"
+
+
+def yes_no_normalized_key(canon: str) -> str:
+    """Ключ для сравнения конфликтов: Да→да, Нет→нет; legacy Yes/No тоже."""
+    if canon in (YES_NO_VALUE_YES, "Yes"):
+        return "да"
+    if canon in (YES_NO_VALUE_NO, "No"):
+        return "нет"
+    return (canon or "").strip().lower()
 
 
 def coerce_optional_int(value: Any) -> Optional[int]:
@@ -64,48 +80,82 @@ def validate_number(value: str) -> str:
 
 
 def validate_yes_no(value: str) -> str:
-    """Validate and normalize yes/no value"""
+    """Validate and normalize yes/no to Russian canon (Да/Нет); accepts legacy Yes/No."""
     if not value or not isinstance(value, str):
-        return "Unknown"
-    
-    # Убираем все знаки препинания и лишние пробелы для более гибкого распознавания
-    value_clean = value.lower().strip()
-    # Убираем точки, запятые, восклицательные и вопросительные знаки
-    value_clean = value_clean.rstrip('.,!?;:')
-    
-    # Расширенный список вариантов для "Yes"
+        return YES_NO_UNKNOWN
+
+    stripped = value.strip()
+    if stripped in (YES_NO_VALUE_YES, "Yes"):
+        return YES_NO_VALUE_YES
+    if stripped in (YES_NO_VALUE_NO, "No"):
+        return YES_NO_VALUE_NO
+
+    value_clean = stripped.lower().rstrip(".,!?;:")
+
     yes_variants = [
-        'yes', 'да', 'есть', 'true', '1', 'да, есть', 'есть, да',
-        'имеется', 'присутствует', 'существует', 'найдено', 'найден',
-        'подтверждаю', 'подтверждено', 'согласен', 'согласна',
-        'верно', 'правильно', 'корректно', 'так', 'именно так'
+        "yes",
+        "да",
+        "есть",
+        "true",
+        "1",
+        "да, есть",
+        "есть, да",
+        "имеется",
+        "присутствует",
+        "существует",
+        "найдено",
+        "найден",
+        "подтверждаю",
+        "подтверждено",
+        "согласен",
+        "согласна",
+        "верно",
+        "правильно",
+        "корректно",
+        "так",
+        "именно так",
     ]
-    
-    # Расширенный список вариантов для "No"
+
     no_variants = [
-        'no', 'нет', 'нету', 'false', '0', 'не', 'отсутствует',
-        'не имеется', 'не присутствует', 'не существует', 'не найдено', 'не найден',
-        'не подтверждаю', 'не подтверждено', 'не согласен', 'не согласна',
-        'неверно', 'неправильно', 'некорректно', 'не так', 'не именно так',
-        'отрицаю', 'отрицается'
+        "no",
+        "нет",
+        "нету",
+        "false",
+        "0",
+        "не",
+        "отсутствует",
+        "не имеется",
+        "не присутствует",
+        "не существует",
+        "не найдено",
+        "не найден",
+        "не подтверждаю",
+        "не подтверждено",
+        "не согласен",
+        "не согласна",
+        "неверно",
+        "неправильно",
+        "некорректно",
+        "не так",
+        "не именно так",
+        "отрицаю",
+        "отрицается",
     ]
-    
-    # Проверяем точное совпадение
+
     if value_clean in yes_variants:
-        return 'Yes'
-    elif value_clean in no_variants:
-        return 'No'
-    
-    # Проверяем частичное совпадение (если значение содержит ключевые слова)
+        return YES_NO_VALUE_YES
+    if value_clean in no_variants:
+        return YES_NO_VALUE_NO
+
     for yes_variant in yes_variants:
         if yes_variant in value_clean:
-            return 'Yes'
-    
+            return YES_NO_VALUE_YES
+
     for no_variant in no_variants:
         if no_variant in value_clean:
-            return 'No'
+            return YES_NO_VALUE_NO
 
-    return 'Unknown'
+    return YES_NO_UNKNOWN
 
 
 class SourceReference(BaseModel):
@@ -150,77 +200,23 @@ class TabularCellExtractionModel(BaseModel):
     
     @model_validator(mode='after')
     def validate_by_column_type(self):
-        """Validate and normalize cell_value based on column_type after model creation"""
+        """Validate and normalize cell_value based on column_type after model creation."""
         if not self.column_type:
-            # Если column_type не установлен, просто нормализуем
             if not self.normalized_value and self.cell_value and self.cell_value != "N/A":
                 self.normalized_value = self.cell_value.strip().lower()
             return self
-        
-        if not self.cell_value or self.cell_value.strip() == "" or self.cell_value == "N/A":
-            if not self.cell_value:
-                self.cell_value = "N/A"
-            if not self.normalized_value:
-                self.normalized_value = "N/A"
+
+        if is_blank_placeholder(self.cell_value or ""):
+            self.cell_value = "N/A"
+            self.normalized_value = "N/A"
             return self
-        
-        original_value = self.cell_value.strip()
-        
-        # Validate and normalize based on type
-        if self.column_type == 'date':
-            try:
-                normalized = parse_and_normalize_date(original_value)
-                datetime.strptime(normalized, "%Y-%m-%d")
-                self.cell_value = normalized
-                self.normalized_value = normalized
-            except Exception as e:
-                logger.warning(f"Could not normalize date '{original_value}': {e}")
-                self.cell_value = original_value
-                self.normalized_value = original_value
-        
-        elif self.column_type == 'currency':
-            try:
-                # Валидируем, что число корректно, но сохраняем оригинал с валютой
-                normalized_num = validate_currency(original_value)
-                # cell_value остается с валютой (оригинальное значение, если оно валидно)
-                self.cell_value = original_value
-                # normalized_value содержит только число
-                self.normalized_value = normalized_num
-            except ValueError as e:
-                logger.warning(f"Currency validation failed for '{original_value}': {e}")
-                self.cell_value = original_value
-                self.normalized_value = original_value
-        
-        elif self.column_type == 'number':
-            try:
-                normalized = validate_number(original_value)
-                self.cell_value = normalized
-                self.normalized_value = normalized
-            except ValueError as e:
-                logger.warning(f"Number validation failed for '{original_value}': {e}")
-                self.cell_value = original_value
-                self.normalized_value = original_value
-        
-        elif self.column_type == 'yes_no':
-            validated = validate_yes_no(original_value)
-            self.cell_value = validated
-            self.normalized_value = validated.lower()
 
-        elif self.column_type == 'document_type':
-            code = original_value.strip().lower().replace(" ", "_")
-            if code in ("n/a", "na", "нет", "неизвестно", "unknown"):
-                self.cell_value = "N/A"
-                self.normalized_value = "N/A"
-            else:
-                self.normalized_value = code
-                self.cell_value = doc_type_display_label(code)
-
-        else:
-            # For text, verbatim, tags - no validation needed, just normalize
-            self.cell_value = original_value
-            if not self.normalized_value:
-                self.normalized_value = original_value.lower()
-        
+        cell_value, norm_value, _rejection = strict_normalize_cell_value(
+            self.cell_value,
+            self.column_type,
+        )
+        self.cell_value = cell_value
+        self.normalized_value = norm_value
         return self
     
     @model_validator(mode='after')

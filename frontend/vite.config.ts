@@ -20,6 +20,26 @@ export default defineConfig({
     port: 5173,
     host: true,
     proxy: {
+      '/ws': {
+        target: 'http://localhost:8000',
+        ws: true,
+        changeOrigin: true,
+        configure: (proxy) => {
+          const isBenignWsProxyError = (err: NodeJS.ErrnoException | null | undefined) =>
+            err?.code === 'EPIPE' || err?.code === 'ECONNRESET'
+
+          proxy.on('error', (err) => {
+            if (isBenignWsProxyError(err)) return
+            console.error('[vite] ws proxy error:', err)
+          })
+          proxy.on('proxyReqWs', (_proxyReq, _req, socket) => {
+            socket.on('error', (err) => {
+              if (isBenignWsProxyError(err)) return
+              console.error('[vite] ws proxy socket error:', err)
+            })
+          })
+        },
+      },
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,

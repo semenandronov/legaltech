@@ -5,7 +5,11 @@ from types import SimpleNamespace
 
 from app.services.tabular_review_models import TabularCellExtractionModel, coerce_optional_int
 from app.services.tabular_cell_pipeline import (
+    _tabular_cell_budget_profile,
+    augment_context_for_column,
+    build_extraction_prompt,
     build_retrieval_query,
+    cell_retrieval_params_from_models,
     column_type_description,
     tabular_final_k,
     enrich_source_from_documents,
@@ -32,10 +36,101 @@ def test_tabular_extraction_model_accepts_na_source_page():
     assert model.source_page is None
 
 
-def test_build_retrieval_query():
-    col = SimpleNamespace(prompt="Какая дата?", column_label="Дата")
-    assert "Какая дата?" in build_retrieval_query(col)
-    assert "Дата" in build_retrieval_query(col)
+def test_build_retrieval_query_uses_column_prompt_only():
+    col = SimpleNamespace(prompt="Какая дата?", column_label="Дата", column_type="text")
+    assert build_retrieval_query(col) == "Какая дата?"
+
+
+def test_build_retrieval_query_falls_back_to_label():
+    col = SimpleNamespace(prompt="", column_label="Дата", column_type="text")
+    assert build_retrieval_query(col) == "Дата"
+
+
+def test_build_retrieval_query_adds_type_hints_for_date():
+    col = SimpleNamespace(
+        prompt="Дата подписания договора",
+        column_label="Дата",
+        column_type="date",
+    )
+    query = build_retrieval_query(col)
+    assert query.startswith("Дата подписания договора")
+    assert "шапка" in query
+
+
+def test_augment_context_for_date_prepends_document_header():
+    body = "x" * 200
+    header = "ШАПКА ДОКУМЕНТА от 15.05.2026" + (" " * 100)
+    original = header + body
+    context = "релевантный фрагмент без шапки"
+    merged = augment_context_for_column(
+        context,
+        column_type="date",
+        original_text=original,
+    )
+    assert "ШАПКА ДОКУМЕНТА" in merged
+    assert context in merged
+
+
+def test_tabular_cell_budget_uses_single_file_tabular_knobs(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.tabular_cell_pipeline.config.TABULAR_RECALL_K",
+        25,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "app.services.tabular_cell_pipeline.config.TABULAR_FINAL_K_SIMPLE",
+        4,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "app.services.tabular_cell_pipeline.config.TABULAR_CONTEXT_MAX_CHARS",
+        8000,
+        raising=False,
+    )
+    budget = _tabular_cell_budget_profile("date")
+    assert budget["final_k"] == 4
+    assert budget["recall_k"] == 25
+    assert budget["max_context_chars"] == 8000
+    assert budget["rerank_enabled"] is False
+    assert budget["skip_micro_recall_cap"] is True
+    assert budget["parent_context_enabled"] is False
+
+    monkeypatch.setattr(
+        "app.services.tabular_cell_pipeline.config.TABULAR_RERANK_ENABLED",
+        True,
+        raising=False,
+    )
+    assert _tabular_cell_budget_profile("date")["rerank_enabled"] is True
+
+
+def test_build_extraction_prompt_has_no_extra_template_variables():
+    col = SimpleNamespace(
+        column_type="verbatim",
+        column_label="Дата",
+        prompt="Какая дата подписания?",
+        column_config=None,
+    )
+    prompt = build_extraction_prompt(col)
+    assert set(prompt.input_variables) == {"question", "context", "column_type"}
+
+
+def test_cell_retrieval_params_snapshot_orm_fields():
+    file = SimpleNamespace(
+        case_id="case-1",
+        id="file-1",
+        filename="doc.pdf",
+        original_text="текст",
+    )
+    col = SimpleNamespace(
+        prompt="вопрос",
+        column_label="Колонка",
+        column_type="text",
+    )
+    params = cell_retrieval_params_from_models(file, col)
+    assert params.case_id == "case-1"
+    assert params.file_id == "file-1"
+    assert params.column_type == "text"
+    assert "вопрос" in params.query
 
 
 def test_doc_belongs_to_file_scopes_by_metadata():
@@ -50,13 +145,6 @@ def test_doc_belongs_to_file_scopes_by_metadata():
         Document(page_content="x", metadata={"file_id": "other"}),
         fid,
     )
-
-
-def test_document_type_prompt_targets_content_not_label_field():
-    col = SimpleNamespace(column_type="document_type", column_config=None)
-    desc = column_type_description(col)
-    assert "содержанию" in desc.lower()
-    assert "готовую строку" in desc.lower()
 
 
 def test_tabular_final_k_simple_vs_text():

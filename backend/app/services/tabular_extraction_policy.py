@@ -12,7 +12,7 @@ from app.models.tabular_review import TabularColumn
 
 # Column types where an unsupported answer without grounding is rejected (→ N/A).
 _FACT_COLUMN_TYPES: Set[str] = frozenset(
-    {"date", "currency", "number", "yes_no", "tag", "document_type", "verbatim"}
+    {"date", "currency", "number", "yes_no", "tag", "verbatim"}
 )
 
 # All AI-filled types that must cite source material for non-N/A values.

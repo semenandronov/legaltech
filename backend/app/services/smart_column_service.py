@@ -1,10 +1,13 @@
 """Smart Column Service for creating columns from natural language descriptions and examples"""
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
+
 from sqlalchemy.orm import Session
-from app.models.tabular_review import TabularReview, TabularColumn
-from app.services.llm_factory import create_llm
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
+
+from app.models.tabular_review import TabularColumn, TabularReview
+from app.services.llm_factory import create_llm
+from app.services.tabular_column_type_contract import validate_column_type
 import logging
 
 logger = logging.getLogger(__name__)
@@ -109,6 +112,8 @@ class SmartColumnService:
             chain = prompt | structured_llm
             result = await chain.ainvoke({})
             
+            column_type = validate_column_type(result.column_type)
+            
             # Get max order_index
             max_order = self.db.query(TabularColumn.order_index).filter(
                 TabularColumn.tabular_review_id == review_id
@@ -119,7 +124,7 @@ class SmartColumnService:
             column = TabularColumn(
                 tabular_review_id=review_id,
                 column_label=result.column_label,
-                column_type=result.column_type,
+                column_type=column_type,
                 prompt=result.prompt,
                 column_config=result.column_config,
                 order_index=order_index
@@ -214,6 +219,8 @@ class SmartColumnService:
                 }
                 for ex in examples
             ]
+
+            column_type = validate_column_type(result.column_type)
             
             # Get max order_index
             max_order = self.db.query(TabularColumn.order_index).filter(
@@ -225,7 +232,7 @@ class SmartColumnService:
             column = TabularColumn(
                 tabular_review_id=review_id,
                 column_label=result.column_label,
-                column_type=result.column_type,
+                column_type=column_type,
                 prompt=result.prompt,
                 column_config=result.column_config,
                 order_index=order_index
@@ -277,7 +284,6 @@ class SmartColumnService:
 - tag: один тег из предопределенного списка
 - verbatim: точная цитата из документа
 - manual_input: ручной ввод (без AI)
-- document_type: тип/категория юридического документа (договор, иск, определение и т.д.)
 
 Для каждого вопроса определи:
 1. column_label: короткое название колонки (на русском или английском, для заголовка таблицы)
@@ -333,10 +339,12 @@ class SmartColumnService:
                 # Validate column_type
                 valid_types = {
                     "text", "number", "currency", "yes_no", "date", "tag",
-                    "verbatim", "manual_input", "document_type",
+                    "verbatim", "manual_input",
                 }
                 if col_type not in valid_types:
-                    col_type = "text"
+                    col_type = validate_column_type("text")
+                else:
+                    col_type = validate_column_type(col_type)
                 out.append(ColumnDescription(
                     column_label=label,
                     column_type=col_type,

@@ -29,8 +29,13 @@ def parse_and_normalize_date(date_str: str, reference_date: Optional[datetime] =
     """
     if not date_str or not isinstance(date_str, str):
         raise ValueError(f"Invalid date string: {date_str}")
-    
+
     date_str = date_str.strip()
+
+    from app.services.tabular_extraction_policy import is_na_cell_value
+
+    if is_na_cell_value(date_str):
+        raise ValueError(f"Not a calendar date (empty/N/A marker): {date_str!r}")
     
     # Try to parse relative dates first
     if reference_date and any(keyword in date_str.lower() for keyword in ['через', 'после', 'до', 'до']):
@@ -85,6 +90,59 @@ def parse_and_normalize_date(date_str: str, reference_date: Optional[datetime] =
         logger.warning(f"Could not parse date '{date_str}': {e}")
         # Return original string if parsing fails (will be caught by validator)
         return date_str
+
+
+def extract_parseable_date_from_text(text: str) -> Optional[str]:
+    """
+    Find the first parseable calendar date inside free-form text.
+
+    Used when the LLM returns a sentence or mixed-format date in cell_value.
+    """
+    if not text or not isinstance(text, str):
+        return None
+
+    stripped = text.strip()
+    if not stripped or stripped.upper() in ("N/A", "NA", "Н/Д"):
+        return None
+
+    try:
+        normalized = parse_and_normalize_date(stripped)
+        datetime.strptime(normalized, "%Y-%m-%d")
+        return normalized
+    except Exception:
+        pass
+
+    from app.services.regex_extractor import RegexExtractor
+
+    rx = RegexExtractor()
+    for item in rx.extract_dates(stripped):
+        candidate = item.get("date")
+        if not candidate:
+            continue
+        try:
+            datetime.strptime(candidate, "%Y-%m-%d")
+            return candidate
+        except ValueError:
+            continue
+    return None
+
+
+def normalized_date_in_document(normalized_iso: str, document_text: str) -> bool:
+    """True when YYYY-MM-DD appears in document text in any supported surface form."""
+    if not normalized_iso or not document_text:
+        return False
+    try:
+        datetime.strptime(normalized_iso, "%Y-%m-%d")
+    except ValueError:
+        return False
+
+    if normalized_iso in document_text:
+        return True
+
+    from app.services.regex_extractor import RegexExtractor
+
+    rx = RegexExtractor()
+    return any(item.get("date") == normalized_iso for item in rx.extract_dates(document_text))
 
 
 def compute_relative_date(date_str: str, reference_date: datetime) -> date:

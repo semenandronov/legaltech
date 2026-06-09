@@ -2,7 +2,7 @@
 
 from typing import Dict
 
-# Shared with RAG metadata and tabular review document_type columns.
+# Shared with RAG metadata and document classification.
 DOC_TYPE_LABELS: Dict[str, str] = {
     "court_order": "Судебный приказ",
     "court_decision": "Решение",

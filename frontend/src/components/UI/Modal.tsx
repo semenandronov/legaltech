@@ -17,9 +17,11 @@ interface ModalProps {
   children: ReactNode
   size?: 'sm' | 'md' | 'lg' | 'xl'
   className?: string
+  /** Убрать внутренний скролл — контент растягивает окно по высоте */
+  fitContent?: boolean
 }
 
-const Modal = ({ isOpen, onClose, title, children, size = 'md', className = '' }: ModalProps) => {
+const Modal = ({ isOpen, onClose, title, children, size = 'md', className = '', fitContent = false }: ModalProps) => {
   const maxWidthMap: Record<string, Breakpoint> = {
     sm: 'sm',
     md: 'md',
@@ -37,7 +39,14 @@ const Modal = ({ isOpen, onClose, title, children, size = 'md', className = '' }
       PaperProps={{
         sx: {
           borderRadius: 2,
-          zIndex: 1300, // Material-UI default, but ensure it's lower than Select
+          zIndex: 1300,
+          ...(fitContent
+            ? {
+                maxHeight: 'calc(100vh - 32px)',
+                height: 'auto',
+                overflow: 'visible',
+              }
+            : {}),
         },
       }}
       slotProps={{
@@ -74,7 +83,15 @@ const Modal = ({ isOpen, onClose, title, children, size = 'md', className = '' }
           </IconButton>
         </DialogTitle>
       )}
-      <DialogContent dividers sx={{ pt: title ? 2 : 3 }}>
+      <DialogContent
+        dividers
+        sx={{
+          pt: title ? 2 : 3,
+          ...(fitContent
+            ? { overflow: 'visible', maxHeight: 'none' }
+            : {}),
+        }}
+      >
         <Box>{children}</Box>
       </DialogContent>
     </Dialog>

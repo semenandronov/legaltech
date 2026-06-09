@@ -22,7 +22,7 @@ def _file(text: str = "Договор поставки между сторона
     return SimpleNamespace(id="file-1", original_text=text)
 
 
-def _column(column_type: str = "document_type", **cfg):
+def _column(column_type: str = "text", **cfg):
     return SimpleNamespace(
         column_type=column_type,
         column_config=cfg or None,
@@ -57,11 +57,35 @@ def test_assess_evidence_chunk_provenance():
     result = TabularCellExtractionModel(
         cell_value="Договор",
         reasoning="r",
-        column_type="document_type",
+        column_type="text",
     )
     docs = [Document(page_content="x", metadata={"char_start": 0, "char_end": 50})]
     ev = assess_evidence(result, _file(), docs)
     assert ev.has_sufficient_evidence
+
+
+def test_date_column_with_grounded_iso_passes_evidence(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.tabular_extraction_policy.config.TABULAR_EVIDENCE_REQUIRED",
+        True,
+        raising=False,
+    )
+    doc_text = "Согласие финансового управляющего от 15.05.2026 подписано сторонами"
+    result = TabularCellExtractionModel(
+        cell_value="2026-05-15",
+        normalized_value="2026-05-15",
+        reasoning="дата в шапке",
+        column_type="date",
+        confidence=0.9,
+    )
+    outcome = apply_evidence_first_policy(
+        result,
+        column=_column("date"),
+        file=_file(doc_text),
+        included_docs=[],
+    )
+    assert not outcome.forced_na
+    assert outcome.result.cell_value == "2026-05-15"
 
 
 def test_fact_column_without_evidence_forced_to_na(monkeypatch):
@@ -71,15 +95,15 @@ def test_fact_column_without_evidence_forced_to_na(monkeypatch):
         raising=False,
     )
     result = TabularCellExtractionModel(
-        cell_value="Договор поставки",
+        cell_value="999888777666",
         reasoning="угадано",
-        column_type="document_type",
+        column_type="number",
         confidence=0.95,
     )
     outcome = apply_evidence_first_policy(
         result,
-        column=_column("document_type"),
-        file=_file("совсем другой текст без договора"),
+        column=_column("number"),
+        file=_file("совсем другой текст без чисел"),
         included_docs=[],
     )
     assert outcome.forced_na
@@ -122,13 +146,13 @@ def test_evidence_from_grounded_quote_passes_fact_column(monkeypatch):
         cell_value="Договор поставки",
         verbatim_extract="Договор поставки между ООО Альфа",
         reasoning="найдено в шапке",
-        column_type="document_type",
+        column_type="verbatim",
         confidence=0.88,
         source_references=[{"text": "Договор поставки между ООО Альфа"}],
     )
     outcome = apply_evidence_first_policy(
         result,
-        column=_column("document_type"),
+        column=_column("verbatim"),
         file=_file(doc_text),
         included_docs=[],
     )

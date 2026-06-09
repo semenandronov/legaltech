@@ -171,7 +171,7 @@ DEFAULT_TEMPLATES = [
                 "prompt": "For each letter/email in the document, summarize the subject or main topic."
             }
         ]
-    }
+    },
     {
         "name": "SPA Review (template)",
         "description": "Template for reviewing Sale and Purchase Agreements (SPAs).",
@@ -520,6 +520,146 @@ DEFAULT_TEMPLATES = [
     }
 ]
 
+# Шаблоны табличного обзора для практики банкротства в РФ (зеркало frontend bankruptcyTabularTemplates.ts)
+BANKRUPTCY_RF_TEMPLATES = [
+    {
+        "name": "Обзор документов дела",
+        "description": "Базовый набор колонок: тип, дата, краткое содержание и дата подписания каждого документа.",
+        "category": "bankruptcy_rf",
+        "tags": ["банкротство", "обзор"],
+        "is_system": True,
+        "is_public": True,
+        "is_featured": True,
+        "columns": [
+            {"column_label": "Тип документа", "column_type": "text", "prompt": "Определи тип и категорию этого юридического документа по содержанию и структуре (кратко, на русском)."},
+            {"column_label": "Дата документа", "column_type": "date", "prompt": "Дата составления или подписания этого документа (не даты из приложений и ссылок на другие акты)."},
+            {"column_label": "Краткое содержание", "column_type": "text", "prompt": "Кратко опиши предмет и суть документа в 1–2 предложениях."},
+            {"column_label": "Дата подписания", "column_type": "date", "prompt": "Дата подписания этого документа сторонами или уполномоченным лицом."},
+            {"column_label": "Стороны", "column_type": "text", "prompt": "Укажи основные стороны документа (должник, кредитор, суд, ФУ и т.п.)."},
+        ],
+    },
+    {
+        "name": "Судебные акты",
+        "description": "Определения, решения и постановления в деле о банкротстве.",
+        "category": "bankruptcy_rf",
+        "tags": ["суд", "определение"],
+        "is_system": True,
+        "is_public": True,
+        "is_featured": True,
+        "columns": [
+            {"column_label": "Тип судебного акта", "column_type": "text", "prompt": "Тип судебного акта (определение, решение, постановление и т.п.)."},
+            {"column_label": "Дата акта", "column_type": "date", "prompt": "Дата вынесения судебного акта."},
+            {"column_label": "Суд", "column_type": "text", "prompt": "Наименование арбитражного суда, вынесшего акт."},
+            {"column_label": "Номер дела", "column_type": "text", "prompt": "Номер дела в арбитражном суде, указанный в документе."},
+            {"column_label": "Суть акта", "column_type": "text", "prompt": "Кратко: о чём судебный акт и какое процессуальное решение принято."},
+        ],
+    },
+    {
+        "name": "Согласия финансового управляющего",
+        "description": "Согласия ФУ на сделки, отчёты и иные действия в процедуре.",
+        "category": "bankruptcy_rf",
+        "tags": ["ФУ", "согласие"],
+        "is_system": True,
+        "is_public": True,
+        "is_featured": False,
+        "columns": [
+            {"column_label": "Дата согласия", "column_type": "date", "prompt": "Дата подписания согласия финансового управляющего."},
+            {"column_label": "Предмет согласия", "column_type": "text", "prompt": "На что дано согласие ФУ (сделка, отчёт, действие и т.п.)."},
+            {"column_label": "Финансовый управляющий", "column_type": "text", "prompt": "ФИО финансового управляющего, давшего согласие."},
+            {"column_label": "Сумма сделки", "column_type": "currency", "prompt": "Сумма сделки или обязательства, если указана в документе."},
+        ],
+    },
+    {
+        "name": "Платежи и расчёты",
+        "description": "Платёжные поручения и документы о движении денежных средств.",
+        "category": "bankruptcy_rf",
+        "tags": ["платёж", "расчёты"],
+        "is_system": True,
+        "is_public": True,
+        "is_featured": False,
+        "columns": [
+            {"column_label": "Дата платежа", "column_type": "date", "prompt": "Дата платежа или дата платёжного поручения."},
+            {"column_label": "Сумма", "column_type": "currency", "prompt": "Сумма платежа с указанием валюты."},
+            {"column_label": "Плательщик", "column_type": "text", "prompt": "Наименование плательщика."},
+            {"column_label": "Получатель", "column_type": "text", "prompt": "Наименование получателя платежа."},
+            {"column_label": "Назначение платежа", "column_type": "text", "prompt": "Назначение платежа или основание перевода."},
+        ],
+    },
+    {
+        "name": "План реструктуризации / меры",
+        "description": "Документы по плану реструктуризации, плану продажи и связанным мерам.",
+        "category": "bankruptcy_rf",
+        "tags": ["план", "реструктуризация"],
+        "is_system": True,
+        "is_public": True,
+        "is_featured": False,
+        "columns": [
+            {"column_label": "Тип документа по плану", "column_type": "text", "prompt": "Роль документа в процедуре (план, возражения, согласие, отчёт и т.п.)."},
+            {"column_label": "Дата документа", "column_type": "date", "prompt": "Дата документа, относящегося к плану или мерам."},
+            {"column_label": "Сторона / автор", "column_type": "text", "prompt": "Кто является стороной или автором документа (должник, кредитор, ФУ, комитет)."},
+            {"column_label": "Позиция по плану", "column_type": "text", "prompt": "Кратко: согласие, возражение, предложение изменений или иная позиция по плану."},
+        ],
+    },
+    {
+        "name": "Требования кредиторов",
+        "description": "Заявления, реестр и документы по требованиям кредиторов.",
+        "category": "bankruptcy_rf",
+        "tags": ["кредитор", "требование"],
+        "is_system": True,
+        "is_public": True,
+        "is_featured": False,
+        "columns": [
+            {"column_label": "Кредитор", "column_type": "text", "prompt": "Наименование кредитора, заявившего требование."},
+            {"column_label": "Сумма требования", "column_type": "currency", "prompt": "Размер денежного требования с валютой, если указано."},
+            {"column_label": "Очередь", "column_type": "text", "prompt": "Очередь удовлетворения требования, если указана в документе."},
+            {"column_label": "Основание требования", "column_type": "text", "prompt": "Кратко: правовое и фактическое основание требования."},
+            {"column_label": "Дата заявления", "column_type": "date", "prompt": "Дата подачи заявления о включении в реестр или иного документа по требованию."},
+        ],
+    },
+]
+
+
+def upsert_bankruptcy_rf_templates():
+    """Добавить шаблоны банкротства, если их ещё нет в БД (по имени и категории)."""
+    db = next(get_db())
+    added = 0
+    try:
+        for template_data in BANKRUPTCY_RF_TEMPLATES:
+            exists = (
+                db.query(TabularColumnTemplate)
+                .filter(
+                    TabularColumnTemplate.name == template_data["name"],
+                    TabularColumnTemplate.category == template_data["category"],
+                )
+                .first()
+            )
+            if exists:
+                continue
+            template = TabularColumnTemplate(
+                user_id=None,
+                name=template_data["name"],
+                description=template_data["description"],
+                columns=template_data["columns"],
+                is_public=template_data["is_public"],
+                is_system=template_data["is_system"],
+                is_featured=template_data["is_featured"],
+                category=template_data["category"],
+                tags=template_data["tags"],
+                usage_count=0,
+                created_at=datetime.utcnow(),
+            )
+            db.add(template)
+            added += 1
+        db.commit()
+        print(f"Bankruptcy RF templates: added {added}, skipped {len(BANKRUPTCY_RF_TEMPLATES) - added}")
+    except Exception as e:
+        db.rollback()
+        print(f"Error upserting bankruptcy templates: {e}")
+        raise
+    finally:
+        db.close()
+
+
 def add_default_templates():
     """Add default templates to database"""
     db = next(get_db())
@@ -562,5 +702,18 @@ def add_default_templates():
         db.close()
 
 if __name__ == "__main__":
-    add_default_templates()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Seed tabular review column templates")
+    parser.add_argument(
+        "--bankruptcy-only",
+        action="store_true",
+        help="Only upsert bankruptcy_rf templates (safe on existing DB)",
+    )
+    args = parser.parse_args()
+    if args.bankruptcy_only:
+        upsert_bankruptcy_rf_templates()
+    else:
+        add_default_templates()
+        upsert_bankruptcy_rf_templates()
 
