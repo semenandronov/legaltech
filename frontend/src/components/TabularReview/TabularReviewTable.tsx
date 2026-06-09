@@ -66,8 +66,6 @@ import { useKeyboardNavigation } from "@/hooks/useKeyboardNavigation"
 import { FilterPopover } from "./FilterPopover"
 import { ColumnHeaderMenu } from "./ColumnHeaderMenu"
 
-// Approximate row height used for virtualization and overlay sizing
-const ROW_HEIGHT_ESTIMATE = 50
 // Базовая ширина колонок
 const DEFAULT_COLUMN_WIDTH = 380
 
@@ -103,7 +101,7 @@ interface TabularReviewTableProps {
   processingCellKeys?: Set<string>
 }
 
-export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableDataUpdate: _onTableDataUpdate, onCellClick, onCellEdit, onRemoveDocument, onRunColumn, onColumnEdit, onColumnDelete, onAddColumnClick, showAddColumnPopover, onCloseAddColumnPopover, onSaveNewColumn, filterPopoverOpen, filterAnchorEl, onCloseFilterPopover, runningColumnIds, processingCellKeys }: TabularReviewTableProps) => {
+export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableDataUpdate: _onTableDataUpdate, onCellClick, onCellEdit, onRemoveDocument, onRunColumn, onColumnEdit, onColumnDelete, onAddColumnClick, showAddColumnPopover: _showAddColumnPopover, onCloseAddColumnPopover: _onCloseAddColumnPopover, onSaveNewColumn: _onSaveNewColumn, filterPopoverOpen, filterAnchorEl, onCloseFilterPopover, runningColumnIds, processingCellKeys }: TabularReviewTableProps) => {
   const addColumnButtonRef = React.useRef<HTMLElement | null>(null)
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
