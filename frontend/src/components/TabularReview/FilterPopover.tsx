@@ -14,21 +14,26 @@ import {
   ListItemText,
   Checkbox,
   Stack,
+  TextField,
 } from "@mui/material"
 import { Close as CloseIcon, Add as AddIcon } from "@mui/icons-material"
 import type { TabularColumn, TabularRow } from "@/services/tabularReviewApi"
 import type { ColumnValueFilterCondition } from "./AdvancedFiltersPanel"
-
-const EMPTY_VALUE_KEY = ""
-const EMPTY_VALUE_LABEL = "—"
-
-function normalizeCellValue(val: string | null | undefined): string {
-  return val == null || val === "" ? EMPTY_VALUE_KEY : String(val).trim()
-}
+import {
+  EMPTY_VALUE_KEY,
+  emptyFilterCondition,
+  normalizeCellValue,
+  displayFilterValue,
+  getOperatorsForColumn,
+  defaultOperatorForColumn,
+  isFilterConditionComplete,
+  type ColumnFilterOperator,
+} from "@/utils/tabularColumnFilters"
+import { isDateColumn } from "@/utils/tabularDateUtils"
 
 function computeValueCounts(
   rows: TabularRow[],
-  columnId: string
+  columnId: string,
 ): { value: string; count: number }[] {
   const map = new Map<string, number>()
   for (const row of rows) {
@@ -36,14 +41,9 @@ function computeValueCounts(
     const key = normalizeCellValue(raw)
     map.set(key, (map.get(key) ?? 0) + 1)
   }
-  const result = Array.from(map.entries())
+  return Array.from(map.entries())
     .map(([value, count]) => ({ value, count }))
     .sort((a, b) => b.count - a.count)
-  return result
-}
-
-function displayValue(value: string): string {
-  return value === EMPTY_VALUE_KEY ? EMPTY_VALUE_LABEL : value
 }
 
 const popoverProps = {
@@ -57,7 +57,7 @@ const popoverProps = {
   PaperProps: {
     sx: {
       minWidth: 480,
-      maxWidth: 560,
+      maxWidth: 600,
       p: 2.5,
       borderRadius: 2,
       boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
@@ -76,12 +76,6 @@ const selectSx = {
     borderWidth: "1.5px",
   },
 }
-
-const emptyCondition = (): ColumnValueFilterCondition => ({
-  columnId: "",
-  operator: "equals",
-  selectedValues: [],
-})
 
 export interface FilterPopoverProps {
   open: boolean
@@ -103,7 +97,7 @@ export function FilterPopover({
   onApply,
 }: FilterPopoverProps) {
   const [appliedConditions, setAppliedConditions] = useState<ColumnValueFilterCondition[]>([])
-  const [currentRows, setCurrentRows] = useState<ColumnValueFilterCondition[]>([emptyCondition()])
+  const [currentRows, setCurrentRows] = useState<ColumnValueFilterCondition[]>([emptyFilterCondition()])
   const popoverPaperRef = useRef<HTMLDivElement | null>(null)
   const idPrefix = useId().replace(/:/g, "")
 
@@ -111,12 +105,21 @@ export function FilterPopover({
     if (open) {
       setAppliedConditions(
         valueFilters.length > 0
-          ? valueFilters.map((c) => ({ ...c, selectedValues: [...c.selectedValues] }))
-          : []
+          ? valueFilters.map((c) => ({
+              ...emptyFilterCondition(),
+              ...c,
+              selectedValues: [...(c.selectedValues ?? [])],
+            }))
+          : [],
       )
-      setCurrentRows([emptyCondition()])
+      setCurrentRows([emptyFilterCondition()])
     }
   }, [open, valueFilters])
+
+  const columnById = useMemo(
+    () => new Map(columns.map((c) => [c.id, c])),
+    [columns],
+  )
 
   const updateCurrentRow = (index: number, patch: Partial<ColumnValueFilterCondition>) => {
     setCurrentRows((prev) => {
@@ -127,27 +130,36 @@ export function FilterPopover({
   }
 
   const addFilterRow = () => {
-    setCurrentRows((prev) => [...prev, emptyCondition()])
+    setCurrentRows((prev) => [...prev, emptyFilterCondition()])
   }
 
   const removeCurrentRow = (index: number) => {
-    setCurrentRows((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : [emptyCondition()]))
+    setCurrentRows((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : [emptyFilterCondition()]))
   }
 
   const handleApply = () => {
-    const valid = currentRows.filter((c) => c.columnId && c.selectedValues.length > 0)
+    const valid = currentRows.filter((c) =>
+      isFilterConditionComplete(c, columnById.get(c.columnId)),
+    )
     if (valid.length === 0) return
-    const nextApplied = [...appliedConditions, ...valid.map((c) => ({ ...c, selectedValues: [...c.selectedValues] }))]
+    const nextApplied = [
+      ...appliedConditions,
+      ...valid.map((c) => ({
+        ...c,
+        selectedValues: [...c.selectedValues],
+        textQuery: c.textQuery,
+        dateFrom: c.dateFrom,
+        dateTo: c.dateTo,
+      })),
+    ]
     setAppliedConditions(nextApplied)
     onApply(nextApplied)
-    setCurrentRows([emptyCondition()])
+    setCurrentRows([emptyFilterCondition()])
   }
 
   const updateApplied = (index: number, patch: Partial<ColumnValueFilterCondition>) => {
     setAppliedConditions((prev) => {
-      const next = prev.map((c, i) =>
-        i === index ? { ...c, ...patch } : c
-      )
+      const next = prev.map((c, i) => (i === index ? { ...c, ...patch } : c))
       onApply(next)
       return next
     })
@@ -159,6 +171,10 @@ export function FilterPopover({
     onApply(next)
   }
 
+  const canApplyCurrent = currentRows.some((c) =>
+    isFilterConditionComplete(c, columnById.get(c.columnId)),
+  )
+
   return (
     <Popover
       open={open}
@@ -168,7 +184,6 @@ export function FilterPopover({
       PaperProps={{ ...popoverProps.PaperProps, ref: popoverPaperRef }}
     >
       <Box sx={{ pb: 1 }}>
-        {/* Заголовок слева, крестик справа */}
         <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 2 }}>
           <Typography variant="subtitle1" fontWeight={700} sx={{ color: "#111827", fontSize: "1rem" }}>
             Фильтр по колонке
@@ -178,7 +193,6 @@ export function FilterPopover({
           </IconButton>
         </Box>
 
-        {/* Строки фильтра: колонка — Равно — Выберите значения — x */}
         <Stack spacing={1.5} sx={{ mb: 2 }}>
           {currentRows.map((cond, index) => (
             <FilterRow
@@ -196,7 +210,6 @@ export function FilterPopover({
           ))}
         </Stack>
 
-        {/* Кнопки внизу: слева Добавить фильтр, справа Применить */}
         <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 1 }}>
           <Button
             startIcon={<AddIcon sx={{ fontSize: 18 }} />}
@@ -217,7 +230,7 @@ export function FilterPopover({
             variant="contained"
             size="medium"
             onClick={handleApply}
-            disabled={!currentRows.some((c) => c.columnId && c.selectedValues.length > 0)}
+            disabled={!canApplyCurrent}
             aria-label="Применить"
             sx={{
               borderRadius: "8px",
@@ -230,7 +243,6 @@ export function FilterPopover({
           </Button>
         </Box>
 
-        {/* Применённые фильтры — те же три поля внизу, редактируемые */}
         {appliedConditions.length > 0 && (
           <Stack spacing={1.5} sx={{ mt: 2, pt: 2, borderTop: "1px solid #E5E7EB" }}>
             {appliedConditions.map((cond, index) => (
@@ -277,37 +289,62 @@ function FilterRow({
   selectSx,
   menuContainerRef,
 }: FilterRowProps) {
+  const selectedColumn = columns.find((c) => c.id === condition.columnId)
+  const operators = getOperatorsForColumn(selectedColumn)
+  const isDate = selectedColumn
+    ? isDateColumn(selectedColumn.column_type, selectedColumn.column_label)
+    : false
+
   const valueCounts = useMemo(
-    () =>
-      condition.columnId
-        ? computeValueCounts(rows, condition.columnId)
-        : [],
-    [rows, condition.columnId]
+    () => (condition.columnId ? computeValueCounts(rows, condition.columnId) : []),
+    [rows, condition.columnId],
   )
 
   const baseId = `${idPrefix}-${rowIndex}`
 
+  const handleColumnChange = (columnId: string) => {
+    const col = columns.find((c) => c.id === columnId)
+    onChange({
+      columnId,
+      operator: defaultOperatorForColumn(col),
+      selectedValues: [],
+      textQuery: "",
+      dateFrom: null,
+      dateTo: null,
+    })
+  }
+
+  const handleOperatorChange = (operator: ColumnFilterOperator) => {
+    onChange({
+      operator,
+      selectedValues: [],
+      textQuery: "",
+      dateFrom: null,
+      dateTo: null,
+    })
+  }
+
+  const showValuePicker =
+    condition.operator === "equals" || condition.operator === "not_equals"
+  const showTextInput = condition.operator === "contains"
+  const showDateSingle =
+    isDate &&
+    (condition.operator === "equals" ||
+      condition.operator === "not_equals" ||
+      condition.operator === "date_after" ||
+      condition.operator === "date_before")
+  const showDateRange = isDate && condition.operator === "date_between"
+  const showValueMultiSelect = showValuePicker && !isDate
+
   return (
-    <Box
-      sx={{
-        display: "flex",
-        flexWrap: "wrap",
-        alignItems: "center",
-        gap: 1,
-      }}
-    >
+    <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1 }}>
       <FormControl size="small" sx={{ minWidth: 160, flex: 1 }}>
         <InputLabel id={`${baseId}-col`}>Колонка</InputLabel>
         <Select
           labelId={`${baseId}-col`}
           value={condition.columnId || ""}
           label="Колонка"
-          onChange={(e) =>
-            onChange({
-              columnId: e.target.value as string,
-              selectedValues: [],
-            })
-          }
+          onChange={(e) => handleColumnChange(e.target.value as string)}
           sx={selectSx}
         >
           {columns.map((c) => (
@@ -318,55 +355,119 @@ function FilterRow({
         </Select>
       </FormControl>
 
-      <FormControl size="small" sx={{ minWidth: 100 }}>
+      <FormControl size="small" sx={{ minWidth: 120 }}>
         <InputLabel id={`${baseId}-op`}>Оператор</InputLabel>
-        <Select value="equals" label="Оператор" disabled sx={selectSx}>
-          <MenuItem value="equals">Равно</MenuItem>
-        </Select>
-      </FormControl>
-
-      <FormControl size="small" sx={{ minWidth: 180, flex: 1 }}>
-        <InputLabel id={`${baseId}-vals`}>Выберите значения</InputLabel>
         <Select
-          labelId={`${baseId}-vals`}
-          multiple
-          value={condition.selectedValues}
-          label="Выберите значения"
-          onChange={(e) => {
-            const v = e.target.value
-            onChange({
-              selectedValues: typeof v === "string" ? v.split(",") : v,
-            })
-          }}
-          renderValue={(selected) =>
-            (selected as string[]).length
-              ? (selected as string[])
-                  .map((s) => displayValue(s))
-                  .join(", ")
-              : "Выберите значения"
-          }
+          labelId={`${baseId}-op`}
+          value={condition.operator}
+          label="Оператор"
+          onChange={(e) => handleOperatorChange(e.target.value as ColumnFilterOperator)}
           disabled={!condition.columnId}
           sx={selectSx}
-          MenuProps={{
-            disableScrollLock: true,
-            container: () => menuContainerRef.current ?? null,
-            sx: { zIndex: 9999 },
-          }}
         >
-          {valueCounts.map(({ value, count }) => (
-            <MenuItem key={value === EMPTY_VALUE_KEY ? "__empty" : value} value={value}>
-              <Checkbox
-                checked={condition.selectedValues.indexOf(value) > -1}
-                size="small"
-              />
-              <ListItemText
-                primary={`${displayValue(value)} (${count})`}
-                primaryTypographyProps={{ variant: "body2" }}
-              />
+          {operators.map((op) => (
+            <MenuItem key={op.value} value={op.value}>
+              {op.label}
             </MenuItem>
           ))}
         </Select>
       </FormControl>
+
+      {showValueMultiSelect && (
+        <FormControl size="small" sx={{ minWidth: 180, flex: 1 }}>
+          <InputLabel id={`${baseId}-vals`}>Значения</InputLabel>
+          <Select
+            labelId={`${baseId}-vals`}
+            multiple
+            value={condition.selectedValues}
+            label="Значения"
+            onChange={(e) => {
+              const v = e.target.value
+              onChange({
+                selectedValues: typeof v === "string" ? v.split(",") : v,
+              })
+            }}
+            renderValue={(selected) =>
+              (selected as string[]).length
+                ? (selected as string[]).map((s) => displayFilterValue(s)).join(", ")
+                : "Выберите значения"
+            }
+            disabled={!condition.columnId}
+            sx={selectSx}
+            MenuProps={{
+              disableScrollLock: true,
+              container: () => menuContainerRef.current ?? null,
+              sx: { zIndex: 9999 },
+            }}
+          >
+            {valueCounts.map(({ value, count }) => (
+              <MenuItem key={value === EMPTY_VALUE_KEY ? "__empty" : value} value={value}>
+                <Checkbox checked={condition.selectedValues.indexOf(value) > -1} size="small" />
+                <ListItemText
+                  primary={`${displayFilterValue(value)} (${count})`}
+                  primaryTypographyProps={{ variant: "body2" }}
+                />
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+      )}
+
+      {showTextInput && (
+        <TextField
+          size="small"
+          label="Текст"
+          placeholder="например, неустойка"
+          value={condition.textQuery}
+          onChange={(e) => onChange({ textQuery: e.target.value })}
+          disabled={!condition.columnId}
+          sx={{ minWidth: 180, flex: 1 }}
+        />
+      )}
+
+      {showDateSingle && (
+        <TextField
+          size="small"
+          type="date"
+          label="Дата"
+          value={condition.dateFrom ?? ""}
+          onChange={(e) => onChange({ dateFrom: e.target.value || null })}
+          disabled={!condition.columnId}
+          InputLabelProps={{ shrink: true }}
+          sx={{ minWidth: 160 }}
+        />
+      )}
+
+      {showDateRange && (
+        <>
+          <TextField
+            size="small"
+            type="date"
+            label="От"
+            value={condition.dateFrom ?? ""}
+            onChange={(e) => onChange({ dateFrom: e.target.value || null })}
+            disabled={!condition.columnId}
+            InputLabelProps={{ shrink: true }}
+            sx={{ minWidth: 140 }}
+          />
+          <TextField
+            size="small"
+            type="date"
+            label="До"
+            value={condition.dateTo ?? ""}
+            onChange={(e) => onChange({ dateTo: e.target.value || null })}
+            disabled={!condition.columnId}
+            InputLabelProps={{ shrink: true }}
+            sx={{ minWidth: 140 }}
+          />
+        </>
+      )}
+
+      {condition.operator === "not_empty" && condition.columnId && (
+        <Typography variant="body2" sx={{ color: "#6B7280", px: 0.5 }}>
+          Только заполненные ячейки
+        </Typography>
+      )}
 
       <IconButton
         size="small"

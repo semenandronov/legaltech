@@ -69,6 +69,7 @@ from app.services.observability.langfuse_service import (
 )
 from app.services.observability.assistant_pipeline_langfuse_tracing import (
     assistant_step_span,
+    record_assistant_step,
     record_graph_node_completed,
 )
 from app.services.chat.llm_streaming import incremental_stream_piece
@@ -1044,6 +1045,7 @@ class ChatGraphService:
         last_citations_json: Optional[str] = None
         text_streamed_live = False
         stream_reasoning_ui = bool(getattr(config, "CASE_ASSISTANT_STREAM_REASONING_UI", False))
+        stream_activity_ui = bool(getattr(config, "CASE_ASSISTANT_STREAM_ACTIVITY_UI", True))
         # Token streaming: one channel only — custom writer from generate_response (not messages+custom).
         stream_modes: List[str] = ["updates"]
         _case_stream_tokens = bool(getattr(config, "CASE_ASSISTANT_STREAM_CASE_CHAT", True))
@@ -1059,8 +1061,8 @@ class ChatGraphService:
             and not bool(document_context)
         )
         if _strict_court_no_tokens:
-            stream_modes = ["updates"]
-        elif _editor_custom_stream or _case_stream_tokens:
+            stream_modes = ["updates", "custom"] if stream_activity_ui else ["updates"]
+        elif _editor_custom_stream or _case_stream_tokens or stream_activity_ui:
             stream_modes = ["updates", "custom"]
         else:
             stream_modes = ["messages", "updates"]
@@ -1116,6 +1118,16 @@ class ChatGraphService:
         if turn_emitter:
             yield turn_emitter.turn_started()
 
+        if stream_activity_ui and not is_editor_chat:
+            from app.services.chat.assistant_activity import (
+                activity_sse,
+                build_stream_started_activity,
+            )
+
+            started = build_stream_started_activity(question=question or "")
+            yield activity_sse(started)
+            _record_first_sse_to_client()
+
         try:
             # Token-level streaming: используем stream_mode=["messages", "updates"]
             # "messages" даёт токены по мере генерации LLM
@@ -1127,6 +1139,12 @@ class ChatGraphService:
                 ):
                     if stream_mode_type == "custom":
                         payload = chunk if isinstance(chunk, dict) else {}
+                        if payload.get("type") == "assistant_activity":
+                            import json as _json_act
+
+                            yield f"data: {_json_act.dumps(payload, ensure_ascii=False)}\n\n"
+                            _record_first_sse_to_client()
+                            continue
                         delta = payload.get("textDelta") or payload.get("text_delta")
                         if delta:
                             piece = str(delta)
@@ -1337,7 +1355,22 @@ class ChatGraphService:
                                             f"[ChatGraphService] Sent {len(structured_edits)} structured edits"
                                         )
 
-                                # Обрабатываем current_phase для прогресса (в UI — только при stream_reasoning_ui)
+                                if stream_activity_ui and not is_editor_chat:
+                                    from app.services.chat.assistant_activity import (
+                                        activity_sse,
+                                        build_graph_node_activity,
+                                    )
+
+                                    activity = build_graph_node_activity(
+                                        str(node_name),
+                                        node_data,
+                                        question=question or "",
+                                    )
+                                    if activity:
+                                        yield activity_sse(activity)
+                                        _record_first_sse_to_client()
+
+                                # Legacy: model reasoning / static phase labels (opt-in)
                                 phase = node_data.get("current_phase")
                                 if phase:
                                     if stream_reasoning_ui:
@@ -1446,6 +1479,20 @@ class ChatGraphService:
 
                                     yield SSESerializer.structured_edits(structured_edits)
 
+                            if stream_activity_ui and not is_editor_chat:
+                                from app.services.chat.assistant_activity import (
+                                    activity_sse,
+                                    build_graph_node_activity,
+                                )
+
+                                activity = build_graph_node_activity(
+                                    str(node_name),
+                                    node_data,
+                                    question=question or "",
+                                )
+                                if activity:
+                                    yield activity_sse(activity)
+
                             phase = node_data.get("current_phase")
                             if phase:
                                 if stream_reasoning_ui:
@@ -1454,39 +1501,64 @@ class ChatGraphService:
                                     )
                                 yield f"data: {json.dumps({'type': 'status', 'phase': phase})}\n\n"
 
-            if answer_after_reasoning_buffer:
-                full_response += answer_after_reasoning_buffer
-                sse = _format_text_delta_sse(turn_emitter, answer_after_reasoning_buffer)
-                if sse:
-                    yield sse
-                answer_after_reasoning_buffer = ""
+            _graph_loop_ms = int((time.monotonic() - stream_t0) * 1000)
+            record_assistant_step(
+                "case",
+                "stream.graph_loop_completed",
+                metadata={
+                    "case_id": case_id,
+                    "graph_mode": mode,
+                    "since_stream_start_ms": _graph_loop_ms,
+                    "text_streamed_live": text_streamed_live,
+                    "response_chars_so_far": len(full_response or ""),
+                },
+                latency_ms=_graph_loop_ms,
+            )
 
-            # Если ответ пустой, отправляем fallback
-            if not full_response:
-                full_response = "Не удалось получить ответ. Попробуйте переформулировать вопрос."
-                sse = _format_text_delta_sse(turn_emitter, full_response)
-                if sse:
-                    yield sse
+            with assistant_step_span(
+                "case",
+                "stream.finalize_response",
+                metadata={"case_id": case_id, "graph_mode": mode},
+            ) as finalize_out:
+                if answer_after_reasoning_buffer:
+                    full_response += answer_after_reasoning_buffer
+                    sse = _format_text_delta_sse(turn_emitter, answer_after_reasoning_buffer)
+                    if sse:
+                        yield sse
+                    answer_after_reasoning_buffer = ""
 
-            # Догоняем citations, если граф не прислал diff по пути (редко)
-            if citations:
-                _cj_end = json.dumps(citations, ensure_ascii=False, default=str)
-                if _cj_end != last_citations_json:
-                    last_citations_json = _cj_end
-                    yield f"data: {json.dumps({'type': 'citations', 'citations': citations}, ensure_ascii=False)}\n\n"
+                if not full_response:
+                    full_response = "Не удалось получить ответ. Попробуйте переформулировать вопрос."
+                    sse = _format_text_delta_sse(turn_emitter, full_response)
+                    if sse:
+                        yield sse
 
-            if answer_blocks:
-                from app.services.chat.events import SSESerializer
+                if citations:
+                    _cj_end = json.dumps(citations, ensure_ascii=False, default=str)
+                    if _cj_end != last_citations_json:
+                        last_citations_json = _cj_end
+                        yield f"data: {json.dumps({'type': 'citations', 'citations': citations}, ensure_ascii=False)}\n\n"
 
-                sse_ab = SSESerializer.answer_blocks(answer_blocks)
-                if sse_ab:
-                    yield sse_ab
+                if answer_blocks:
+                    from app.services.chat.events import SSESerializer
 
-            # Сохраняем ответ ассистента (если не обрабатывается внешним оркестратором)
+                    sse_ab = SSESerializer.answer_blocks(answer_blocks)
+                    if sse_ab:
+                        yield sse_ab
+
+                finalize_out["response_chars"] = len(full_response or "")
+                finalize_out["citations_count"] = len(citations or [])
+
             if persist_history:
-                self._save_assistant_message(
-                    case_id, full_response, session_id, citations, answer_blocks=answer_blocks
-                )
+                with assistant_step_span(
+                    "case",
+                    "stream.save_message",
+                    metadata={"case_id": case_id, "session_id": session_id},
+                ) as save_out:
+                    self._save_assistant_message(
+                        case_id, full_response, session_id, citations, answer_blocks=answer_blocks
+                    )
+                    save_out["response_chars"] = len(full_response or "")
 
             if turn_emitter:
                 yield turn_emitter.turn_completed(
@@ -1512,8 +1584,9 @@ class ChatGraphService:
                 if editor_latency_verbose():
                     yield f"data: {format_latency_debug_sse(editor_latency)}\n\n"
 
-            # Отправляем финальное событие
-            yield f"data: {json.dumps({'type': 'finish', 'finishReason': 'stop'})}\n\n"
+            with assistant_step_span("case", "stream.emit_finish", metadata={"case_id": case_id}) as fin_out:
+                yield f"data: {json.dumps({'type': 'finish', 'finishReason': 'stop'})}\n\n"
+                fin_out["response_chars"] = len(full_response or "")
 
             logger.info(f"[ChatGraphService] Stream completed: {len(full_response)} chars")
 

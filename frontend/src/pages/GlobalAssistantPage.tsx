@@ -5,7 +5,7 @@ import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import {
   FolderOpen, MessageSquare, FileText, X, Plus,
   AlignJustify, SlidersHorizontal, Sparkles, Search, ChevronDown, Loader2, Download, Clock,
-  ChevronRight, Check, Mic, MicOff,   BookOpen, Trash2, Workflow, Gavel,
+  ChevronRight, Check, Mic, MicOff,   BookOpen, Trash2, Gavel,
 } from 'lucide-react'
 import {
   getApiUrl,
@@ -27,20 +27,14 @@ import {
 import { citationRecordToSourceInfo } from '../services/chatHistoryService'
 import { DocumentEditor, DocumentEditorRef } from '../components/Editor/DocumentEditor'
 import MessageContent from '../components/Chat/MessageContent'
-import ThinkingBlock, {
-  type WorkflowAgentTodoItem,
-  type WorkflowPlanOutlineRow,
-} from '../components/Chat/ThinkingBlock'
+import ThinkingBlock from '../components/Chat/ThinkingBlock'
 import DocumentPreviewSheet from '../components/Chat/DocumentPreviewSheet'
-import { WorkflowArtifactCards } from '../components/Workflow/WorkflowArtifactCards'
 import {
   canSelectDraftMode,
   canEnableLegalResearch,
   canEnableCourtPractice,
 } from '../lib/chatInstrumentPolicy'
-import { useWorkflowLiveExecution } from '../workflow/useWorkflowLiveExecution'
 import { useChatInstrumentSettings } from '../hooks/useChatInstrumentSettings'
-import { countWorkflowArtifacts, type WorkflowArtifactsPayload } from '../workflow/workflowLiveHelpers'
 
 function inlineFmt(text: string): string {
   return text
@@ -91,12 +85,6 @@ interface ChatMessage {
     status?: 'pending' | 'running' | 'completed' | 'error'
     toolName?: string
   }>
-  workflowArtifacts?: WorkflowArtifactsPayload
-  workflowProgressPercent?: number
-  workflowStatus?: 'running' | 'completed' | 'failed'
-  workflowPlanOutline?: WorkflowPlanOutlineRow[]
-  workflowAgentTodos?: WorkflowAgentTodoItem[]
-  workflowPlanSource?: 'deepagents' | 'definition'
 }
 
 interface FileContext {
@@ -115,7 +103,6 @@ interface DraftDocument {
 const navItems = [
   { id: 'cases', label: 'Дела', icon: FolderOpen, path: '/cases' },
   { id: 'assistant', label: 'Ассистент', icon: MessageSquare, path: '/assistant' },
-  { id: 'workflows', label: 'Workflows', icon: Workflow, path: '/workflows' },
   { id: 'history', label: 'История', icon: Clock, path: '/history' },
 ]
 
@@ -971,11 +958,6 @@ const GlobalAssistantPage = () => {
   const [selectedCaseFiles, setSelectedCaseFiles] = useState<UploadedFile[]>([])
   const [showCasePicker, setShowCasePicker] = useState(false)
   const [citationPreview, setCitationPreview] = useState<SourceInfo | null>(null)
-  const [artifactReturnPath, setArtifactReturnPath] = useState('/assistant')
-  const onWorkflowReturnPath = useCallback((path: string) => {
-    setArtifactReturnPath(path)
-  }, [])
-
   const [legalCorpusStatus, setLegalCorpusStatus] = useState<LegalCorpusStatus | null>(null)
   const [corpusFilesList, setCorpusFilesList] = useState<LegalCorpusFileRow[]>([])
   const [corpusUploading, setCorpusUploading] = useState(false)
@@ -997,14 +979,6 @@ const GlobalAssistantPage = () => {
   useEffect(() => {
     void refreshLegalCorpus()
   }, [refreshLegalCorpus])
-
-  useWorkflowLiveExecution({
-    locationSearch: location.search,
-    setMessages,
-    setIsStreaming,
-    onReturnPath: onWorkflowReturnPath,
-    defaultReturnChatPath: '/assistant',
-  })
 
   const handleUseLegalCorpusChange = setUseLegalCorpus
   const handleUseCourtPracticeChange = setUseCourtPractice
@@ -1327,12 +1301,10 @@ const GlobalAssistantPage = () => {
     setShowDraftPanel(false)
     setEditorContent(null)
     editorHtmlRef.current = ''
-    setArtifactReturnPath('/assistant')
     navigate('/assistant', { replace: true })
   }
 
-  const workflowExecParam = new URLSearchParams(location.search).get('workflow_execution_id')
-  const chatActive = messages.length > 0 || Boolean(workflowExecParam)
+  const chatActive = messages.length > 0
 
   return (
     <div className="h-screen flex overflow-hidden bg-white">
@@ -1386,18 +1358,9 @@ const GlobalAssistantPage = () => {
                 <div className="flex-1 overflow-y-auto">
                   <div style={{ maxWidth: '960px', margin: '0 auto' }} className="px-6 py-8 space-y-6">
                     {messages.map((msg, idx) => {
-                      const wfArtifactN = countWorkflowArtifacts(msg.workflowArtifacts)
-                      const hideMainTextForRunningWorkflowDraft =
-                        Boolean(draftDocument) &&
-                        idx === messages.length - 1 &&
-                        msg.workflowStatus === 'running'
-                      const showAssistantTextBody =
-                        ((msg.content && msg.content.trim()) || wfArtifactN > 0) &&
-                        !hideMainTextForRunningWorkflowDraft
+                      const showAssistantTextBody = Boolean(msg.content && msg.content.trim())
                       const internalDraftUi = isDraftMode || draftDocument
-                      const assistantTextBody =
-                        (msg.content && msg.content.trim()) ||
-                        (wfArtifactN > 0 ? 'Готово. Откройте нужный результат ниже.' : '')
+                      const assistantTextBody = (msg.content && msg.content.trim()) || ''
 
                       return (
                       <div key={idx} className={msg.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
@@ -1430,25 +1393,10 @@ const GlobalAssistantPage = () => {
                             style={{ color: '#111827' }}
                           >
                             {((msg.reasoningSteps && msg.reasoningSteps.length > 0) ||
-                              (msg.workflowPlanOutline && msg.workflowPlanOutline.length > 0) ||
-                              (msg.workflowAgentTodos && msg.workflowAgentTodos.length > 0) ||
-                              msg.workflowStatus === 'running') && (
+                              (isStreaming && idx === messages.length - 1 && !msg.content)) && (
                               <ThinkingBlock
                                 steps={msg.reasoningSteps || []}
-                                planOutline={msg.workflowPlanOutline}
-                                planOutlineTitle={
-                                  msg.workflowPlanSource === 'deepagents'
-                                    ? 'План и подзадачи (Deep Agents)'
-                                    : undefined
-                                }
-                                agentTodos={msg.workflowAgentTodos}
-                                isStreaming={
-                                  isStreaming &&
-                                  idx === messages.length - 1 &&
-                                  (!msg.content || msg.workflowStatus === 'running')
-                                }
-                                progressPercent={msg.workflowProgressPercent}
-                                workflowStatus={msg.workflowStatus}
+                                isStreaming={isStreaming && idx === messages.length - 1 && !msg.content}
                                 defaultOpen={true}
                               />
                             )}
@@ -1477,13 +1425,6 @@ const GlobalAssistantPage = () => {
                                   ))}
                                 </div>
                               )
-                            )}
-                            {msg.workflowArtifacts && (
-                              <WorkflowArtifactCards
-                                artifacts={msg.workflowArtifacts}
-                                navigate={navigate}
-                                returnChatPath={artifactReturnPath}
-                              />
                             )}
                             {/* Draft indicator */}
                             {internalDraftUi && idx === messages.length - 1 && (

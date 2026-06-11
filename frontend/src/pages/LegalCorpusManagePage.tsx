@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { FolderOpen, MessageSquare, Clock, Scale, Upload, Trash2, Loader2, Workflow } from 'lucide-react'
+import { FolderOpen, MessageSquare, Clock, Scale, Upload, Trash2, Loader2 } from 'lucide-react'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import {
   fetchLegalCorpusStatus,
@@ -19,7 +19,6 @@ import {
 const navItems = [
   { id: 'cases', label: 'Дела', icon: FolderOpen, path: '/cases' },
   { id: 'assistant', label: 'Ассистент', icon: MessageSquare, path: '/assistant' },
-  { id: 'workflows', label: 'Workflows', icon: Workflow, path: '/workflows' },
   { id: 'history', label: 'История', icon: Clock, path: '/history' },
 ]
 

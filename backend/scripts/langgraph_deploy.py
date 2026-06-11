@@ -233,12 +233,6 @@ def cmd_test(args):
     except Exception as e:
         print(f"  ❌ chat_graph: {e}")
     
-    try:
-        from app.services.langchain_agents.graphs.workflow_graph import create_workflow_graph
-        print("  ✅ workflow_graph")
-    except Exception as e:
-        print(f"  ❌ workflow_graph: {e}")
-    
     # Проверяем assistants
     print("\nПроверка assistants...")
     

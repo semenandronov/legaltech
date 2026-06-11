@@ -23,6 +23,10 @@ const PlaybookCheckCardLazy = ({ check }: { check: PlaybookCheckData }) => (
 )
 import { effectiveEditorChatMode } from '../../lib/chatInstrumentPolicy'
 import { useChatInstrumentSettings } from '../../hooks/useChatInstrumentSettings'
+import {
+  applyAssistantActivityEvent,
+  applyReasoningEvent,
+} from '@/lib/assistantActivity'
 import { SettingsPanel } from './SettingsPanel'
 
 const QUICK_ACTIONS = [
@@ -1254,29 +1258,32 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                   )
                 )
               }
-              // Обработка reasoning events
+              if (data.type === 'assistant_activity') {
+                setMessages((prev) =>
+                  prev.map((msg) => {
+                    if (msg.id !== assistantMsgId) return msg
+                    return {
+                      ...msg,
+                      reasoningSteps: applyAssistantActivityEvent(
+                        msg.reasoningSteps || [],
+                        data,
+                      ),
+                    }
+                  })
+                )
+              }
+              // Обработка reasoning events (legacy / opt-in)
               if (data.type === 'reasoning' && data.phase && data.content) {
                 setMessages((prev) =>
                   prev.map((msg) => {
-                    if (msg.id === assistantMsgId) {
-                      const currentSteps = msg.reasoningSteps || []
-                      const newStep = {
-                        phase: data.phase,
-                        step: data.step || data.stepNumber || currentSteps.length + 1,
-                        totalSteps: data.totalSteps || data.totalStepsNumber || 4,
-                        content: data.content
-                      }
-                      // Проверяем, нет ли уже такого шага (по phase и step)
-                      const stepIndex = currentSteps.findIndex(
-                        (s) => s.phase === newStep.phase && s.step === newStep.step
-                      )
-                      const updatedSteps =
-                        stepIndex >= 0
-                          ? currentSteps.map((s, idx) => (idx === stepIndex ? newStep : s))
-                          : [...currentSteps, newStep]
-                      return { ...msg, reasoningSteps: updatedSteps }
+                    if (msg.id !== assistantMsgId) return msg
+                    return {
+                      ...msg,
+                      reasoningSteps: applyReasoningEvent(
+                        msg.reasoningSteps || [],
+                        data,
+                      ),
                     }
-                    return msg
                   })
                 )
               }

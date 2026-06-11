@@ -20,6 +20,7 @@ import { Comment } from './extensions/Comment'
 import { RiskHighlight } from './extensions/RiskHighlight'
 import { AIKeyboardShortcuts } from './extensions/AIKeyboardShortcuts'
 import { SearchHighlight } from './extensions/SearchHighlight'
+import { DraftGap } from './extensions/DraftGap'
 import type { RiskItem } from '../../services/documentEditorApi'
 
 export interface CreateEditorExtensionsOptions {
@@ -95,5 +96,6 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions): 
       onOpenClauseLibrary,
     }),
     SearchHighlight,
+    DraftGap,
   ]
 }

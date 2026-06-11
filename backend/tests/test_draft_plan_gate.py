@@ -124,7 +124,7 @@ def test_resume_draft_rejects_without_plan_and_waiting():
 
     async def _collect():
         out = []
-        with patch.object(ChatGraphService, "_get_or_create_graph", return_value=graph):
+        with patch.object(ChatGraphService, "_get_or_create_graph", return_value=(graph, 0)):
             async for line in svc.resume_draft(
                 case_id="c1",
                 thread_id="t1",
@@ -162,7 +162,7 @@ def test_resume_draft_proceeds_when_plan_and_waiting():
 
     async def _collect():
         lines = []
-        with patch.object(ChatGraphService, "_get_or_create_graph", return_value=graph):
+        with patch.object(ChatGraphService, "_get_or_create_graph", return_value=(graph, 0)):
             with patch(
                 "app.services.langchain_agents.utils.state_editing.update_state",
                 new_callable=AsyncMock,

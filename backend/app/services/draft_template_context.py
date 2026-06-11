@@ -28,7 +28,13 @@ def _load_template_body_unified(db: Session, template_id: str) -> Tuple[Optional
     return load_admin_draft_template_body(db, template_id.strip())
 
 
-def auto_pick_system_template_id(user_question: str, db: Optional[Session] = None) -> Optional[str]:
+def auto_pick_system_template_id(
+    user_question: str,
+    db: Optional[Session] = None,
+    *,
+    document_type_hint: str = "",
+    facts_summary: str = "",
+) -> Optional[str]:
     """
     Выбор id системного шаблона по запросу пользователя (без явного template_system_id).
 
@@ -61,7 +67,12 @@ def auto_pick_system_template_id(user_question: str, db: Optional[Session] = Non
 
     from app.services.draft_template_llm_select import select_system_template_id_via_llm
 
-    return select_system_template_id_via_llm(q, db)
+    return select_system_template_id_via_llm(
+        q,
+        db,
+        document_type_hint=document_type_hint,
+        facts_summary=facts_summary,
+    )
 
 # Лимит снят: пользовательские/файловые шаблоны передаются целиком,
 # чтобы не ломать структуру HTML. Оставлено как 0 для обратной совместимости.
@@ -76,6 +87,8 @@ def resolve_draft_template_context(
     template_file_id: Optional[str] = None,
     user_question: Optional[str] = None,
     auto_match_system_template: bool = True,
+    document_type_hint: str = "",
+    facts_summary: str = "",
 ) -> Tuple[str, Optional[str]]:
     """
     Returns:
@@ -127,7 +140,12 @@ def resolve_draft_template_context(
         and user_question
         and str(user_question).strip()
     ):
-        matched_id = auto_pick_system_template_id(user_question.strip(), db)
+        matched_id = auto_pick_system_template_id(
+            user_question.strip(),
+            db,
+            document_type_hint=document_type_hint,
+            facts_summary=facts_summary,
+        )
         if matched_id:
             text, title = _load_template_body_unified(db, matched_id)
             if text:

@@ -8,13 +8,10 @@ Agents module - настоящие агенты с принятием решен
 
 Агенты в этом модуле:
 - ChatAgent: ReAct агент для страницы чата с режимами (normal/deep_think/garant/draft)
-- WorkflowAgent: Оркестратор workflows с планированием и одобрением
 """
 
 from app.services.langchain_agents.agents.chat_react_agent import ChatReActAgent
-from app.services.langchain_agents.agents.workflow_orchestrator_agent import WorkflowOrchestratorAgent
 
 __all__ = [
     "ChatReActAgent",
-    "WorkflowOrchestratorAgent",
 ]

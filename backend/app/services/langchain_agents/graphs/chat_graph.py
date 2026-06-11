@@ -9,7 +9,7 @@ ChatGraph - LangGraph граф для страницы чата.
 - normal: RAG поиск в документах дела + ответ
 - deep_think: RAG + справочные правовые источники + пошаговое мышление + развёрнутый ответ
 - garant: RAG + приоритет справочных правовых источников + ответ с цитатами
-- draft: план и черновик с RAG по делу, опционально справочный legal corpus и история реплик
+- draft: agentic pipeline v5 (decompose → triage → retrieve → extract → consolidate → …)
 
 # АРХИТЕКТУРА ГРАФА
 ```
@@ -17,7 +17,7 @@ START
   ↓
 mode_router (определяет режим)
   ↓
-  ├── draft → draft (документ) или generate_draft_plan → draft (HITL), если DRAFT_PLAN_APPROVAL_ENABLED
+  ├── draft → draft (decomposed pipeline v1) или generate_draft_plan → draft (legacy HITL)
   │
   └── normal/deep_think/garant
         ↓
@@ -79,6 +79,10 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeo
 from app.services.langchain_agents.draft_hitl import is_explicit_draft_approval_message
 from app.config import config as _app_config
 from app.utils.database import ensure_db_session_live
+from app.services.observability.assistant_pipeline_langfuse_tracing import (
+    assistant_step_span,
+    record_assistant_step,
+)
 from app.services.observability.langfuse_service import (
     get_active_trace_context,
     trace_span,
@@ -86,6 +90,10 @@ from app.services.observability.langfuse_service import (
     normalize_observability_metadata,
     set_trace_span_parent,
     reset_trace_span_parent,
+)
+from app.services.observability.llm_langfuse_instrumentation import (
+    traced_collect_llm_stream_text,
+    traced_sync_llm_invoke,
 )
 
 logger = logging.getLogger(__name__)
@@ -788,6 +796,14 @@ class ChatGraphState(TypedDict):
     attached_file_ids: Optional[List[str]]
     # Полный текст прикреплённых файлов (редактор, без RAG)
     attached_case_files_context: Optional[str]
+
+    # Draft case state (internal assistant RAG → extract → calculator instrument).
+    task_plan: Optional[Dict[str, Any]]
+    triage: Optional[Dict[str, Any]]
+    case_retrieval: Optional[Dict[str, Any]]
+    extraction_records: Optional[List[Dict[str, Any]]]
+    extracted_facts: Optional[Dict[str, Any]]
+    financial_calculator_meta: Optional[Dict[str, Any]]
     
     # Метаданные
     messages: Annotated[List[BaseMessage], add_messages]  # add_messages поддерживает RemoveMessage и перезапись по ID
@@ -1162,7 +1178,7 @@ def rag_retrieval_node(
     """
     Узел получения контекста из RAG.
     
-    Используется во всех режимах кроме draft.
+    Case RAG retrieval (включая draft через draft_execute → sync_execution_tier).
     """
     case_id = state.get("case_id")
     from app.services.chat.session_context_retrieval import question_for_retrieval
@@ -1174,6 +1190,24 @@ def rag_retrieval_node(
     budget_profile = state.get("budget_profile") or {}
     
     logger.info(f"[RAGRetrieval] Retrieving context for case {case_id}")
+
+    from app.services.chat.assistant_activity import (
+        build_search_case_running_activity,
+        publish_activity_step,
+    )
+    from app.services.chat.session_context_retrieval import question_for_retrieval as _qfr
+
+    _rt_raw = state.get("retrieval_task")
+    _rt = _rt_raw if isinstance(_rt_raw, dict) else {}
+    _scope = str(_rt.get("scope_mode") or "").strip() or None
+    _file_ids = _rt.get("file_ids") if isinstance(_rt.get("file_ids"), list) else []
+    publish_activity_step(
+        build_search_case_running_activity(
+            question=_qfr(state),
+            scope_mode=_scope,
+            file_count=len(_file_ids),
+        )
+    )
 
     # Только поля, которые меняет этот узел. Полный dict(state) нельзя возвращать
     # при параллельном Send вместе с garant_retrieval — LangGraph выдаст
@@ -1237,7 +1271,7 @@ def rag_retrieval_node(
                 except Exception:
                     retrieval_task_obj = None
 
-            if pipeline_enabled() and state.get("mode") != "draft":
+            if pipeline_enabled():
                 from app.services.observability.case_assistant_langfuse_tracing import (
                     case_assistant_pipeline_trace,
                     summarize_case_documents,
@@ -1830,8 +1864,7 @@ def extract_retrieval_task_node(
 ) -> Dict[str, Any]:
     """Secretary: resolve document scope before hybrid retrieval."""
     mode = state.get("mode", "normal")
-    if mode == "draft":
-        return {}
+    # Draft uses the same case-assistant retrieval path as Ask mode.
 
     from app.services.chat.execution_tier import tier_skips_retrieval
 
@@ -1885,6 +1918,13 @@ def extract_retrieval_task_node(
     retrieval_q = question_for_retrieval(state)
     if not case_id or not db or not retrieval_q:
         return {}
+
+    from app.services.chat.assistant_activity import (
+        build_scope_running_activity,
+        publish_activity_step,
+    )
+
+    publish_activity_step(build_scope_running_activity(question=retrieval_q))
 
     ensure_db_session_live(db)
 
@@ -2011,8 +2051,6 @@ def rerank_context_node(
 
     if not pipeline_enabled():
         return {}
-    if state.get("mode") == "draft":
-        return {}
     if not case_rag_should_run(state):
         return {}
     if not rag_service:
@@ -2033,6 +2071,13 @@ def rerank_context_node(
     docs = documents_from_state_serializable(state.get("rag_documents"))
     if not docs:
         return {}
+
+    from app.services.chat.assistant_activity import (
+        build_refine_running_activity,
+        publish_activity_step,
+    )
+
+    publish_activity_step(build_refine_running_activity(recall_docs=len(docs)))
 
     from app.services.observability.case_assistant_langfuse_tracing import (
         case_assistant_pipeline_trace,
@@ -2687,10 +2732,9 @@ def generate_response_node(
                 + (system_prompts["normal"] or "")
             )
         
-        # Формируем контекст
         context_parts = []
-        
-        # Добавляем профиль пользователя из Store (долгосрочная память)
+        _ctx_t0 = _time.monotonic()
+
         if user_profile:
             profile_context = []
             if isinstance(user_profile, dict):
@@ -2704,8 +2748,7 @@ def generate_response_node(
                     profile_context.append(f"Уровень экспертизы: {user_profile['expertise_level']}")
             if profile_context:
                 context_parts.append(f"=== ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ ===\n" + "\n".join(profile_context))
-        
-        # Добавляем summary предыдущего диалога если есть
+
         session_ctx = (state.get("session_context_prompt") or "").strip()
         if session_ctx:
             context_parts.append(session_ctx)
@@ -2724,10 +2767,10 @@ def generate_response_node(
         editor_history = _editor_transcript_for_prompt(state)
         if editor_history:
             context_parts.append(editor_history)
-        
+
         if rag_context:
             context_parts.append(f"=== ДОКУМЕНТЫ ДЕЛА (DATA ONLY) ===\n<context>\n{rag_context}\n</context>")
-        
+
         if garant_context:
             context_parts.append(f"=== СПРАВОЧНЫЙ ПРАВОВОЙ КОНТЕКСТ (DATA ONLY) ===\n<context>\n{garant_context}\n</context>")
 
@@ -2738,7 +2781,7 @@ def generate_response_node(
                 "Не выдумывай реквизиты дел.\n"
                 f"<context>\n{court_practice_context}\n</context>"
             )
-        
+
         if document_context:
             from app.services.langchain_agents.graphs.nodes.editor_nodes import (
                 editor_document_context_for_prompt,
@@ -2754,18 +2797,17 @@ def generate_response_node(
             context_parts.append(
                 f"=== ПРИКРЕПЛЁННЫЕ ДОКУМЕНТЫ ДЕЛА (DATA ONLY, полный текст) ===\n{attached_files_ctx}"
             )
-        
+
         if selected_text:
             context_parts.append(f"=== ВЫДЕЛЕННЫЙ ТЕКСТ (DATA ONLY) ===\n<context>\n{selected_text}\n</context>")
-        
-        # Добавляем результаты editor nodes если есть
+
         document_analysis = state.get("document_analysis")
         if document_analysis:
             analysis_text = f"Тип документа: {document_analysis.get('doc_type', 'Неизвестный')}\n"
             if document_analysis.get('key_elements'):
                 analysis_text += f"Ключевые элементы: {', '.join(document_analysis['key_elements'][:5])}\n"
             context_parts.append(f"=== АНАЛИЗ ДОКУМЕНТА ===\n{analysis_text}")
-        
+
         risks = state.get("risks")
         if risks:
             risks_text = f"Найдено рисков: {len(risks)}\n"
@@ -2774,11 +2816,11 @@ def generate_response_node(
                 desc = risk.get('description', '')[:100]
                 risks_text += f"{i}. [{severity.upper()}] {desc}\n"
             context_parts.append(f"=== НАЙДЕННЫЕ РИСКИ ===\n{risks_text}")
-        
+
         improved_text = state.get("improved_text")
         if improved_text:
             context_parts.append(f"=== УЛУЧШЕННЫЙ ТЕКСТ ===\n{improved_text[:1000]}")
-        
+
         structured_edits = state.get("structured_edits")
         if structured_edits:
             edits_text = f"Сгенерировано правок: {len(structured_edits)}\n"
@@ -2788,8 +2830,20 @@ def generate_response_node(
                 found = edit.get('found_in_document', False)
                 edits_text += f"{i}. {'✓' if found else '✗'} '{original}...' → '{new}...'\n"
             context_parts.append(f"=== СТРУКТУРИРОВАННЫЕ ПРАВКИ ===\n{edits_text}")
-        
+
         full_context = "\n\n".join(context_parts) if context_parts else "Контекст не найден."
+        record_assistant_step(
+            "case",
+            "graph.generate.build_context",
+            metadata={
+                "mode": mode,
+                "memory_only": memory_only,
+                "context_parts": len(context_parts),
+                "context_chars": len(full_context or ""),
+                "system_chars": len(system_prompt or ""),
+            },
+            latency_ms=int((_time.monotonic() - _ctx_t0) * 1000),
+        )
 
         case_id = state.get("case_id") or ""
         enable_citations = bool(state.get("enable_citations", True))
@@ -2809,50 +2863,85 @@ def generate_response_node(
                 metadata={"case_id": case_id, "mode": mode},
             )
             try:
-                retrieved: List[Document] = []
-                for item in (state.get("rag_documents") or [])[:32]:
-                    if isinstance(item, dict):
-                        retrieved.append(Document(page_content=item.get("page_content") or "", metadata=item.get("metadata") or {}))
-                for item in (state.get("garant_documents") or [])[:16]:
-                    if isinstance(item, dict):
-                        meta = dict(item.get("metadata") or {})
-                        meta.setdefault("source_type", "legal_reference")
-                        retrieved.append(Document(page_content=item.get("page_content") or "", metadata=meta))
-                if retrieved:
-                    rag = RAGService()
-                    awc = rag.generate_with_structured_citations(
-                        question,
-                        retrieved,
-                        system_prompt=system_prompt,
-                    )
-                    case_docs = [
-                        d
-                        for d in retrieved
-                        if (d.metadata or {}).get("source_type") != "legal_reference"
-                    ]
-                    originals = (
-                        fetch_originals_for_citation_docs(db, str(case_id), case_docs)
-                        if db and case_id
-                        else {}
-                    )
-                    dumped = [c.model_dump() for c in awc.citations]
-                    enriched = enrich_structured_citations(
-                        dumped,
-                        retrieved,
-                        originals,
-                        case_id=str(case_id) if case_id else None,
-                        db=db,
-                    )
-                    if (awc.answer or "").strip() and enriched:
-                        new_state["citations"] = enriched
-                        response_text = awc.answer
-                        used_structured = True
-                        logger.info(
-                            "[GenerateResponse] structured_citations path, n_citations=%s (rag=%s, garant=%s)",
-                            len(new_state.get("citations") or []),
-                            sum(1 for c in enriched if c.get("source_type") == "document"),
-                            sum(1 for c in enriched if c.get("source_type") == "legal_reference"),
+                with assistant_step_span(
+                    "case",
+                    "graph.generate.structured_citations",
+                    metadata={"case_id": case_id, "mode": mode},
+                ) as structured_out:
+                    retrieved: List[Document] = []
+                    with assistant_step_span(
+                        "case",
+                        "graph.generate.structured.prepare_docs",
+                    ) as docs_out:
+                        for item in (state.get("rag_documents") or [])[:32]:
+                            if isinstance(item, dict):
+                                retrieved.append(
+                                    Document(
+                                        page_content=item.get("page_content") or "",
+                                        metadata=item.get("metadata") or {},
+                                    )
+                                )
+                        for item in (state.get("garant_documents") or [])[:16]:
+                            if isinstance(item, dict):
+                                meta = dict(item.get("metadata") or {})
+                                meta.setdefault("source_type", "legal_reference")
+                                retrieved.append(
+                                    Document(
+                                        page_content=item.get("page_content") or "",
+                                        metadata=meta,
+                                    )
+                                )
+                        docs_out["retrieved_docs"] = len(retrieved)
+                    if retrieved:
+                        rag = RAGService()
+                        awc = rag.generate_with_structured_citations(
+                            question,
+                            retrieved,
+                            system_prompt=system_prompt,
                         )
+                        case_docs = [
+                            d
+                            for d in retrieved
+                            if (d.metadata or {}).get("source_type") != "legal_reference"
+                        ]
+                        with assistant_step_span(
+                            "case",
+                            "graph.generate.structured.fetch_originals",
+                            input_payload={"case_docs": len(case_docs)},
+                        ) as orig_out:
+                            originals = (
+                                fetch_originals_for_citation_docs(db, str(case_id), case_docs)
+                                if db and case_id
+                                else {}
+                            )
+                            orig_out["originals_count"] = len(originals or {})
+                        dumped = [c.model_dump() for c in awc.citations]
+                        with assistant_step_span(
+                            "case",
+                            "graph.generate.structured.enrich",
+                            input_payload={"citations_in": len(dumped)},
+                        ) as enrich_out:
+                            enriched = enrich_structured_citations(
+                                dumped,
+                                retrieved,
+                                originals,
+                                case_id=str(case_id) if case_id else None,
+                                db=db,
+                            )
+                            enrich_out["citations_out"] = len(enriched or [])
+                        if (awc.answer or "").strip() and enriched:
+                            new_state["citations"] = enriched
+                            response_text = awc.answer
+                            used_structured = True
+                            structured_out["used_structured"] = True
+                            structured_out["n_citations"] = len(enriched)
+                            structured_out["answer_chars"] = len(response_text or "")
+                            logger.info(
+                                "[GenerateResponse] structured_citations path, n_citations=%s (rag=%s, garant=%s)",
+                                len(new_state.get("citations") or []),
+                                sum(1 for c in enriched if c.get("source_type") == "document"),
+                                sum(1 for c in enriched if c.get("source_type") == "legal_reference"),
+                            )
             except Exception as s_exc:
                 logger.warning(
                     "[GenerateResponse] structured_citations failed, fallback to default LLM: %s",
@@ -2929,37 +3018,44 @@ def generate_response_node(
             )
             try:
                 _t0 = _time.monotonic()
+                _llm_meta = {
+                    "case_id": case_id,
+                    "mode": mode,
+                    "context_chars": len(full_context or ""),
+                    "system_chars": len(system_prompt or ""),
+                    "question_chars": len(question or ""),
+                    "stream_tokens": _stream_tokens,
+                }
                 if _stream_tokens:
                     from langgraph.config import get_stream_writer
-
-                    from app.services.chat.llm_streaming import (
-                        collect_llm_stream_text,
-                        collect_llm_stream_text_with_writer,
-                    )
 
                     writer = None
                     try:
                         writer = get_stream_writer()
                     except Exception:
                         writer = None
-                    if writer is not None:
-                        response_text = collect_llm_stream_text_with_writer(
-                            llm, messages, writer, metrics_out=_llm_metrics
-                        )
-                    else:
-                        response_text = collect_llm_stream_text(
-                            llm, messages, metrics_out=_llm_metrics
-                        )
+                    response_text = traced_collect_llm_stream_text(
+                        llm,
+                        messages,
+                        generation_name="case_generate_response_llm",
+                        assistant_step="graph.generate.llm_stream",
+                        assistant_scope="case",
+                        metadata=_llm_meta,
+                        metrics_out=_llm_metrics,
+                        writer=writer,
+                    )
                 else:
-                    response = llm.invoke(messages)
-                    response_text = response.content if hasattr(response, "content") else str(response)
-                    _llm_metrics.update(
-                        {
-                            "stream": False,
-                            "invoke_wall_ms": int((_time.monotonic() - _t0) * 1000),
-                            "ttft_ms": None,
-                            "output_chars": len(response_text or ""),
-                        }
+                    response = traced_sync_llm_invoke(
+                        llm,
+                        messages,
+                        generation_name="case_generate_response_llm",
+                        assistant_step="graph.generate.llm_invoke",
+                        assistant_scope="case",
+                        metadata=_llm_meta,
+                        metrics_out=_llm_metrics,
+                    )
+                    response_text = (
+                        response.content if hasattr(response, "content") else str(response)
                     )
             finally:
                 _llm_wall = int((_time.monotonic() - _t0) * 1000)
@@ -3032,49 +3128,65 @@ def generate_response_node(
         except Exception:
             post_span = None
 
-        _tpp = _time.monotonic()
-        response_text = strip_llm_answer_leaks(response_text or "")
-        strip_ms = int((_time.monotonic() - _tpp) * 1000)
-
+        strip_ms = 0
+        dc_ms = 0
+        rep_ms = 0
         citations_list = list(new_state.get("citations") or [])
-        _tdc = _time.monotonic()
-        response_text, dc_meta = expand_dc_markers_to_cite_zw(response_text, citations_list)
-        dc_ms = int((_time.monotonic() - _tdc) * 1000)
-        if dc_meta.get("removed_invalid_dc"):
-            trace_contract_event(
-                get_active_trace_context(),
-                name="citation_dc_expand",
-                metadata=normalize_observability_metadata(
-                    {
-                        "mode": mode,
-                        "n_citations": len(citations_list),
-                        "used_structured": used_structured,
-                        **dc_meta,
-                    },
-                    step_name="citation_dc_expand",
-                    status="warn",
-                ),
+        with assistant_step_span(
+            "case",
+            "graph.generate.postprocess",
+            metadata={"mode": mode, "used_structured": used_structured},
+        ) as post_out:
+            _tpp = _time.monotonic()
+            response_text = strip_llm_answer_leaks(response_text or "")
+            strip_ms = int((_time.monotonic() - _tpp) * 1000)
+            _tdc = _time.monotonic()
+            response_text, dc_meta = expand_dc_markers_to_cite_zw(response_text, citations_list)
+            dc_ms = int((_time.monotonic() - _tdc) * 1000)
+            if dc_meta.get("removed_invalid_dc"):
+                trace_contract_event(
+                    get_active_trace_context(),
+                    name="citation_dc_expand",
+                    metadata=normalize_observability_metadata(
+                        {
+                            "mode": mode,
+                            "n_citations": len(citations_list),
+                            "used_structured": used_structured,
+                            **dc_meta,
+                        },
+                        step_name="citation_dc_expand",
+                        status="warn",
+                    ),
+                )
+            n_cites = len(citations_list)
+            _trep = _time.monotonic()
+            repaired, repair_meta = repair_citation_brackets(response_text, n_cites)
+            rep_ms = int((_time.monotonic() - _trep) * 1000)
+            if repair_meta.get("removed_invalid") or repair_meta.get("removed_all_due_to_zero"):
+                trace_contract_event(
+                    get_active_trace_context(),
+                    name="citation_bracket_repair",
+                    metadata=normalize_observability_metadata(
+                        {
+                            "mode": mode,
+                            "n_citations": n_cites,
+                            "used_structured": used_structured,
+                            **repair_meta,
+                        },
+                        step_name="citation_bracket_repair",
+                        status="warn",
+                    ),
+                )
+            response_text = repaired
+            post_out.update(
+                {
+                    "strip_leaks_ms": strip_ms,
+                    "dc_expand_ms": dc_ms,
+                    "bracket_repair_ms": rep_ms,
+                    "response_chars": len(response_text or ""),
+                    "citations_count": len(citations_list or []),
+                }
             )
-        n_cites = len(citations_list)
-        _trep = _time.monotonic()
-        repaired, repair_meta = repair_citation_brackets(response_text, n_cites)
-        rep_ms = int((_time.monotonic() - _trep) * 1000)
-        if repair_meta.get("removed_invalid") or repair_meta.get("removed_all_due_to_zero"):
-            trace_contract_event(
-                get_active_trace_context(),
-                name="citation_bracket_repair",
-                metadata=normalize_observability_metadata(
-                    {
-                        "mode": mode,
-                        "n_citations": n_cites,
-                        "used_structured": used_structured,
-                        **repair_meta,
-                    },
-                    step_name="citation_bracket_repair",
-                    status="warn",
-                ),
-            )
-        response_text = repaired
         if post_span:
             try:
                 post_span.update(
@@ -4029,6 +4141,51 @@ def _create_draft_document_with_db_retry(
     raise last_err
 
 
+def prepare_draft_case_state_node(
+    state: ChatGraphState,
+    config: Dict[str, Any] = None,
+    db: Session = None,
+) -> ChatGraphState:
+    """
+    After internal assistant RAG: extract structured facts; draft agent decides
+    whether to invoke the financial calculator tool (draft mode only).
+    """
+    from app.services.draft_pipeline.case_state_builder import build_draft_case_state
+
+    case_id = state.get("case_id")
+    question = (state.get("question") or "").strip()
+    if not case_id or not question or db is None:
+        logger.warning("[PrepareDraftCaseState] missing case_id, question or db")
+        return state
+
+    try:
+        ensure_db_session_live(db)
+        built = build_draft_case_state(
+            db=db,
+            case_id=str(case_id),
+            user_prompt=question,
+            attached_file_ids=state.get("attached_file_ids"),
+            rag_context=state.get("rag_context"),
+            scoped_file_ids=state.get("scoped_file_ids"),
+            citations=state.get("citations"),
+        )
+        out = dict(state)
+        out.update(built)
+        calc = built.get("financial_calculator_meta") or {}
+        logger.info(
+            "[PrepareDraftCaseState] case=%s calc_tool=%s calc_applied=%s",
+            case_id,
+            calc.get("tool_called"),
+            calc.get("applied"),
+        )
+        return out
+    except Exception as exc:
+        logger.error("[PrepareDraftCaseState] failed: %s", exc, exc_info=True)
+        err_state = dict(state)
+        err_state["errors"] = (err_state.get("errors") or []) + [f"prepare_draft_case_state: {exc}"]
+        return err_state
+
+
 def draft_node(
     state: ChatGraphState,
     config: Dict[str, Any] = None,
@@ -4084,11 +4241,10 @@ def draft_node(
             new_state["waiting_for_approval"] = True
             return new_state
     
-    used_field_catalog_fill = False
-    catalog_snap = None
     try:
         tctx = get_active_trace_context()
         exec_span = None
+        exec_parent_token = None
         try:
             exec_span = trace_span(
                 tctx,
@@ -4097,6 +4253,7 @@ def draft_node(
                     "case_id": case_id,
                     "has_template": bool((state.get("template_context") or "").strip()),
                     "attached_files_count": len(state.get("attached_file_ids") or []),
+                    "pipeline": "decomposed_v5",
                 },
                 input_payload={"question": (question or "")[:900]},
             )
@@ -4115,588 +4272,32 @@ def draft_node(
             ),
         )
 
-        llm = create_legal_llm(
-            provider="yandex",
-            model=_app_config.YANDEX_GPT_MODEL_URI,
-            use_rate_limiting=False,
-        )
-        
-        logger.info(
-            "[Draft] Creating document for case %s (plan_approval=%s)",
-            case_id,
-            plan_approval,
-        )
-        
-        title = draft_plan.get("title", "Новый документ")
-        if not title or len(title) < 3:
-            title = "Новый документ"
-        
-        # Генерируем содержимое документа на основе плана
-        sections_text = "\n".join([
-            f"- {s.get('name', 'Раздел')}: {s.get('description', '')}"
-            for s in draft_plan.get("sections", [])
-        ])
-        
-        tc = (state.get("template_context") or "").strip()
-        has_template = bool(tc)
-        template_block = ""
-        if tc:
-            template_block = (
-                "\n\n═══ ОБЯЗАТЕЛЬНЫЙ HTML-ШАБЛОН (КАРКАС 1:1) ═══\n"
-                "Ниже — единственный допустимый каркас документа. На выходе верни ИМЕННО ЭТОТ HTML по структуре:\n"
-                "— те же теги в том же порядке, те же атрибуты (class, style, colspan, rowspan и т.д.);\n"
-                "— менять можно ТОЛЬКО текстовое содержимое между тегами, в т.ч. плейсхолдеры в квадратных скобках [...];\n"
-                "— запрещено: выкидывать/добавлять таблицы и строки, менять вложенность, заменять div на p или наоборот, "
-                "переписывать документ «с нуля», сводить к одному сплошному тексту.\n"
-                "Плейсхолдеры [...]: пройди по каждому и заполняй из фактов дела/переписки/запроса (см. правила ниже); "
-                "если для конкретного [...] нет уверенности — оставь его как в шаблоне.\n"
-                "Блок «РАЗДЕЛЫ» ниже — подсказка ЧТО заполнить по смыслу, а не повод менять разметку.\n"
-                f"{tc}\n"
-            )
+        from app.services.draft_pipeline.runner import execute_draft_pipeline
 
-        subq = _last_substantive_user_question(state) or question
-        overview = (draft_plan.get("document_overview") or "").strip()
-        planned = (draft_plan.get("planned_content") or "").strip()
-        description_parts = [f"ИСХОДНЫЙ ЗАПРОС ПОЛЬЗОВАТЕЛЯ:\n{subq}"]
-        if overview:
-            description_parts.append(f"О ЧЁМ ДОКУМЕНТ (согласованный план):\n{overview}")
-        if planned:
-            description_parts.append(f"ЧТО НУЖНО ОТРАЗИТЬ В ТЕКСТЕ (план):\n{planned}")
-        description_block = "\n\n".join(description_parts)
+        new_state = execute_draft_pipeline(new_state, db=db, config=config)
 
-        doc_context = ""
-        _dfid = state.get("attached_file_ids")
-        _dfile_ids = list(_dfid) if _dfid else None
-        rag_svc = RAGService()
-        content = ""
-        used_placeholder_json = False
-        template_only_fallback = False
-        catalog_snap = None
-
-        # Шаг 1: каталог полей (bulk RAG + unified LLM) — до тяжёлого prefetch RAG.
-        if db:
-            try:
-                from app.services.draft_execute_service import (
-                    catalog_from_state,
-                    catalog_to_state_dict,
-                    ensure_catalog,
-                    execute_catalog_field_fill,
-                )
-
-                catalog_snap = catalog_from_state(state.get("template_field_catalog"))
-                template_key = (state.get("template_key") or "").strip()
-                if not catalog_snap and template_key and tc:
-                    catalog_snap = ensure_catalog(
-                        db,
-                        template_key=template_key,
-                        template_html=tc,
-                        template_label=state.get("template_label"),
-                    )
-                    if catalog_snap:
-                        new_state["template_field_catalog"] = catalog_to_state_dict(catalog_snap)
-                _bulk_fill = bool(getattr(_app_config, "DRAFT_BULK_FILL_ENABLED", True))
-                _per_field_fill = bool(getattr(_app_config, "DRAFT_PER_FIELD_RAG_ENABLED", True))
-                if (
-                    catalog_snap
-                    and catalog_snap.field_specs
-                    and (_bulk_fill or _per_field_fill)
-                ):
-                    subq_ctx = _last_substantive_user_question(state) or question
-                    overview = (draft_plan.get("document_overview") or "").strip()
-                    user_ctx = f"{subq_ctx}\n{overview}".strip()
-                    content, fill_stats = execute_catalog_field_fill(
-                        rag_service=rag_svc,
-                        case_id=str(case_id),
-                        catalog=catalog_snap,
-                        db=db,
-                        attached_file_ids=_dfile_ids,
-                        corpus_size=int(state.get("corpus_size") or 0),
-                        user_context=user_ctx,
-                        template_label=(state.get("template_label") or "").strip(),
-                    )
-                    used_field_catalog_fill = bool((content or "").strip())
-                    used_placeholder_json = used_field_catalog_fill
-                    logger.info(
-                        "[Draft] Field catalog fill: template_key=%s stats=%s",
-                        template_key,
-                        fill_stats,
-                    )
-            except Exception as cat_fill_exc:
-                logger.warning("[Draft] Field catalog fill failed: %s", cat_fill_exc)
-
-        # Prefetch RAG для full-HTML / JSON fallback — пропускаем, если каталог уже заполнил документ.
-        _skip_prefetch = bool(
-            getattr(_app_config, "DRAFT_SKIP_PREFETCH_RAG_WHEN_CATALOG_FILL", True)
-        )
-        if not (used_field_catalog_fill and _skip_prefetch):
-            rag_query = _draft_legal_query_string(state, doc_context="").strip()
-            if not rag_query:
-                rag_query = f"{subq}\n{sections_text}".strip()
-            try:
-                if db is not None:
-                    ensure_db_session_live(db)
-                rag_span = None
-                try:
-                    rag_span = trace_span(
-                        tctx,
-                        name="draft_final_rag_retrieval",
-                        metadata={
-                            "case_id": case_id,
-                            "k": 16,
-                            "has_attached_file_ids": bool(_dfile_ids),
-                            "attached_files_count": len(_dfile_ids or []),
-                            "skipped_catalog_prefetch": False,
-                        },
-                        input_payload={"query": (rag_query or "")[:900]},
-                    )
-                except Exception:
-                    rag_span = None
-                _t0 = _time.monotonic()
-                docs = rag_svc.retrieve_context(
-                    case_id=case_id,
-                    query=rag_query,
-                    k=16,
-                    db=db,
-                    file_ids=_dfile_ids,
-                    retrieval_strategy="multi_query",
-                    use_hybrid=True,
-                )
-                snippets = [
-                    d.page_content[:1800]
-                    for d in docs
-                    if getattr(d, "page_content", "").strip()
-                ]
-                if snippets:
-                    doc_context = "\n\n".join(snippets)[:26000]
-                if rag_span:
-                    rag_span.update(
-                        output={
-                            "docs": len(docs or []),
-                            "snippets": len(snippets or []),
-                            "context_chars": len(doc_context or ""),
-                            "wall_ms": int((_time.monotonic() - _t0) * 1000),
-                        }
-                    )
-            except Exception as rag_err:
-                logger.warning(
-                    "[Draft] RAG context unavailable for final document: %s", rag_err
-                )
-                if "rag_span" in locals() and rag_span:
-                    try:
-                        rag_span.update(
-                            level="WARNING",
-                            status_message="rag_failed",
-                            output={"error": str(rag_err)},
-                        )
-                    except Exception:
-                        pass
-            finally:
-                if "rag_span" in locals() and rag_span:
-                    try:
-                        rag_span.end()
-                    except Exception:
-                        pass
-        else:
-            logger.info(
-                "[Draft] Skipping draft_final_rag_retrieval (catalog fill produced content)"
-            )
-
-        legal_body = _draft_fetch_legal_corpus_block(state, doc_context=doc_context)
-        legal_doc_block = ""
-        if legal_body.strip():
-            legal_doc_block = (
-                "\n\nСПРАВОЧНЫЙ ПРАВОВЫЙ КОНТЕКСТ (выдержки из корпуса НПА; используй для ссылок на нормы "
-                "и правовой квалификации, не как источник фактов по делу):\n"
-                f"{legal_body}\n"
-            )
-
-        transcript_draft = _draft_transcript_for_prompt(state)
-        transcript_block = ""
-        if transcript_draft:
-            transcript_block = f"\n\nПЕРЕПИСКА С ПОЛЬЗОВАТЕЛЕМ (учти уточнения и согласованные формулировки):\n{transcript_draft}\n"
-
-        facts_block = (
-            f"\nФАКТЫ ИЗ ДОКУМЕНТОВ ДЕЛА (используй как основу):\n{doc_context}\n"
-            if doc_context
-            else "\nФАКТЫ ИЗ ДОКУМЕНТОВ ДЕЛА: (релевантные фрагменты не найдены)\n"
-        )
-
-        facts_compact_for_maps = (doc_context or "").strip()[:16000]
-        if not facts_compact_for_maps:
-            facts_compact_for_maps = (
-                "(фрагменты из документов дела не найдены — используй переписку и описание запроса)"
-            )
-
-        if has_template:
-            content_prompt = f"""Заполни юридический документ СТРОГО в каркасе HTML-шаблона ниже (структура 1:1).
-
-НАЗВАНИЕ (для справки): {title}
-ТИП: {draft_plan.get('type', 'Юридический документ')}
-
-РАЗДЕЛЫ ПЛАНА (что по смыслу внести в соответствующие места шаблона, без смены разметки):
-{sections_text}
-
-ОПИСАНИЕ И СОГЛАСОВАННЫЙ ПЛАН:
-{description_block}
-{transcript_block}{template_block}
-{facts_block}
-{legal_doc_block}
-
-ПЛЕЙСХОЛДЕРЫ И ПУСТЫЕ ПОЛЯ (все виды — главная задача):
-- Квадратные скобки [ … ]: если в фактах дела/переписке есть однозначное значение — замени ВЕСЬ фрагмент [...] на значение (скобки убери). Если нет уверенности по конкретному месту — не трогай его.
-- Другие маркеры: {{...}}, «указать», «заполнить», ФИО, ИНН, дата, сумма, прочерк _______, подчёркивания, XXX — трактуй как поля для подстановки: заполни из материалов дела, если значение однозначно; иначе оставь маркер.
-- Пустые или почти пустые ячейки таблицы (<td></td>, пробелы): если по подписи строки/столбца или соседним ячейкам понятно, что туда вносить, и это есть в фактах — вставь текст; иначе оставь пустой ячейке как в шаблоне.
-- Не копируй шаблон без изменений, если в «ФАКТЫ ИЗ ДОКУМЕНТОВ ДЕЛА» уже есть явные данные для таких полей — обязательно подставь их.
-
-ОБЯЗАТЕЛЬНО (структура и источники):
-1) Выход — один HTML-фрагмент: тот же набор тегов и порядок, что в «ОБЯЗАТЕЛЬНЫЙ HTML-ШАБЛОН»; меняй только текстовые узлы и содержимое [...], не разметку.
-2) Факты для подстановки в [...] и в обычный текст — из «ФАКТЫ ИЗ ДОКУМЕНТОВ ДЕЛА» и явных указаний пользователя/переписки; не выдумывай реквизиты, даты, суммы.
-3) Справочный правовой контекст — только для формулировок норм, не как источник фактов по делу.
-4) Не меняй class/style на существующих тегах; не удаляй таблицы, строки и ячейки.
-5) Пустые ячейки/абзацы без [...]: заполняй только если факты однозначны; иначе оставь пустыми или сохрани исходный текст шаблона.
-
-Ответь только HTML (без markdown, без пояснений, без преамбулы «вот документ») — сразу разметка готового документа.
-"""
-        else:
-            content_prompt = f"""Создай профессиональный юридический документ на основе плана.
-
-НАЗВАНИЕ: {title}
-ТИП: {draft_plan.get('type', 'Юридический документ')}
-
-РАЗДЕЛЫ:
-{sections_text}
-
-ОПИСАНИЕ И СОГЛАСОВАННЫЙ ПЛАН:
-{description_block}
-{transcript_block}{template_block}
-{facts_block}
-{legal_doc_block}
-
-ОБЯЗАТЕЛЬНО:
-1) Факты, реквизиты сторон, даты, суммы — только из блока «ФАКТЫ ИЗ ДОКУМЕНТОВ ДЕЛА» и из явных указаний пользователя в описании/переписке; не выдумывай.
-2) Если задан блок «СПРАВОЧНЫЙ ПРАВОВОЙ КОНТЕКСТ» — нормы права и типовые формулировки бери только оттуда; не ссылайся на статьи, которых нет в этом блоке.
-3) Юридический стиль: официально-деловой, канцелярский, без разговорных оборотов.
-4) Если данных недостаточно — помечай [НЕТ ДАННЫХ В МАТЕРИАЛАХ ДЕЛА] или [ЗАПОЛНИТЬ], не подменяй отсутствующие факты.
-
-СОЗДАЙ ДОКУМЕНТ В ФОРМАТЕ HTML.
-Сохрани профессиональную структуру и включи необходимые разделы.
-Требования к оформлению:
-- основной текст: <p> с выравниванием по ширине (justify)
-- заголовок документа: по центру
-- шапка с реквизитами/адресатами: по правому краю
-- подпись и дата внизу: по правому краю
-- важные поля выделяй <strong>, структуру делай через h1/h2/h3 и списки
-
-Ответь только HTML-кодом документа без дополнительных комментариев.
-"""
-        
-        # Шаг 2 (legacy): компактная задача «плейсхолдер → значение» (JSON).
-        if not used_field_catalog_fill and has_template and tc:
-            placeholders = _draft_bracket_placeholders_ordered(tc)
-            if placeholders:
-                ph_json = _json.dumps(placeholders, ensure_ascii=False)
-                ph_hints = _draft_placeholder_surround_snippets(tc, placeholders)
-                plan_ph_hints = _draft_placeholder_plan_hints_for_json(draft_plan)
-                facts_compact = facts_compact_for_maps
-                tc_for_model = tc
-                tc_note = ""
-                map_prompt = (
-                    "Ты заполняешь юридический шаблон по материалам дела и согласованному плану.\n"
-                    "Ниже ты ВИДИШЬ полный каркас HTML и фрагменты вокруг каждого поля [ … ] — ориентируйся на соседние ячейки таблицы и подписи.\n"
-                    "Ответь ТОЛЬКО одним JSON-объектом, без markdown, без пояснений до или после.\n\n"
-                    f"НАЗВАНИЕ ДОКУМЕНТА: {title}\n"
-                    f"ТИП: {draft_plan.get('type', 'Юридический документ')}\n\n"
-                    f"ОПИСАНИЕ И СОГЛАСОВАННЫЙ ПЛАН:\n{description_block}\n\n"
-                    f"РАЗДЕЛЫ ПЛАНА:\n{sections_text}\n\n"
-                    f"{plan_ph_hints}"
-                    "ФАКТЫ ИЗ ДОКУМЕНТОВ ДЕЛА (RAG; основной источник для реквизитов, дат, сумм, наименований):\n"
-                    f"{facts_compact}\n"
-                    f"{legal_doc_block}\n"
-                    f"{transcript_block}\n"
-                    "═══ HTML ШАБЛОН (как в редакторе; не меняй структуру — мы подставим только значения по ключам) ═══\n"
-                    f"{tc_note}{tc_for_model}\n\n"
-                    "ФРАГМЕНТЫ ВОКРУГ ПЛЕЙСХОЛДЕРОВ (контекст в таблице/абзаце):\n"
-                    f"{ph_hints}\n\n"
-                    "СПИСОК ПЛЕЙСХОЛДЕРОВ (ключи JSON должны быть ТОЧНО этими строками, с квадратными скобками):\n"
-                    f"{ph_json}\n\n"
-                    "ПРАВИЛА:\n"
-                    "1) Для КАЖДОГО ключа из списка добавь в JSON пару \"ключ\": \"значение\" или \"ключ\": null.\n"
-                    "2) Если соответствующий факт (наименование, ИНН, ОГРН, адрес, сумма, дата, ФИО и т.д.) ЯВНО присутствует "
-                    "в блоке ФАКТЫ или переписке — верни его текстом БЕЗ квадратных скобок. Не ставь null из осторожности, "
-                    "если формулировка в фактах однозначно подходит под подпись поля / план.\n"
-                    "3) null только если в материалах действительно нет подходящего значения или оно противоречиво.\n"
-                    "4) Не придумывай реквизиты, которых нет в фактах и переписке.\n"
-                    "5) Ориентируйся на подписи строк/столбцов рядом с плейсхолдером в фрагментах выше.\n"
-                )
-                try:
-                    map_span = None
-                    try:
-                        map_span = trace_span(
-                            tctx,
-                            name="draft_placeholder_map_llm_invoke",
-                            metadata={
-                                "provider": "yandex",
-                                "model": str(getattr(_app_config, "YANDEX_GPT_MODEL_URI", "") or ""),
-                                "placeholders_total": len(placeholders),
-                                "template_chars": len(tc),
-                                "facts_chars": len(facts_compact_for_maps or ""),
-                                "legal_chars": len(legal_body or ""),
-                                "transcript_chars": len(transcript_draft or ""),
-                            },
-                            input_payload={"prompt_preview": map_prompt[:1200]},
-                        )
-                    except Exception:
-                        map_span = None
-                    _tmap = _time.monotonic()
-                    map_response = llm.invoke([HumanMessage(content=map_prompt)])
-                    map_raw = _langchain_any_content_to_str(map_response)
-                    mapping = _draft_parse_llm_json_object(map_raw)
-                    mapping = _draft_coerce_placeholder_mapping(mapping, placeholders)
-                    apply_span = None
-                    try:
-                        apply_span = trace_span(
-                            tctx,
-                            name="draft_apply_placeholder_mapping",
-                            metadata={
-                                "placeholders_total": len(placeholders),
-                                "json_keys": len(mapping or {}),
-                            },
-                        )
-                    except Exception:
-                        apply_span = None
-                    content, rep_ops = _draft_apply_bracket_mapping(tc, mapping)
-                    logger.info(
-                        "[Draft] Placeholder JSON fill: distinct=%s json_keys=%s replacement_ops=%s bracket_before=%s bracket_after=%s",
-                        len(placeholders),
-                        len(mapping),
-                        rep_ops,
-                        tc.count("["),
-                        (content or "").count("["),
-                    )
-                    if rep_ops > 0:
-                        used_placeholder_json = True
-                    if map_span:
-                        map_span.update(
-                            output={
-                                "response_chars": len(map_raw or ""),
-                                "json_keys": len(mapping or {}),
-                                "wall_ms": int((_time.monotonic() - _tmap) * 1000),
-                            }
-                        )
-                    if apply_span:
-                        apply_span.update(
-                            output={
-                                "replacement_ops": rep_ops,
-                                "bracket_before": tc.count("["),
-                                "bracket_after": (content or "").count("["),
-                                "content_chars": len(content or ""),
-                            }
-                        )
-                except Exception as map_exc:
-                    logger.warning("[Draft] Placeholder JSON fill error: %s", map_exc)
-                    if "map_span" in locals() and map_span:
-                        try:
-                            map_span.update(level="WARNING", status_message="placeholder_map_failed", output={"error": str(map_exc)})
-                        except Exception:
-                            pass
-                finally:
-                    if "apply_span" in locals() and apply_span:
-                        try:
-                            apply_span.end()
-                        except Exception:
-                            pass
-                    if "map_span" in locals() and map_span:
-                        try:
-                            map_span.end()
-                        except Exception:
-                            pass
-
-        if not used_placeholder_json and bool(
-            getattr(_app_config, "DRAFT_FULL_HTML_FALLBACK_ENABLED", False)
-        ):
-            gen_span = None
-            try:
-                gen_span = trace_span(
-                    tctx,
-                    name="draft_full_html_llm_invoke",
-                    metadata={
-                        "provider": "yandex",
-                        "model": str(getattr(_app_config, "YANDEX_GPT_MODEL_URI", "") or ""),
-                        "has_template": bool(has_template),
-                        "template_chars": len(tc or ""),
-                        "doc_context_chars": len(doc_context or ""),
-                        "legal_chars": len(legal_body or ""),
-                        "transcript_chars": len(transcript_draft or ""),
-                    },
-                    input_payload={"prompt_preview": content_prompt[:1200]},
-                )
-            except Exception:
-                gen_span = None
-            _tgen = _time.monotonic()
-            content_response = llm.invoke([HumanMessage(content=content_prompt)])
-            content = _langchain_any_content_to_str(content_response)
-            if gen_span:
-                gen_span.update(
-                    output={
-                        "response_chars": len(content or ""),
-                        "wall_ms": int((_time.monotonic() - _tgen) * 1000),
-                    }
-                )
-            if not (content or "").strip():
-                raw_preview = getattr(content_response, "content", None)
-                logger.warning(
-                    "[Draft] Full HTML invoke returned empty visible text; retry minimal prompt (raw_type=%s)",
-                    type(raw_preview).__name__,
-                )
-                minimal_prompt = (
-                    "Верни ОДИН фрагмент HTML. Без markdown, без текста до или после разметки.\n\n"
-                    "Задача: сохрани HTML-шаблон ниже 1:1 (те же теги, порядок, атрибуты). "
-                    "Замени содержимое каждого плейсхолдера [ … ] на текст из ФАКТОВ, если тот же реквизит, дата, сумма, "
-                    "наименование или ФИО явно встречается в ФАКТАХ. Если в ФАКТАХ нет подходящего значения — оставь "
-                    "плейсхолдер как в шаблоне.\n"
-                    "Запрещён полностью пустой ответ.\n\n"
-                    f"ФАКТЫ:\n{facts_compact_for_maps[:12000]}\n\n"
-                    f"ШАБЛОН:\n{tc if has_template and tc else content_prompt[:12000]}\n"
-                )
-                try:
-                    retry_span = None
-                    try:
-                        retry_span = trace_span(
-                            tctx,
-                            name="draft_minimal_html_retry_llm_invoke",
-                            metadata={
-                                "provider": "yandex",
-                                "model": str(getattr(_app_config, "YANDEX_GPT_MODEL_URI", "") or ""),
-                                "has_template": bool(has_template),
-                            },
-                            input_payload={"prompt_preview": minimal_prompt[:1200]},
-                        )
-                    except Exception:
-                        retry_span = None
-                    _tretry = _time.monotonic()
-                    content_response2 = llm.invoke([HumanMessage(content=minimal_prompt)])
-                    content = _langchain_any_content_to_str(content_response2)
-                    if retry_span:
-                        retry_span.update(
-                            output={
-                                "response_chars": len(content or ""),
-                                "wall_ms": int((_time.monotonic() - _tretry) * 1000),
-                            }
-                        )
-                except Exception as retry_exc:
-                    logger.warning("[Draft] Minimal HTML retry failed: %s", retry_exc)
-                finally:
-                    if "retry_span" in locals() and retry_span:
-                        try:
-                            retry_span.end()
-                        except Exception:
-                            pass
-            content = _strip_llm_html_fences(content)
-            content = _extract_primary_html_from_model_output(content)
-            if "gen_span" in locals() and gen_span:
-                try:
-                    gen_span.end()
-                except Exception:
-                    pass
-
-        if not (content or "").strip() and has_template and tc:
-            logger.warning("[Draft] HTML still empty; persisting template skeleton only")
-            content = (catalog_snap.indexed_html if catalog_snap else None) or tc
-            template_only_fallback = True
-        elif not (content or "").strip():
-            raise RuntimeError("Модель вернула пустой документ (нет шаблона для подстановки)")
-
-        if has_template and tc:
-            try:
-                logger.info(
-                    "[Draft] Template fill stats: template_chars=%s out_chars=%s bracket_in_template=%s bracket_in_output=%s json_path=%s",
-                    len(tc),
-                    len(content or ""),
-                    tc.count("["),
-                    (content or "").count("["),
-                    used_placeholder_json,
-                )
-            except Exception:
-                pass
-        if has_template:
-            logger.info("[Draft] Template mode: skipping _enforce_legal_text_alignment to preserve HTML skeleton")
-        else:
-            content = _enforce_legal_text_alignment(content)
-        
-        # Сохраняем документ
-        save_span = None
-        try:
-            save_span = trace_span(
-                tctx,
-                name="draft_save_document",
-                metadata={"case_id": case_id, "user_id": user_id},
-                input_payload={"title": title},
-            )
-        except Exception:
-            save_span = None
-        _tsave = _time.monotonic()
-        document = _create_draft_document_with_db_retry(
-            db,
-            case_id=case_id,
-            user_id=user_id,
-            title=title,
-            content=content,
-        )
-        if save_span:
-            save_span.update(
-                output={
-                    "document_id": str(document.id),
-                    "content_chars": len(content or ""),
-                    "wall_ms": int((_time.monotonic() - _tsave) * 1000),
-                }
-            )
-            try:
-                save_span.end()
-            except Exception:
-                pass
-        
-        new_state["document_created"] = {
-            "id": str(document.id),
-            "title": document.title,
-            "preview": content[:500] if content else ""
-        }
-        if template_only_fallback:
-            new_state["response"] = (
-                f'⚠️ Документ «{document.title}» сохранён с каркасом шаблона: модель не вернула заполненный HTML. '
-                f"Откройте документ и внесите данные вручную или повторите генерацию."
-            )
-        else:
-            new_state["response"] = f'✅ Документ "{document.title}" успешно создан!'
-        new_state["messages"] = [AIMessage(content=new_state["response"])]
-        new_state["waiting_for_approval"] = False
-        
-        logger.info(f"[Draft] Document created: {document.id}")
+        doc = new_state.get("document_created") or {}
         trace_contract_event(
             tctx,
             name="step_completed",
             metadata=normalize_observability_metadata(
                 {
                     "case_id": case_id,
-                    "has_template": bool(has_template),
-                    "used_placeholder_json": bool(used_placeholder_json),
-                    "used_field_catalog_fill": bool(used_field_catalog_fill),
-                    "template_only_fallback": bool(template_only_fallback),
+                    "document_id": doc.get("id"),
+                    "pipeline": "decomposed_v5",
                 },
                 step_name="draft_execute",
-                status="ok",
+                status="ok" if doc else "error",
             ),
         )
         if exec_span:
             exec_span.update(
                 output={
-                    "document_id": str(document.id),
-                    "content_chars": len(content or ""),
-                    "used_placeholder_json": bool(used_placeholder_json),
-                    "used_field_catalog_fill": bool(used_field_catalog_fill),
-                    "template_only_fallback": bool(template_only_fallback),
+                    "document_id": doc.get("id"),
+                    "pipeline": "decomposed_v5",
                 }
             )
-            
+
     except Exception as e:
         logger.error(f"[Draft] Error: {e}", exc_info=True)
         try:
@@ -4712,7 +4313,7 @@ def draft_node(
                     error=str(e),
                 ),
             )
-            if "exec_span" in locals() and exec_span:
+            if exec_span:
                 exec_span.update(level="ERROR", status_message="draft_execute_failed", output={"error": str(e)})
         except Exception:
             pass
@@ -4720,17 +4321,17 @@ def draft_node(
         new_state["response"] = f"❌ Ошибка создания документа: {str(e)}"
         new_state["waiting_for_approval"] = False
     finally:
-        if "exec_parent_token" in locals() and exec_parent_token is not None:
+        if exec_parent_token is not None:
             try:
                 reset_trace_span_parent(exec_parent_token)
             except Exception:
                 pass
-        if "exec_span" in locals() and exec_span:
+        if exec_span:
             try:
                 exec_span.end()
             except Exception:
                 pass
-    
+
     return new_state
 
 
@@ -4754,11 +4355,10 @@ def route_by_mode(state: ChatGraphState) -> str:
             return ""
         return ""
     
-    # Draft имеет приоритет: иначе truthy document_context (например, с фронта) уводит в editor_mode.
+    # Draft: сначала тот же internal assistant (RAG), затем case state + калькулятор, затем документ.
     if mode == "draft":
         if not _draft_plan_approval_enabled():
             return "draft_execute"
-        # Legacy HITL: план → одобрение → draft_node (только через resume / draft_approved).
         if state.get("draft_plan") and state.get("draft_approved"):
             return "draft_execute"
         return "draft"  # -> generate_draft_plan
@@ -4861,6 +4461,8 @@ def route_after_quality_gate(state: ChatGraphState) -> str:
         for marker in ("quality_gate:insufficient_sources", "quality_gate:citations_required")
     ):
         return END
+    if state.get("mode") == "draft":
+        return "prepare_draft_case_state"
     return "generate_response"
 
 
@@ -5037,6 +4639,7 @@ def create_chat_graph(
     graph.add_node("rag_quality_gate", rag_quality_gate_node)  # Quality gate после retrieval
     graph.add_node("generate_response", generate_response_wrapper)
     graph.add_node("generate_draft_plan", generate_draft_plan_wrapper)  # Генерация плана перед draft
+    graph.add_node("prepare_draft_case_state", lambda state, config=None: prepare_draft_case_state_node(state, config=config, db=db))
     graph.add_node("draft", draft_wrapper)
 
     # Editor nodes
@@ -5079,7 +4682,7 @@ def create_chat_graph(
         {
             "editor_mode": "editor_enrich_context",  # editor -> RAG enrich -> route
             "draft": "generate_draft_plan",  # draft mode -> генерируем план
-            "draft_execute": "draft",  # draft уже одобрен -> сразу генерация документа
+            "draft_execute": "sync_execution_tier",  # тот же internal assistant, затем draft
             "sync_execution_tier": "sync_execution_tier",
         }
     )
@@ -5169,8 +4772,14 @@ def create_chat_graph(
     graph.add_conditional_edges(
         "rag_quality_gate",
         route_after_quality_gate,
-        {END: END, "generate_response": "generate_response"},
+        {
+            END: END,
+            "generate_response": "generate_response",
+            "prepare_draft_case_state": "prepare_draft_case_state",
+        },
     )
+
+    graph.add_edge("prepare_draft_case_state", "draft")
     
     # Edge после draft
     graph.add_edge("draft", END)

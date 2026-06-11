@@ -559,6 +559,8 @@ class RAGService:
         file_ids: Optional[List[str]] = None,
         metadata_filter: Optional[Dict[str, Any]] = None,
         pipeline_micro_only: bool = False,
+        bm25_sync: Optional[bool] = None,
+        query_embedding: Optional[List[float]] = None,
     ) -> List[Document]:
         """
         Retrieve relevant context for a query using Yandex Index
@@ -575,6 +577,7 @@ class RAGService:
             file_ids: Optional list of file IDs to filter by (only search in these specific files)
             metadata_filter: Optional pgvector JSONB filter (file_id, doc_type, instrument_id, …)
             pipeline_micro_only: Case-assistant/tabular path: skip macro recall, search micro+docling only
+            bm25_sync: When False, never block on BM25 build (schedule background prewarm instead).
             
         Returns:
             List of relevant Document objects
@@ -632,6 +635,8 @@ class RAGService:
                     file_ids=file_ids,
                     metadata_filter=metadata_filter,
                     pipeline_micro_only=pipeline_micro_only,
+                    bm25_sync=bm25_sync,
+                    query_embedding=query_embedding,
                 )
                 # Filter out None or invalid documents
                 valid_docs = [doc for doc in docs if doc is not None and hasattr(doc, 'page_content')]
@@ -755,6 +760,8 @@ class RAGService:
         file_ids: Optional[List[str]] = None,
         metadata_filter: Optional[Dict[str, Any]] = None,
         pipeline_micro_only: bool = False,
+        bm25_sync: Optional[bool] = None,
+        query_embedding: Optional[List[float]] = None,
     ) -> List[Document]:
         funnel = {
             "strategy": "hybrid_macro_micro",
@@ -790,6 +797,8 @@ class RAGService:
                 db=db,
                 chunk_levels=["micro"],
                 metadata_filter=base_filter,
+                bm25_sync=bm25_sync,
+                query_embedding=query_embedding,
             )
             merged_micro = list(micro_docs)
             funnel["initial_micro"] = len(micro_docs)
@@ -802,6 +811,8 @@ class RAGService:
                 db=db,
                 chunk_levels=["macro"],
                 metadata_filter=base_filter,
+                bm25_sync=bm25_sync,
+                query_embedding=query_embedding,
             )
             micro_docs = self.document_processor.hybrid_search(
                 case_id=case_id,
@@ -811,6 +822,8 @@ class RAGService:
                 db=db,
                 chunk_levels=["micro"],
                 metadata_filter=base_filter,
+                bm25_sync=bm25_sync,
+                query_embedding=query_embedding,
             )
             macro_ids = [
                 str((d.metadata or {}).get("macro_id") or (d.metadata or {}).get("chunk_id") or "")
@@ -831,6 +844,8 @@ class RAGService:
                     db=db,
                     chunk_levels=["micro"],
                     metadata_filter=scoped_filter,
+                    bm25_sync=bm25_sync,
+                    query_embedding=query_embedding,
                 )
             funnel["initial_macro"] = len(macro_docs)
             funnel["initial_micro"] = len(micro_docs)
@@ -868,6 +883,7 @@ class RAGService:
                     db=db,
                     chunk_levels=["docling"],
                     metadata_filter=base_filter,
+                    bm25_sync=bm25_sync,
                 )
             except Exception:
                 docling_exact_docs = []
@@ -888,6 +904,7 @@ class RAGService:
                     db=db,
                     chunk_levels=["docling"],
                     metadata_filter=base_filter,
+                    bm25_sync=bm25_sync,
                 )
             except Exception:
                 combined = []
@@ -2030,63 +2047,73 @@ class RAGService:
         from langchain_core.messages import HumanMessage, SystemMessage
         import re
         
+        from app.services.observability.assistant_pipeline_langfuse_tracing import (
+            assistant_step_span,
+        )
+        from app.services.observability.llm_langfuse_instrumentation import (
+            traced_sync_llm_invoke,
+        )
+
         # ========== ЭТАП 1: Подготовка chunk_id-based контекста ==========
-        # Собираем информацию о каждом chunk с его уникальным ID
         chunk_map = {}  # chunk_id -> полная информация о chunk
         context_parts = []
-        
-        for i, doc in enumerate(documents):
-            content = doc.page_content
-            metadata = doc.metadata
-            
-            # Получаем или генерируем chunk_id
-            chunk_id = metadata.get("chunk_id")
-            if not chunk_id:
-                # Fallback: генерируем chunk_id если его нет (для старых документов)
-                from app.services.chunk_ids import generate_chunk_id
-                doc_id = metadata.get("doc_id", metadata.get("source_id", f"doc_{i}"))
-                chunk_index = metadata.get("chunk_index", i)
+
+        with assistant_step_span(
+            "case",
+            "structured_citations.prepare_chunks",
+            input_payload={"docs_in": len(documents)},
+        ) as prep_out:
+            for i, doc in enumerate(documents):
+                content = doc.page_content
+                metadata = doc.metadata
+
+                chunk_id = metadata.get("chunk_id")
+                if not chunk_id:
+                    from app.services.chunk_ids import generate_chunk_id
+
+                    doc_id = metadata.get("doc_id", metadata.get("source_id", f"doc_{i}"))
+                    chunk_index = metadata.get("chunk_index", i)
+                    char_start = metadata.get("char_start", 0)
+                    chunk_id = generate_chunk_id(str(doc_id), chunk_index, char_start)
+
+                source_file = metadata.get("source_file", f"doc_{i+1}")
+                source_page = (
+                    self._docling_page_no_1based(metadata)
+                    or (
+                        int(metadata.get("source_page"))
+                        if metadata.get("source_page") is not None
+                        else None
+                    )
+                    or 1
+                )
+                doc_id = metadata.get("doc_id", metadata.get("source_id", f"doc_{i+1}"))
                 char_start = metadata.get("char_start", 0)
-                chunk_id = generate_chunk_id(str(doc_id), chunk_index, char_start)
-            
-            source_file = metadata.get("source_file", f"doc_{i+1}")
-            # Prefer Docling provenance page_no (contract: 1-based) to avoid off-by-one bugs.
-            # Fallback to legacy metadata only if Docling provenance is missing.
-            source_page = (
-                self._docling_page_no_1based(metadata)
-                or (int(metadata.get("source_page")) if metadata.get("source_page") is not None else None)
-                or 1
-            )
-            doc_id = metadata.get("doc_id", metadata.get("source_id", f"doc_{i+1}"))
-            char_start = metadata.get("char_start", 0)
-            char_end = metadata.get("char_end", len(content))
-            
-            # Сохраняем полную информацию о chunk
-            bbox_regions, page_bbox = self._extract_bbox_regions(metadata)
-            chunk_map[chunk_id] = {
-                "index": i + 1,  # Порядковый номер для отображения [1], [2], etc.
-                "chunk_id": chunk_id,
-                "doc_id": doc_id,
-                "file_name": source_file,
-                "page": source_page,
-                "content": content,
-                "char_start": char_start,
-                "char_end": char_end,
-                "bbox": bbox_regions[0] if bbox_regions else None,
-                "page_bbox": page_bbox,
-                "bbox_regions": bbox_regions or None,
-            }
-            
-            # Контекст для LLM с chunk_id
-            # Используем короткий формат [CHUNK:xxx] для экономии токенов
-            context_parts.append(
-                f"[CHUNK:{chunk_id}] {source_file}, стр. {source_page}:\n{content[:2000]}"
-            )
-        
-        context = "\n\n".join(context_parts)
-        num_chunks = len(chunk_map)
-        chunk_ids_list = list(chunk_map.keys())
-        
+                char_end = metadata.get("char_end", len(content))
+
+                bbox_regions, page_bbox = self._extract_bbox_regions(metadata)
+                chunk_map[chunk_id] = {
+                    "index": i + 1,
+                    "chunk_id": chunk_id,
+                    "doc_id": doc_id,
+                    "file_name": source_file,
+                    "page": source_page,
+                    "content": content,
+                    "char_start": char_start,
+                    "char_end": char_end,
+                    "bbox": bbox_regions[0] if bbox_regions else None,
+                    "page_bbox": page_bbox,
+                    "bbox_regions": bbox_regions or None,
+                }
+                context_parts.append(
+                    f"[CHUNK:{chunk_id}] {source_file}, стр. {source_page}:\n{content[:2000]}"
+                )
+
+            context = "\n\n".join(context_parts)
+            num_chunks = len(chunk_map)
+            chunk_ids_list = list(chunk_map.keys())
+            prep_out["num_chunks"] = num_chunks
+            prep_out["context_chars"] = len(context or "")
+
         logger.info(f"[StructuredCitations] Prepared {num_chunks} chunks with IDs: {chunk_ids_list[:5]}...")
         
         # ========== ЭТАП 2: Промпт с chunk_id-based citations ==========
@@ -2116,8 +2143,8 @@ class RAGService:
 
 Дай СВЯЗНЫЙ ответ. Ссылки [CHUNK:xxx] должны быть ВНУТРИ предложений."""
         
-        # Utility LLM call: force non-streaming for stability across providers.
         llm = create_llm(temperature=0.1, use_rate_limiting=False, streaming=False)
+        llm_metrics: Dict[str, Any] = {}
         try:
             default_system = (
                 "Ты эксперт-юрист. Отвечай связным текстом; каждый [CHUNK:xxx] сразу после "
@@ -2129,128 +2156,154 @@ class RAGService:
                 SystemMessage(content=sys_content),
                 HumanMessage(content=prompt),
             ]
-            
-            response = llm.invoke(messages)
-            answer_text = response.content if hasattr(response, 'content') else str(response)
-            
+
+            response = traced_sync_llm_invoke(
+                llm,
+                messages,
+                generation_name="case_structured_citations_llm",
+                assistant_step="structured_citations.llm_invoke",
+                assistant_scope="case",
+                metadata={
+                    "num_chunks": num_chunks,
+                    "system_chars": len(sys_content or ""),
+                    "human_chars": len(prompt or ""),
+                },
+                metrics_out=llm_metrics,
+            )
+            answer_text = response.content if hasattr(response, "content") else str(response)
+
             logger.info(f"[StructuredCitations] Raw answer with chunk_ids: {answer_text[:300]}...")
-            
+
             # ========== ЭТАП 3: Пост-процессинг и маппинг chunk_id -> [N] ==========
-            
-            # Находим все упоминания [CHUNK:xxx] в ответе
-            chunk_refs = re.findall(r'\[CHUNK:([^\]]+)\]', answer_text)
-            unique_chunk_refs = []
-            seen = set()
-            for ref in chunk_refs:
-                if ref not in seen:
-                    unique_chunk_refs.append(ref)
-                    seen.add(ref)
-            
-            logger.info(f"[StructuredCitations] Found chunk references: {unique_chunk_refs}")
-            
-            # Создаём маппинг chunk_id -> номер [N]
-            chunk_to_number = {}
-            citations = []
-            
-            for idx, chunk_ref in enumerate(unique_chunk_refs, 1):
-                # Ищем chunk в нашей карте (точное совпадение или частичное)
-                matched_chunk = None
-                for chunk_id, chunk_info in chunk_map.items():
-                    if chunk_ref == chunk_id or chunk_ref in chunk_id or chunk_id in chunk_ref:
-                        matched_chunk = chunk_info
-                        break
-                
-                if matched_chunk:
-                    chunk_to_number[chunk_ref] = idx
-                    content = matched_chunk["content"]
-                    
-                    # Создаём цитату с ТОЧНЫМИ координатами из chunk
-                    quote = content[:300].strip()
-                    if len(content) > 300:
-                        quote += "..."
-                    
-                    citations.append(EnhancedCitation(
-                        source_id=str(matched_chunk["doc_id"]),
-                        file_name=matched_chunk["file_name"],
-                        page=matched_chunk["page"],
-                        quote=quote,
-                        char_start=matched_chunk["char_start"],  # ТОЧНЫЕ координаты!
-                        char_end=matched_chunk["char_end"],      # ТОЧНЫЕ координаты!
-                        context_before=content[:50] if matched_chunk["char_start"] > 0 else "",
-                        context_after=content[-50:] if len(content) > 50 else "",
-                        chunk_id=matched_chunk["chunk_id"],  # Уникальный ID для навигации
-                        bbox=matched_chunk.get("bbox"),
-                        bbox_regions=matched_chunk.get("bbox_regions"),
-                        page_bbox=matched_chunk.get("page_bbox"),
-                    ))
-                    
-                    logger.info(f"[StructuredCitations] Mapped {chunk_ref} -> [{idx}], "
-                               f"char_start={matched_chunk['char_start']}, char_end={matched_chunk['char_end']}")
-                else:
-                    # Chunk не найден - используем fallback номер
-                    chunk_to_number[chunk_ref] = idx
-                    logger.warning(f"[StructuredCitations] Chunk {chunk_ref} not found in map, using index {idx}")
-            
-            # Заменяем [CHUNK:xxx] на [N] в тексте
-            def replace_chunk_ref(match):
-                chunk_ref = match.group(1)
-                num = chunk_to_number.get(chunk_ref, 1)
-                return f"[{num}]"
-            
-            answer_text = re.sub(r'\[CHUNK:([^\]]+)\]', replace_chunk_ref, answer_text)
-            
-            # ========== ЭТАП 4: Fallback - если LLM не использовал chunk_id ==========
-            # Проверяем, есть ли обычные [N] ссылки (LLM мог проигнорировать инструкции)
-            if not citations and re.search(r'\[\d+\]', answer_text):
-                logger.info("[StructuredCitations] Fallback: LLM used [N] format instead of chunk_id")
-                
-                # Нормализуем обычные ссылки
-                answer_text = re.sub(r'\[[\d,\s]+\]', lambda m: ''.join(f'[{n}]' for n in re.findall(r'\d+', m.group(0))), answer_text)
-                answer_text = re.sub(r'\[\s*(\d+)\s*\]', r'[\1]', answer_text)
-                answer_text = re.sub(r'(\[\d+\])\1+', r'\1', answer_text)
-                
-                # Собираем citations из обычных номеров
-                citation_markers = re.findall(r'\[(\d+)\]', answer_text)
-                unique_markers = sorted(set(int(m) for m in citation_markers))
-                
-                for marker in unique_markers:
-                    if marker <= num_chunks:
-                        chunk_id = chunk_ids_list[marker - 1]
-                        chunk_info = chunk_map[chunk_id]
-                        content = chunk_info["content"]
-                        
+            with assistant_step_span(
+                "case",
+                "structured_citations.map_citations",
+                input_payload={"answer_chars": len(answer_text or "")},
+                metadata={"num_chunks": num_chunks, **llm_metrics},
+            ) as map_out:
+                chunk_refs = re.findall(r'\[CHUNK:([^\]]+)\]', answer_text)
+                unique_chunk_refs = []
+                seen = set()
+                for ref in chunk_refs:
+                    if ref not in seen:
+                        unique_chunk_refs.append(ref)
+                        seen.add(ref)
+
+                logger.info(f"[StructuredCitations] Found chunk references: {unique_chunk_refs}")
+
+                chunk_to_number = {}
+                citations = []
+
+                for idx, chunk_ref in enumerate(unique_chunk_refs, 1):
+                    matched_chunk = None
+                    for chunk_id, chunk_info in chunk_map.items():
+                        if chunk_ref == chunk_id or chunk_ref in chunk_id or chunk_id in chunk_ref:
+                            matched_chunk = chunk_info
+                            break
+
+                    if matched_chunk:
+                        chunk_to_number[chunk_ref] = idx
+                        content = matched_chunk["content"]
                         quote = content[:300].strip()
                         if len(content) > 300:
                             quote += "..."
-                        
-                        citations.append(EnhancedCitation(
-                            source_id=str(chunk_info["doc_id"]),
-                            file_name=chunk_info["file_name"],
-                            page=chunk_info["page"],
-                            quote=quote,
-                            char_start=chunk_info["char_start"],
-                            char_end=chunk_info["char_end"],
-                            context_before=content[:50] if chunk_info["char_start"] > 0 else "",
-                            context_after=content[-50:] if len(content) > 50 else "",
-                            chunk_id=chunk_id,  # Уникальный ID для навигации
-                            bbox=chunk_info.get("bbox"),
-                            bbox_regions=chunk_info.get("bbox_regions"),
-                            page_bbox=chunk_info.get("page_bbox"),
-                        ))
-            
-            # ========== ЭТАП 5: Финальная очистка ==========
-            # Убираем ссылки на отдельных строках
-            answer_text = re.sub(r'([.!?])\s*\n\s*(\[\d+\])', r'\1\2', answer_text)
-            answer_text = re.sub(r'\n\s*(\[\d+\])', r'\1', answer_text)
-            answer_text = re.sub(r'\n{3,}', '\n\n', answer_text)
-            
-            logger.info(f"[StructuredCitations] Final answer: {answer_text[:300]}...")
-            logger.info(f"[StructuredCitations] Created {len(citations)} citations with precise coordinates")
-            
+
+                        citations.append(
+                            EnhancedCitation(
+                                source_id=str(matched_chunk["doc_id"]),
+                                file_name=matched_chunk["file_name"],
+                                page=matched_chunk["page"],
+                                quote=quote,
+                                char_start=matched_chunk["char_start"],
+                                char_end=matched_chunk["char_end"],
+                                context_before=content[:50] if matched_chunk["char_start"] > 0 else "",
+                                context_after=content[-50:] if len(content) > 50 else "",
+                                chunk_id=matched_chunk["chunk_id"],
+                                bbox=matched_chunk.get("bbox"),
+                                bbox_regions=matched_chunk.get("bbox_regions"),
+                                page_bbox=matched_chunk.get("page_bbox"),
+                            )
+                        )
+                        logger.info(
+                            "[StructuredCitations] Mapped %s -> [%s], char_start=%s, char_end=%s",
+                            chunk_ref,
+                            idx,
+                            matched_chunk["char_start"],
+                            matched_chunk["char_end"],
+                        )
+                    else:
+                        chunk_to_number[chunk_ref] = idx
+                        logger.warning(
+                            "[StructuredCitations] Chunk %s not found in map, using index %s",
+                            chunk_ref,
+                            idx,
+                        )
+
+                def replace_chunk_ref(match):
+                    chunk_ref = match.group(1)
+                    num = chunk_to_number.get(chunk_ref, 1)
+                    return f"[{num}]"
+
+                answer_text = re.sub(r'\[CHUNK:([^\]]+)\]', replace_chunk_ref, answer_text)
+
+                if not citations and re.search(r'\[\d+\]', answer_text):
+                    logger.info(
+                        "[StructuredCitations] Fallback: LLM used [N] format instead of chunk_id"
+                    )
+                    answer_text = re.sub(
+                        r'\[[\d,\s]+\]',
+                        lambda m: ''.join(f'[{n}]' for n in re.findall(r'\d+', m.group(0))),
+                        answer_text,
+                    )
+                    answer_text = re.sub(r'\[\s*(\d+)\s*\]', r'[\1]', answer_text)
+                    answer_text = re.sub(r'(\[\d+\])\1+', r'\1', answer_text)
+
+                    citation_markers = re.findall(r'\[(\d+)\]', answer_text)
+                    unique_markers = sorted(set(int(m) for m in citation_markers))
+
+                    for marker in unique_markers:
+                        if marker <= num_chunks:
+                            chunk_id = chunk_ids_list[marker - 1]
+                            chunk_info = chunk_map[chunk_id]
+                            content = chunk_info["content"]
+                            quote = content[:300].strip()
+                            if len(content) > 300:
+                                quote += "..."
+
+                            citations.append(
+                                EnhancedCitation(
+                                    source_id=str(chunk_info["doc_id"]),
+                                    file_name=chunk_info["file_name"],
+                                    page=chunk_info["page"],
+                                    quote=quote,
+                                    char_start=chunk_info["char_start"],
+                                    char_end=chunk_info["char_end"],
+                                    context_before=content[:50] if chunk_info["char_start"] > 0 else "",
+                                    context_after=content[-50:] if len(content) > 50 else "",
+                                    chunk_id=chunk_id,
+                                    bbox=chunk_info.get("bbox"),
+                                    bbox_regions=chunk_info.get("bbox_regions"),
+                                    page_bbox=chunk_info.get("page_bbox"),
+                                )
+                            )
+
+                answer_text = re.sub(r'([.!?])\s*\n\s*(\[\d+\])', r'\1\2', answer_text)
+                answer_text = re.sub(r'\n\s*(\[\d+\])', r'\1', answer_text)
+                answer_text = re.sub(r'\n{3,}', '\n\n', answer_text)
+
+                map_out["citations_count"] = len(citations)
+                map_out["answer_chars"] = len(answer_text or "")
+
+                logger.info(f"[StructuredCitations] Final answer: {answer_text[:300]}...")
+                logger.info(
+                    "[StructuredCitations] Created %s citations with precise coordinates",
+                    len(citations),
+                )
+
             return AnswerWithCitations(
                 answer=answer_text,
                 citations=citations,
-                confidence=0.85 if citations else 0.5
+                confidence=0.85 if citations else 0.5,
             )
             
         except Exception as e:

@@ -126,6 +126,9 @@ def recall_k_for_budget(budget_profile: Optional[Dict[str, Any]]) -> int:
     else:
         base = int(getattr(config, "CASE_ASSISTANT_RECALL_K", 100) or 100)
 
+    if isinstance(budget_profile, dict) and budget_profile.get("skip_micro_recall_cap"):
+        return max(1, base)
+
     from app.services.chat.context_resolution import micro_only_recall_enabled, micro_recall_k
 
     if pipeline_enabled() and micro_only_recall_enabled():
@@ -163,6 +166,7 @@ def run_hybrid_recall(
     retrieval_task: Optional[RetrievalTask],
     attached_file_ids: Optional[List[str]],
     budget_profile: Optional[Dict[str, Any]],
+    query_embedding: Optional[List[float]] = None,
 ) -> Tuple[List[Document], Dict[str, Any]]:
     """Stage 2: hybrid retrieval over scoped case chunks."""
     meta: Dict[str, Any] = {"strategy": "hybrid", "pipeline": True}
@@ -217,6 +221,7 @@ def run_hybrid_recall(
             metadata_filter=metadata_filter,
             doc_types=doc_types,
             pipeline_micro_only=True,
+            query_embedding=query_embedding,
         )
         docs = [d for d in (docs or []) if d is not None and hasattr(d, "page_content")]
         span_out.update(summarize_case_documents(docs))

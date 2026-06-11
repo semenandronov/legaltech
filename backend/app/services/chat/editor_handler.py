@@ -87,6 +87,30 @@ class EditorHandler:
                 selected_text=selected_text,
                 editor_mode_hint=editor_mode_hint,
             )
+
+            if document_id:
+                from app.services.draft_pipeline.refactor.runner import execute_draft_refactor
+                import json
+
+                ok, msg, card, final_html = execute_draft_refactor(
+                    db=self.db,
+                    case_id=case_id,
+                    user_id=str(current_user.id),
+                    document_id=document_id,
+                    user_prompt=question,
+                    document_context=document_context or "",
+                )
+                if ok and msg:
+                    yield f"data: {json.dumps({'type': 'text-delta', 'textDelta': msg}, ensure_ascii=False)}\n\n"
+                    if card:
+                        yield f"data: {json.dumps({'type': 'document-card', 'data': card}, ensure_ascii=False)}\n\n"
+                    if final_html:
+                        yield f"data: {json.dumps({'type': 'edited_content', 'edited_content': final_html}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'type': 'finish', 'finishReason': 'stop'})}\n\n"
+                    return
+                if msg and not ok and msg.startswith("❌"):
+                    yield SSESerializer.error(msg)
+                    return
             
             # Используем ChatGraphService вместо legacy ChatAgent
             from app.services.langchain_agents.chat_graph_service import get_chat_graph_service

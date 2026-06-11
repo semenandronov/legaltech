@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, Fragment, useCallback } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import {
-  MessageSquare, FolderOpen, FileText, FileEdit, Table, BookOpen, Workflow,
+  MessageSquare, FolderOpen, FileText, FileEdit, Table, BookOpen,
   Search, Upload, Plus, ChevronRight, File, Loader2, Cloud,
   MoreHorizontal, Trash2, ArrowRight, Check, X, Pencil, AlertCircle,
 } from 'lucide-react'
@@ -34,6 +34,7 @@ import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import DocumentViewer from '../components/Documents/DocumentViewer'
 import { DocumentWithMetadata } from '../components/Documents/DocumentsList'
 import { GoogleDriveImportButton } from '../components/Documents/GoogleDriveImportButton'
+import { agentRunsEnabled } from '../lib/agentRunsPolicy'
 
 interface DocumentFile {
   id: string
@@ -102,6 +103,13 @@ const mapCaseDocuments = (documents: any[]): DocumentFile[] =>
 
 const PRESETS = [
   {
+    id: 'workflows',
+    title: 'Workflows',
+    description: 'Многошаговые задачи: анализ, таблицы, черновики',
+    path: (id: string) => `/cases/${id}/workflows`,
+    requiresAgentRuns: true,
+  },
+  {
     id: 'chat',
     title: 'Ассистент',
     description: 'Задайте вопросы по документам дела',
@@ -113,7 +121,7 @@ const PRESETS = [
     description: 'Один вопрос — ко всем документам дела',
     path: (id: string) => `/cases/${id}/tabular-review`,
   },
-]
+] as const
 
 const CaseOverviewPage = () => {
   const { caseId } = useParams<{ caseId: string }>()
@@ -541,7 +549,6 @@ const CaseOverviewPage = () => {
     { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
     { id: 'editor', label: 'Редактор', icon: FileEdit, path: `/cases/${caseId}/editor` },
     { id: 'playbooks', label: 'Playbooks', icon: BookOpen, path: `/cases/${caseId}/playbooks` },
-    { id: 'workflows', label: 'Workflows', icon: Workflow, path: `/cases/${caseId}/workflows` },
   ]
 
   // Root-level files only (no folder). When search is active, show all matching files regardless of folder.
@@ -654,7 +661,9 @@ const CaseOverviewPage = () => {
                 </button>
 
                 {/* Preset cards */}
-                {PRESETS.map(preset => (
+                {PRESETS.filter(
+                  (p) => !('requiresAgentRuns' in p && p.requiresAgentRuns) || agentRunsEnabled(),
+                ).map(preset => (
                   <button
                     key={preset.id}
                     onClick={() => {

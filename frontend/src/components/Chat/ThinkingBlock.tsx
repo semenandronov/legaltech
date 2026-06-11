@@ -582,7 +582,7 @@ export const ThinkingBlock = memo(({
           )}
 
           {/* Placeholder spinner */}
-          {isStreaming && unifiedSteps.every(s => s.status === "completed") && (
+          {isStreaming && unifiedSteps.length > 0 && unifiedSteps.every(s => s.status === "completed") && (
             <div className="flex items-center gap-2.5 py-1 px-0.5">
               <Loader2 className="w-3.5 h-3.5 text-gray-400 animate-spin flex-shrink-0" />
               <span className="text-sm text-gray-400">Обрабатываю...</span>

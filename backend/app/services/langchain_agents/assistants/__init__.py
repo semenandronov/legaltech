@@ -21,11 +21,6 @@ Assistants модуль для LangGraph.
    - Шаблоны
    - Форматирование
 
-4. **workflow-orchestrator** - Оркестратор workflows
-   - Многошаговые задачи
-   - Параллельное выполнение
-   - Адаптация при ошибках
-
 # ИСПОЛЬЗОВАНИЕ
 ```python
 from app.services.langchain_agents.assistants import (

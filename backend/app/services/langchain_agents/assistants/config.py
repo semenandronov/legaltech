@@ -11,7 +11,6 @@ from enum import Enum
 class GraphType(str, Enum):
     """Типы графов."""
     CHAT = "chat"
-    WORKFLOW = "workflow"
 
 
 class AssistantMetadata(BaseModel):
@@ -129,20 +128,6 @@ ASSISTANT_CONFIGS: Dict[str, AssistantConfig] = {
 2. Используй правильную структуру и реквизиты
 3. Применяй юридическую терминологию
 4. Предложи варианты формулировок"""
-    ),
-    
-    "workflow-orchestrator": AssistantConfig(
-        id="workflow-orchestrator",
-        name="Workflow Orchestrator",
-        description="Выполнение сложных многошаговых юридических workflows",
-        graph=GraphType.WORKFLOW,
-        metadata=AssistantMetadata(
-            require_approval=True,
-            auto_adapt=True,
-            max_parallel_steps=3
-        ),
-        use_send_api=True,
-        interrupt_before=["approval_interrupt"]
     ),
     
     "garant-expert": AssistantConfig(

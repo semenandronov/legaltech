@@ -11,6 +11,9 @@
     │     │     └── (внутри hybrid_search: dense / fts / anchor / bm25 / rrf)
     ├── case_assistant.rerank
     └── case_assistant.assemble_context
+          └── case_assistant.fetch_originals
+
+Связанные шаги graph/stream/orchestrator — в assistant_pipeline_langfuse_tracing.
 """
 from __future__ import annotations
 

@@ -215,6 +215,29 @@ class AnswerBlocksEvent(BaseModel):
         return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
+class AssistantActivityEvent(BaseModel):
+    """Пошаговый прогресс ассистента: стабильный этап + динамические детали из фактов."""
+    type: Literal["assistant_activity"] = "assistant_activity"
+    step_id: str = Field(..., description="Стабильный id шага для upsert в UI")
+    phase: str = Field(..., description="Ключ фазы")
+    step: int = Field(..., description="Номер шага")
+    total_steps: int = Field(..., alias="totalSteps", description="Всего шагов")
+    label: str = Field(..., description="Короткая подпись этапа")
+    detail: Optional[str] = Field(None, description="Динамические детали")
+    content: str = Field(..., description="Полный текст для UI")
+    status: Literal["pending", "running", "completed", "error"] = Field(
+        "running",
+        description="Статус шага",
+    )
+
+    model_config = {"populate_by_name": True}
+
+    def to_sse(self) -> str:
+        return (
+            f"data: {json.dumps(self.model_dump(by_alias=True), ensure_ascii=False)}\n\n"
+        )
+
+
 class ReasoningEvent(BaseModel):
     """Событие шага мышления (thinking)"""
     type: Literal["reasoning"] = "reasoning"
@@ -442,6 +465,7 @@ SSEEvent = Union[
     CitationsEvent,
     AnswerBlocksEvent,
     ReasoningEvent,
+    AssistantActivityEvent,
     DocumentCreatedEvent,
     StructuredEditsEvent,
     EditedContentEvent,
@@ -550,6 +574,30 @@ class SSESerializer:
             step=step,
             total_steps=total_steps,
             content=content
+        ).to_sse()
+
+    @staticmethod
+    def assistant_activity(
+        *,
+        step_id: str,
+        phase: str,
+        step: int,
+        total_steps: int,
+        label: str,
+        content: str,
+        detail: Optional[str] = None,
+        status: str = "running",
+    ) -> str:
+        """Прогресс ассистента: этап + динамические детали."""
+        return AssistantActivityEvent(
+            step_id=step_id,
+            phase=phase,
+            step=step,
+            total_steps=total_steps,
+            label=label,
+            detail=detail,
+            content=content,
+            status=status,  # type: ignore[arg-type]
         ).to_sse()
     
     @staticmethod

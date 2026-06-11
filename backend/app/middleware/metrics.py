@@ -4,6 +4,7 @@ Provides request tracking, LLM call metrics, and Prometheus integration.
 """
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
+import asyncio
 import time
 import logging
 from typing import Dict, Any, Optional
@@ -42,36 +43,67 @@ _metrics_store = {
     "last_reset": datetime.utcnow()
 }
 
+SLOW_REQUEST_SEC = 5.0
+
+
+def _is_long_lived_sse_request(request: Request) -> bool:
+    """SSE streams stay open for minutes; total duration is not a slow-handler signal."""
+    path = request.url.path.rstrip("/")
+    if path.endswith("/stream"):
+        return True
+    if request.method == "POST" and path.endswith("/resume"):
+        return True
+    accept = (request.headers.get("accept") or "").lower()
+    if "text/event-stream" in accept:
+        return True
+    return False
+
+
+def _record_request_metrics(process_time: float) -> None:
+    _metrics_store["request_durations"].append(process_time)
+    if len(_metrics_store["request_durations"]) > 1000:
+        _metrics_store["request_durations"] = _metrics_store["request_durations"][-1000:]
+
+
+def _log_slow_request(method: str, path: str, process_time: float) -> None:
+    logger.warning("Slow request: %s %s took %.2fs", method, path, process_time)
+
 
 class MetricsMiddleware(BaseHTTPMiddleware):
     """Middleware for tracking request metrics with Prometheus integration."""
-    
+
     async def dispatch(self, request: Request, call_next):
         start_time = time.time()
-        
-        # Track request
+        long_lived = _is_long_lived_sse_request(request)
+
         _metrics_store["request_count"] += 1
-        
+
         try:
             response = await call_next(request)
             process_time = time.time() - start_time
-            
-            # Track duration (keep last 1000 requests)
-            _metrics_store["request_durations"].append(process_time)
-            if len(_metrics_store["request_durations"]) > 1000:
-                _metrics_store["request_durations"] = _metrics_store["request_durations"][-1000:]
-            
-            # Add timing header
             response.headers["X-Process-Time"] = str(process_time)
-            
-            # Log slow requests
-            if process_time > 5.0:
-                logger.warning(f"Slow request: {request.method} {request.url.path} took {process_time:.2f}s")
-            
+
+            # Bookkeeping off the hot path so response headers flush immediately.
+            asyncio.create_task(asyncio.to_thread(_record_request_metrics, process_time))
+            if not long_lived and process_time > SLOW_REQUEST_SEC:
+                asyncio.create_task(
+                    asyncio.to_thread(
+                        _log_slow_request,
+                        request.method,
+                        request.url.path,
+                        process_time,
+                    )
+                )
             return response
         except Exception as e:
             _metrics_store["error_count"] += 1
-            logger.error(f"Request error: {request.method} {request.url.path}: {e}", exc_info=True)
+            logger.error(
+                "Request error: %s %s: %s",
+                request.method,
+                request.url.path,
+                e,
+                exc_info=True,
+            )
             raise
 
 
@@ -87,10 +119,10 @@ def track_llm_call(
     """Track LLM API call with enhanced metrics."""
     _metrics_store["llm_calls"] += 1
     _metrics_store["llm_total_duration"] += duration
-    
+
     total_tokens = tokens or (input_tokens or 0) + (output_tokens or 0)
     _metrics_store["llm_total_tokens"] += total_tokens
-    
+
     logger.debug(f"LLM call: {model}, duration: {duration:.2f}s, tokens: {total_tokens}")
 
     # Record to Prometheus if available
@@ -118,16 +150,16 @@ def track_agent_execution(
             "success_count": 0,
             "error_count": 0
         }
-    
+
     stats = _metrics_store["agent_executions"][agent_name]
     stats["count"] += 1
     stats["total_duration"] += duration
-    
+
     if success:
         stats["success_count"] += 1
     else:
         stats["error_count"] += 1
-    
+
     logger.debug(f"Agent {agent_name}: {duration:.2f}s, success: {success}")
 
 
@@ -136,7 +168,7 @@ def get_metrics() -> Dict[str, Any]:
     durations = _metrics_store["request_durations"]
     avg_duration = sum(durations) / len(durations) if durations else 0.0
     p95_duration = sorted(durations)[int(len(durations) * 0.95)] if len(durations) > 20 else 0.0
-    
+
     # Calculate agent stats
     agent_stats = {}
     for agent_name, stats in _metrics_store["agent_executions"].items():
@@ -146,12 +178,12 @@ def get_metrics() -> Dict[str, Any]:
             "avg_duration": round(avg_agent_duration, 3),
             "success_rate": round(stats["success_count"] / stats["count"], 3) if stats["count"] > 0 else 0.0
         }
-    
+
     # LLM stats
     llm_avg_duration = 0.0
     if _metrics_store["llm_calls"] > 0:
         llm_avg_duration = _metrics_store["llm_total_duration"] / _metrics_store["llm_calls"]
-    
+
     result = {
         "request_count": _metrics_store["request_count"],
         "error_count": _metrics_store["error_count"],
@@ -163,14 +195,14 @@ def get_metrics() -> Dict[str, Any]:
         "agent_executions": agent_stats,
         "uptime_seconds": (datetime.utcnow() - _metrics_store["last_reset"]).total_seconds()
     }
-    
+
     # Add rate limiter stats if available
     if HAS_RATE_LIMITER and get_rate_limit_stats:
         try:
             result["rate_limiting"] = get_rate_limit_stats()
         except Exception as e:
             logger.debug(f"Could not get rate limiter stats: {e}")
-    
+
     # Add Prometheus metrics summary if available
     if HAS_PROMETHEUS and get_metrics_collector:
         try:
@@ -178,14 +210,14 @@ def get_metrics() -> Dict[str, Any]:
             result["prometheus"] = collector.get_summary()
         except Exception as e:
             logger.debug(f"Could not get Prometheus stats: {e}")
-    
+
     return result
 
 
 def get_prometheus_metrics() -> tuple:
     """
     Get Prometheus-formatted metrics output.
-    
+
     Returns:
         Tuple of (content_bytes, content_type)
     """
@@ -208,7 +240,3 @@ def reset_metrics():
         "agent_executions": {},
         "last_reset": datetime.utcnow()
     }
-
-
-
-

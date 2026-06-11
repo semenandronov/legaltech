@@ -1505,11 +1505,11 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
           </div>
         </div>
 
-        {/* Workflows */}
+        {/* Playbook */}
         {onRunPlaybook && !isLoading && (
           <div className="px-3 pb-3">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Workflows</span>
+              <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Playbook</span>
             </div>
             <button
               onClick={onRunPlaybook}

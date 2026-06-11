@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { getCasesList, deleteCase, CasesListResponse } from '../services/api'
 import CasesGrid from '../components/Cases/CasesGrid'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
-import { FolderOpen, MessageSquare, Clock, Workflow } from 'lucide-react'
+import { FolderOpen, MessageSquare, Clock } from 'lucide-react'
 import { toast } from 'sonner'
 
 const CasesListPage = () => {
@@ -17,7 +17,6 @@ const CasesListPage = () => {
   const mainNavItems = [
     { id: 'cases', label: 'Дела', icon: FolderOpen, path: '/cases' },
     { id: 'assistant', label: 'Ассистент', icon: MessageSquare, path: '/assistant' },
-    { id: 'workflows', label: 'Workflows', icon: Workflow, path: '/workflows' },
     { id: 'history', label: 'История', icon: Clock, path: '/history' },
   ]
 

@@ -108,11 +108,6 @@ def _garant_search_sync(*args, **kwargs):
     return []
 
 
-def list_workflow_templates(*args, **kwargs):
-    """Заглушка для list_workflow_templates."""
-    return []
-
-
 def document_classifier_agent_node(*args, **kwargs):
     """Заглушка для document_classifier_agent_node."""
     return {"classification": "unknown", "error": "deprecated"}

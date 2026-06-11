@@ -9,14 +9,6 @@
         "use_checkpointing": true,
         "enable_memory_management": true
       }
-    },
-    "workflow": {
-      "path": "app/services/langchain_agents/graphs/workflow_graph.py:create_workflow_graph",
-      "description": "Workflow orchestration graph for complex multi-step tasks",
-      "config": {
-        "use_checkpointing": true,
-        "use_send_api": true
-      }
     }
   },
   "assistants": {
@@ -45,15 +37,6 @@
       "metadata": {
         "mode": "draft",
         "enable_garant": false
-      }
-    },
-    "workflow-orchestrator": {
-      "graph": "workflow",
-      "name": "Workflow Orchestrator",
-      "description": "Execute complex multi-step legal workflows",
-      "metadata": {
-        "require_approval": true,
-        "auto_adapt": true
       }
     }
   },

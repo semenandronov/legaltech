@@ -10,6 +10,8 @@ from app.models.tabular_review import TabularReview, TabularColumn, TabularCell,
 from app.models.document_editor import Document, DocumentVersion  # Import document editor models to register them
 from app.models.document_template import DocumentTemplate  # Import document template model to register it
 from app.models.draft_template_field_catalog import DraftTemplateFieldCatalog  # Draft template field catalog
+from app.models.agent_run import AgentRun  # noqa: F401 — register agent_runs table
+from app.models.agent_run_event import AgentRunEvent  # noqa: F401 — register agent_run_events table
 import logging
 
 logger = logging.getLogger(__name__)

@@ -191,6 +191,9 @@ def _sleep_backoff(attempt: int, base: float, cap: float) -> None:
 
 _last_embed_pace = 0.0
 _embed_pace_lock = threading.Lock()
+_embedding_api_lock = threading.RLock()
+_embeddings_warmup_done = False
+_embeddings_warmup_lock = threading.Lock()
 
 
 def _max_parallel_embedding_requests() -> int:
@@ -218,16 +221,119 @@ def _pace_embedding_request() -> None:
         _last_embed_pace = time.monotonic()
 
 
+def _embedding_vector_dim() -> int:
+    return 256
+
+
 def _parse_openai_embedding_vector(data_item: Any) -> List[float]:
     emb = getattr(data_item, "embedding", None)
     if isinstance(emb, tuple):
         emb = list(emb)
-    if not isinstance(emb, list) or len(emb) != 256:
+    dim = _embedding_vector_dim()
+    if not isinstance(emb, list) or len(emb) != dim:
         raise RuntimeError(
             f"OpenAI-compat embeddings: unexpected embedding format/size: "
             f"{type(emb)} len={len(emb) if isinstance(emb, list) else 'n/a'}"
         )
     return [float(x) for x in emb]
+
+
+def _parse_openai_embeddings_json(payload: Any) -> List[float]:
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"OpenAI-compat embeddings: expected JSON object, got {type(payload)}")
+    data = payload.get("data")
+    if not isinstance(data, list) or len(data) != 1:
+        raise RuntimeError(
+            f"OpenAI-compat embeddings: expected 1 vector in data, got "
+            f"{len(data) if isinstance(data, list) else 'n/a'}"
+        )
+    item = data[0]
+    if isinstance(item, dict):
+        emb = item.get("embedding")
+    else:
+        emb = getattr(item, "embedding", None)
+    if isinstance(emb, tuple):
+        emb = list(emb)
+    dim = _embedding_vector_dim()
+    if not isinstance(emb, list) or len(emb) != dim:
+        raise RuntimeError(
+            f"OpenAI-compat embeddings: unexpected embedding size "
+            f"{len(emb) if isinstance(emb, list) else 'n/a'}"
+        )
+    return [float(x) for x in emb]
+
+
+def _yandex_openai_compat_http_headers() -> dict[str, str]:
+    from app.services.yandex_openai_llm import resolve_yandex_folder_id
+
+    api_key = (getattr(config, "YANDEX_API_KEY", "") or "").strip()
+    iam_token = (getattr(config, "YANDEX_IAM_TOKEN", "") or "").strip()
+    folder = resolve_yandex_folder_id()
+    if not folder:
+        raise ValueError("Yandex embeddings HTTP: YANDEX_FOLDER_ID is required.")
+    if api_key:
+        authorization = f"Api-Key {api_key}"
+    elif iam_token:
+        authorization = f"Bearer {iam_token}"
+    else:
+        raise ValueError("Yandex embeddings HTTP: set YANDEX_API_KEY or YANDEX_IAM_TOKEN.")
+    return {
+        "Authorization": authorization,
+        "x-folder-id": folder,
+        "Content-Type": "application/json",
+    }
+
+
+def _yandex_openai_compat_base_url() -> str:
+    from app.services.yandex_openai_llm import _DEFAULT_BASE_URL
+
+    return (getattr(config, "YANDEX_OPENAI_COMPAT_BASE_URL", None) or _DEFAULT_BASE_URL).strip()
+
+
+def _create_yandex_embedding_openai_compat_http(*, model: str, input_text: str) -> List[float]:
+    """HTTPS embeddings via Yandex OpenAI-compat API (raw JSON, no OpenAI SDK parser)."""
+    import httpx
+
+    url = f"{_yandex_openai_compat_base_url().rstrip('/')}/embeddings"
+    headers = _yandex_openai_compat_http_headers()
+    body = {
+        "model": model,
+        "input": input_text,
+        "encoding_format": "float",
+    }
+    last_err: Optional[BaseException] = None
+    for attempt in range(3):
+        try:
+            with _embedding_api_lock:
+                _pace_embedding_request()
+                with httpx.Client(timeout=60.0) as client:
+                    response = client.post(url, headers=headers, json=body)
+            if response.status_code >= 400:
+                raise RuntimeError(
+                    f"Yandex embeddings HTTP {response.status_code}: {response.text[:500]}"
+                )
+            return _parse_openai_embeddings_json(response.json())
+        except Exception as exc:
+            last_err = exc
+            msg = str(exc).lower()
+            transient = any(
+                token in msg
+                for token in (
+                    "429",
+                    "rate",
+                    "resource_exhausted",
+                    "unavailable",
+                    "timeout",
+                    "timed out",
+                    "connection reset",
+                    "connection error",
+                )
+            )
+            if attempt >= 2 or not transient:
+                break
+            _sleep_backoff(attempt=attempt, base=0.35, cap=2.5)
+    assert last_err is not None
+    raise last_err
 
 
 def _resolve_embedding_model_uri(folder_id: str, *, for_query: bool) -> str:
@@ -338,65 +444,24 @@ class YandexEmbeddings(Embeddings):
             self.sdk = None
 
     def _embed_openai_compat_texts(self, texts: List[str], *, for_query: bool) -> List[List[float]]:
-        """One string per embeddings.create; parallel workers capped for ~10 req/s quota."""
-        from app.services.yandex_openai_llm import yandex_openai_sdk_client
-
+        """One string per HTTPS request; paced and serialized for quota + thread safety."""
         model = _resolve_embedding_model_uri(self.folder_id or "", for_query=for_query)
-        client = yandex_openai_sdk_client()
         vectors, work = _prepare_embedding_work(texts)
         if not work:
-            return [v if v is not None else [0.0] * 256 for v in vectors]
+            dim = _embedding_vector_dim()
+            return [v if v is not None else [0.0] * dim for v in vectors]
 
         part_vecs_by_doc: dict[int, List[List[float]]] = defaultdict(list)
-        workers = min(_max_parallel_embedding_requests(), len(work))
-
-        def _embed_piece(piece: str) -> List[float]:
-            last_err: Optional[BaseException] = None
-            for attempt in range(3):
-                try:
-                    _pace_embedding_request()
-                    resp = client.embeddings.create(
-                        model=model,
-                        input=piece,
-                        encoding_format="float",
-                    )
-                    data = getattr(resp, "data", None) or []
-                    if len(data) != 1:
-                        raise RuntimeError(
-                            f"OpenAI-compat embeddings: expected 1 vector, got {len(data)}"
-                        )
-                    return _parse_openai_embedding_vector(data[0])
-                except Exception as exc:
-                    last_err = exc
-                    msg = str(exc).lower()
-                    transient = any(
-                        s in msg
-                        for s in (
-                            "429",
-                            "rate",
-                            "resource_exhausted",
-                            "unavailable",
-                            "timeout",
-                            "timed out",
-                            "connection reset",
-                        )
-                    )
-                    if attempt >= 2 or not transient:
-                        break
-                    _sleep_backoff(attempt=attempt, base=0.35, cap=2.5)
-            assert last_err is not None
-            raise last_err
-
-        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="yandex-emb") as pool:
-            futures = {pool.submit(_embed_piece, piece): doc_idx for doc_idx, piece in work}
-            for fut in futures:
-                doc_idx = futures[fut]
-                part_vecs_by_doc[doc_idx].append(fut.result())
+        for doc_idx, piece in work:
+            part_vecs_by_doc[doc_idx].append(
+                _create_yandex_embedding_openai_compat_http(model=model, input_text=piece)
+            )
 
         for doc_idx, part_vecs in part_vecs_by_doc.items():
             vectors[doc_idx] = _mean_embedding_vectors(part_vecs)
 
-        return [v if v is not None else [0.0] * 256 for v in vectors]
+        dim = _embedding_vector_dim()
+        return [v if v is not None else [0.0] * dim for v in vectors]
 
     def _embed_grpc_texts(self, texts: List[str], *, for_query: bool) -> List[List[float]]:
         model_name_to_use = _resolve_embedding_model_uri(self.folder_id or "", for_query=for_query)
@@ -430,8 +495,9 @@ class YandexEmbeddings(Embeddings):
             last_err: Optional[BaseException] = None
             for attempt in range(3):
                 try:
-                    _pace_embedding_request()
-                    result = embeddings_model.run(piece)
+                    with _embedding_api_lock:
+                        _pace_embedding_request()
+                        result = embeddings_model.run(piece)
                     if not result or not hasattr(result, "embedding"):
                         raise RuntimeError(
                             f"Unexpected result format from Yandex embeddings SDK: {result}"
@@ -528,3 +594,19 @@ def get_yandex_embeddings() -> YandexEmbeddings:
             if _yandex_embeddings_singleton is None:
                 _yandex_embeddings_singleton = YandexEmbeddings()
     return _yandex_embeddings_singleton
+
+
+def warmup_yandex_embeddings() -> bool:
+    """Single query embedding at startup (validates transport before traffic)."""
+    global _embeddings_warmup_done
+    with _embeddings_warmup_lock:
+        if _embeddings_warmup_done:
+            return True
+        embeddings = get_yandex_embeddings()
+        if not embeddings.is_available():
+            logger.warning("Yandex embeddings warmup skipped: SDK not available")
+            return False
+        embeddings.embed_query("warmup")
+        _embeddings_warmup_done = True
+        logger.info("Yandex embeddings warmup ok (transport=%s)", getattr(config, "YANDEX_EMBEDDINGS_TRANSPORT", "openai"))
+        return True

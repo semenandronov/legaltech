@@ -7,6 +7,7 @@ from app.services.bm25_case_prewarm import (
     cancel_pending_bm25_prewarm,
     ensure_bm25_index,
     finalize_case_bm25_after_ingestion,
+    prepare_bm25_for_tabular_extraction,
     schedule_bm25_prewarm,
 )
 
@@ -65,6 +66,30 @@ def test_finalize_case_bm25_cancels_debounce_and_rebuilds_from_store():
     cancel.assert_called_once_with("case-3")
     invalidate.assert_called_once_with("case-3", dp)
     dp.prewarm_bm25_from_store.assert_called_once_with("case-3", force_rebuild=True)
+
+
+def test_prepare_bm25_for_tabular_extraction_schedules_when_missing():
+    dp = MagicMock()
+    dp.bm25_retriever.available = True
+    dp.bm25_retriever.has_index.return_value = False
+
+    with patch("app.services.bm25_case_prewarm.schedule_bm25_prewarm") as schedule:
+        ready = prepare_bm25_for_tabular_extraction(dp, "case-tab")
+
+    assert ready is False
+    schedule.assert_called_once_with("case-tab")
+
+
+def test_prepare_bm25_for_tabular_extraction_returns_true_when_ready():
+    dp = MagicMock()
+    dp.bm25_retriever.available = True
+    dp.bm25_retriever.has_index.return_value = True
+
+    with patch("app.services.bm25_case_prewarm.schedule_bm25_prewarm") as schedule:
+        ready = prepare_bm25_for_tabular_extraction(dp, "case-tab")
+
+    assert ready is True
+    schedule.assert_not_called()
 
 
 def test_cancel_pending_bm25_prewarm_cancels_timer():

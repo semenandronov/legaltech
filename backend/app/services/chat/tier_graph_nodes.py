@@ -291,6 +291,4 @@ def parallel_retrieval_should_run(state: Dict[str, Any]) -> bool:
     tier = str(state.get("execution_tier") or "")
     if tier_skips_retrieval(tier):
         return False
-    if state.get("mode") == "draft":
-        return False
     return True

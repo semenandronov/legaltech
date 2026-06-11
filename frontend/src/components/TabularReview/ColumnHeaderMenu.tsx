@@ -14,6 +14,9 @@ import {
   Edit as EditIcon,
   PushPin as PinIcon,
   Delete as DeleteIcon,
+  ArrowUpward as ArrowUpwardIcon,
+  ArrowDownward as ArrowDownwardIcon,
+  ClearAll as ClearAllIcon,
 } from "@mui/icons-material"
 
 interface ColumnHeaderMenuProps {
@@ -21,15 +24,14 @@ interface ColumnHeaderMenuProps {
   columnLabel: string
   isPinned?: boolean
   disabled?: boolean
-  sortDirection?: "asc" | "desc" | null
+  sortDirection?: "asc" | "desc" | false
   onEdit?: (anchorEl: HTMLElement) => void
   onPin?: () => void
   onUnpin?: () => void
-  onMarkAllReviewed?: () => void
   onDelete?: () => void
   onSortAsc?: () => void
   onSortDesc?: () => void
-  onFilter?: () => void
+  onClearSort?: () => void
 }
 
 export const ColumnHeaderMenu: React.FC<ColumnHeaderMenuProps> = ({
@@ -37,10 +39,14 @@ export const ColumnHeaderMenu: React.FC<ColumnHeaderMenuProps> = ({
   columnLabel: _columnLabel,
   isPinned = false,
   disabled = false,
+  sortDirection = false,
   onEdit,
   onPin,
   onUnpin,
   onDelete,
+  onSortAsc,
+  onSortDesc,
+  onClearSort,
 }) => {
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)
   const triggerRef = React.useRef<HTMLButtonElement>(null)
@@ -55,6 +61,11 @@ export const ColumnHeaderMenu: React.FC<ColumnHeaderMenuProps> = ({
     setAnchorEl(null)
   }
 
+  const run = (fn?: () => void) => {
+    handleClose()
+    fn?.()
+  }
+
   const handleEdit = () => {
     handleClose()
     const anchor = triggerRef.current
@@ -63,19 +74,7 @@ export const ColumnHeaderMenu: React.FC<ColumnHeaderMenuProps> = ({
     }
   }
 
-  const handlePin = () => {
-    handleClose()
-    if (isPinned) {
-      onUnpin?.()
-    } else {
-      onPin?.()
-    }
-  }
-
-  const handleDelete = () => {
-    handleClose()
-    onDelete?.()
-  }
+  const showSort = onSortAsc || onSortDesc
 
   return (
     <>
@@ -101,23 +100,49 @@ export const ColumnHeaderMenu: React.FC<ColumnHeaderMenuProps> = ({
         transformOrigin={{ horizontal: "right", vertical: "top" }}
         anchorOrigin={{ horizontal: "right", vertical: "bottom" }}
       >
-        <MenuItem onClick={handlePin}>
+        {showSort && (
+          <>
+            <MenuItem onClick={() => run(onSortAsc)} selected={sortDirection === "asc"}>
+              <ListItemIcon>
+                <ArrowUpwardIcon fontSize="small" />
+              </ListItemIcon>
+              <ListItemText>По возрастанию</ListItemText>
+            </MenuItem>
+            <MenuItem onClick={() => run(onSortDesc)} selected={sortDirection === "desc"}>
+              <ListItemIcon>
+                <ArrowDownwardIcon fontSize="small" />
+              </ListItemIcon>
+              <ListItemText>По убыванию</ListItemText>
+            </MenuItem>
+            {sortDirection && onClearSort && (
+              <MenuItem onClick={() => run(onClearSort)}>
+                <ListItemIcon>
+                  <ClearAllIcon fontSize="small" />
+                </ListItemIcon>
+                <ListItemText>Сбросить сортировку</ListItemText>
+              </MenuItem>
+            )}
+            <Divider />
+          </>
+        )}
+
+        <MenuItem onClick={() => run(isPinned ? onUnpin : onPin)}>
           <ListItemIcon>
             <PinIcon fontSize="small" />
           </ListItemIcon>
           <ListItemText>{isPinned ? "Открепить колонку" : "Закрепить колонку"}</ListItemText>
         </MenuItem>
-        
+
         <MenuItem onClick={handleEdit}>
           <ListItemIcon>
             <EditIcon fontSize="small" />
           </ListItemIcon>
           <ListItemText>Редактировать</ListItemText>
         </MenuItem>
-        
+
         <Divider />
-        
-        <MenuItem onClick={handleDelete} disabled={disabled} sx={{ color: "error.main" }}>
+
+        <MenuItem onClick={() => run(onDelete)} disabled={disabled} sx={{ color: "error.main" }}>
           <ListItemIcon>
             <DeleteIcon fontSize="small" color="error" />
           </ListItemIcon>
@@ -127,4 +152,3 @@ export const ColumnHeaderMenu: React.FC<ColumnHeaderMenuProps> = ({
     </>
   )
 }
-

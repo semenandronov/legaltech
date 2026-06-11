@@ -1,5 +1,5 @@
 import { useNavigate, useLocation } from 'react-router-dom'
-import { LucideIcon, FolderOpen, ChevronLeft, ChevronRight, Scale, Workflow, FileText, Gavel } from 'lucide-react'
+import { LucideIcon, FolderOpen, ChevronLeft, ChevronRight, Scale, FileText, Gavel } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { fetchLegalCorpusStatus } from '../../services/api'
 import { useAuth } from '../../contexts/AuthContext'
@@ -41,10 +41,7 @@ const UnifiedSidebar = ({ navItems, title = 'Legal AI', showBackButton = true, f
   }
 
   const shouldShowBackButton = showBackButton && location.pathname.includes('/cases/') && location.pathname !== '/cases'
-  const hasWorkflowItem = navItems.some((item) => item.path === '/workflows' || item.id === 'workflows')
-  const renderedNavItems = hasWorkflowItem
-    ? navItems
-    : [...navItems, { id: 'workflows', label: 'Workflows', icon: Workflow, path: '/workflows' }]
+  const renderedNavItems = navItems
 
   useEffect(() => {
     localStorage.setItem(SIDEBAR_STATE_KEY, String(userCollapsed))

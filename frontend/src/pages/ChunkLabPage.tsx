@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
-import { FolderOpen, MessageSquare, Clock, Workflow, Scissors, Upload, RefreshCw } from 'lucide-react'
+import { FolderOpen, MessageSquare, Clock, Scissors, Upload, RefreshCw } from 'lucide-react'
 import api, { getApiUrl } from '../services/api'
 import { TabularDocumentViewer } from '../components/TabularReview/TabularDocumentViewer'
 import { buildChunkLabViewerCellData } from '../utils/chunkLabViewerCellData'
@@ -58,7 +58,6 @@ const ChunkLabPage = () => {
       { id: 'cases', label: 'Дела', icon: FolderOpen, path: '/cases' },
       { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
       { id: 'chunk-lab', label: 'Чанки', icon: Scissors, path: `/cases/${caseId}/chunk-lab` },
-      { id: 'workflows', label: 'Workflows', icon: Workflow, path: '/workflows' },
       { id: 'history', label: 'История', icon: Clock, path: '/history' },
     ],
     [caseId],

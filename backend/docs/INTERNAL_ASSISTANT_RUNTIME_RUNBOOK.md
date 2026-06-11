@@ -66,6 +66,7 @@ Enabled when `CASE_ASSISTANT_ADAPTIVE_TIER_ENABLED=true` (default). Policy resol
 - `CASE_ASSISTANT_STANDARD_MAX_RETRIEVAL_ROUNDS`, `CASE_ASSISTANT_DEEP_MAX_RETRIEVAL_ROUNDS`
 - `CASE_ASSISTANT_TIER_LLM_ENABLED`, `CASE_ASSISTANT_TIER_CLASSIFIER_MODEL` — optional structured tier classifier before graph
 - `CASE_ASSISTANT_STREAM_CASE_CHAT` — token streaming for in-case chat (no editor document)
+- `CASE_ASSISTANT_STREAM_ACTIVITY_UI` (default `true`) — SSE `assistant_activity` steps: stable stage label + dynamic details from pipeline facts (scope, hit counts, queries)
 - `ASSISTANT_ASYNC_PERSIST_ENABLED` (default `true`) — commit assistant message after SSE `finish`, not before connection close
 - `ASSISTANT_ASYNC_PERSIST_MAX_RETRIES` — background DB retries (default `2`)
 - `GLOBAL_ASSISTANT_STREAM_GRAPH_PROGRESS` (default `true`) — SSE status during global LangGraph retrieval before LLM generation

@@ -39,9 +39,6 @@ import {
   Close as CloseIcon,
   Add as AddIcon,
   PlayArrow as PlayArrowIcon,
-  UnfoldMore as UnfoldMoreIcon,
-  ArrowUpward as ArrowUpwardIcon,
-  ArrowDownward as ArrowDownwardIcon,
   ContentCopy as ContentCopyIcon,
 } from '@mui/icons-material'
 import { TabularRow, TabularColumn, TabularCell, CellDetails, SourceReference } from "@/services/tabularReviewApi"
@@ -65,6 +62,9 @@ import { AdvancedFiltersPanel, AdvancedFilters } from "./AdvancedFiltersPanel"
 import { useKeyboardNavigation } from "@/hooks/useKeyboardNavigation"
 import { FilterPopover } from "./FilterPopover"
 import { ColumnHeaderMenu } from "./ColumnHeaderMenu"
+import { SortableColumnHeader } from "./SortableColumnHeader"
+import { applyColumnValueFilters } from "@/utils/tabularColumnFilters"
+import { compareTabularCellValuesForSort } from "@/utils/tabularDateUtils"
 
 // Базовая ширина колонок
 const DEFAULT_COLUMN_WIDTH = 380
@@ -179,11 +179,6 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
 
   // Apply advanced filters to rows
   const applyAdvancedFilters = React.useCallback((rows: typeof tableData.rows, filters: AdvancedFilters, columns: TabularColumn[]) => {
-    // Normalize cell value for comparison (empty -> same key as in FilterPopover)
-    const EMPTY_VALUE_KEY = ""
-    const normalizeCellValue = (val: string | null | undefined): string =>
-      val == null || val === "" ? EMPTY_VALUE_KEY : String(val).trim()
-
     // Check if any filters are active
     const hasActiveFilters = 
       filters.cellStatuses.length > 0 ||
@@ -203,18 +198,13 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
 
     if (!hasActiveFilters) return rows
 
-    return rows.filter((row) => {
-      const conditions: boolean[] = []
+    let filtered = rows
+    if (filters.columnValueFilters?.length) {
+      filtered = applyColumnValueFilters(filtered, filters.columnValueFilters, columns)
+    }
 
-      // Column value filters (each condition: cell value in selectedValues; all conditions AND)
-      const activeValueFilters = filters.columnValueFilters?.filter((c) => c.selectedValues.length > 0) ?? []
-      if (activeValueFilters.length > 0) {
-        const valueMatch = activeValueFilters.every((cond) => {
-          const cellVal = normalizeCellValue(row.cells[cond.columnId]?.cell_value ?? null)
-          return cond.selectedValues.includes(cellVal)
-        })
-        conditions.push(valueMatch)
-      }
+    return filtered.filter((row) => {
+      const conditions: boolean[] = []
 
       // Cell status filter
       if (filters.cellStatuses.length > 0) {
@@ -309,6 +299,9 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
 
   // Build columns dynamically
   const columns = React.useMemo<ColumnDef<any>[]>(() => {
+    const sortDescFor = (columnId: string) =>
+      sorting.find((entry) => entry.id === columnId)?.desc ?? false
+
     // Row number column (first)
     const rowIndexColumn: ColumnDef<any> = {
       id: "row_index",
@@ -335,22 +328,21 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
       maxSize: DEFAULT_COLUMN_WIDTH,
       enableSorting: true,
       meta: { columnLabel: "Name" },
-      header: ({ column }) => {
-        const sortDir = column.getIsSorted()
-        return (
-          <Box
-            sx={{ display: 'flex', alignItems: 'center', gap: 0.5, cursor: column.getCanSort() ? 'pointer' : 'default' }}
-            onClick={column.getToggleSortingHandler()}
-          >
-            <Typography sx={{ fontWeight: 600, fontSize: '0.75rem', letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--text-secondary, #6B7280)' }}>
-              Name
-            </Typography>
-            {sortDir === 'asc' && <ArrowUpwardIcon sx={{ fontSize: 16, color: '#6B7280' }} />}
-            {sortDir === 'desc' && <ArrowDownwardIcon sx={{ fontSize: 16, color: '#6B7280' }} />}
-            {sortDir === false && <UnfoldMoreIcon sx={{ fontSize: 16, color: '#9CA3AF' }} />}
-          </Box>
-        )
-      },
+      sortingFn: (rowA, rowB, columnId) =>
+        compareTabularCellValuesForSort(
+          String(rowA.getValue(columnId) ?? ""),
+          String(rowB.getValue(columnId) ?? ""),
+          "text",
+          "file_name",
+          sortDescFor(columnId),
+        ),
+      header: ({ column }) => (
+        <SortableColumnHeader
+          label="Документ"
+          sortDirection={column.getIsSorted()}
+          onToggleSort={() => column.toggleSorting()}
+        />
+      ),
       cell: ({ row }) => (
         <Stack
           direction="row"
@@ -408,86 +400,35 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
 
     // All columns from tableData.columns (all dynamic, no filtering)
     const dynamicColumns: ColumnDef<any>[] = tableData.columns.map((col) => ({
-      id: col.id, // Explicitly set id to column.id
+      id: col.id,
       accessorKey: col.id,
       size: DEFAULT_COLUMN_WIDTH,
       minSize: DEFAULT_COLUMN_WIDTH,
       maxSize: DEFAULT_COLUMN_WIDTH,
+      enableSorting: true,
       meta: {
-        columnLabel: col.column_label, // Store column label in meta for dropdown
+        columnLabel: col.column_label,
       },
-      // Custom sorting function for date columns and cells with cell_value
       sortingFn: (rowA, rowB, columnId) => {
         const cellA: TabularCell | undefined = rowA.getValue(columnId)
         const cellB: TabularCell | undefined = rowB.getValue(columnId)
-        
         const valueA = cellA?.cell_value || ""
         const valueB = cellB?.cell_value || ""
-        
-        // Try to parse as dates if column type is date or column label contains date keywords
-        const isDateColumn = col.column_type === 'date' || 
-          col.column_label.toLowerCase().includes('дат') ||
-          col.column_label.toLowerCase().includes('date') ||
-          col.column_label.toLowerCase().includes('срок')
-        
-        if (isDateColumn) {
-          // Try multiple date formats
-          const parseDate = (str: string): number => {
-            if (!str || str === '-' || str === 'N/A') return 0
-            
-            // Try DD.MM.YYYY format
-            const dotMatch = str.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/)
-            if (dotMatch) {
-              return new Date(parseInt(dotMatch[3]), parseInt(dotMatch[2]) - 1, parseInt(dotMatch[1])).getTime()
-            }
-            
-            // Try YYYY-MM-DD format
-            const isoMatch = str.match(/(\d{4})-(\d{2})-(\d{2})/)
-            if (isoMatch) {
-              return new Date(parseInt(isoMatch[1]), parseInt(isoMatch[2]) - 1, parseInt(isoMatch[3])).getTime()
-            }
-            
-            // Try to extract any date-like pattern
-            const anyDateMatch = str.match(/(\d{1,2})[\.\/\-](\d{1,2})[\.\/\-](\d{2,4})/)
-            if (anyDateMatch) {
-              const year = anyDateMatch[3].length === 2 ? 2000 + parseInt(anyDateMatch[3]) : parseInt(anyDateMatch[3])
-              return new Date(year, parseInt(anyDateMatch[2]) - 1, parseInt(anyDateMatch[1])).getTime()
-            }
-            
-            // Fallback to Date.parse
-            const parsed = Date.parse(str)
-            return isNaN(parsed) ? 0 : parsed
-          }
-          
-          const dateA = parseDate(valueA)
-          const dateB = parseDate(valueB)
-          
-          if (dateA !== 0 || dateB !== 0) {
-            return dateA - dateB
-          }
-        }
-        
-        // Default string comparison
-        return valueA.localeCompare(valueB, 'ru')
+        return compareTabularCellValuesForSort(
+          valueA,
+          valueB,
+          col.column_type,
+          col.column_label,
+          sortDescFor(columnId),
+        )
       },
-      header: () => (
+      header: ({ column: tableColumn }) => (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, width: '100%' }}>
-          <Box
-            component="span"
-            onClick={(e) => {
-              e.stopPropagation()
-              onColumnEdit?.(col.id, e.currentTarget as HTMLElement)
-            }}
-            sx={{
-              flex: 1,
-              cursor: onColumnEdit ? 'pointer' : 'default',
-              '&:hover': onColumnEdit ? { opacity: 0.8 } : {},
-            }}
-          >
-            <Typography sx={{ fontWeight: 600, fontSize: '0.75rem', letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--text-secondary, #6B7280)' }}>
-              {col.column_label}
-            </Typography>
-          </Box>
+          <SortableColumnHeader
+            label={col.column_label}
+            sortDirection={tableColumn.getIsSorted()}
+            onToggleSort={() => tableColumn.toggleSorting()}
+          />
           {onRunColumn && col.column_type !== 'manual_input' && (
             <Tooltip title="Запустить ИИ для заполнения колонки">
               <IconButton
@@ -515,6 +456,10 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
               columnLabel={col.column_label}
               isPinned={Boolean(col.is_pinned)}
               disabled={runningColumnIds?.has(col.id)}
+              sortDirection={tableColumn.getIsSorted()}
+              onSortAsc={() => tableColumn.toggleSorting(false)}
+              onSortDesc={() => tableColumn.toggleSorting(true)}
+              onClearSort={() => tableColumn.clearSorting()}
               onEdit={
                 onColumnEdit
                   ? (anchorEl) => onColumnEdit(col.id, anchorEl)
@@ -776,7 +721,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
 
     const baseColumns = [rowIndexColumn, fileColumn, ...dynamicColumns]
     return onAddColumnClick ? [...baseColumns, addColumnColumn] : baseColumns
-  }, [tableData.columns, reviewId, onCellClick, onRemoveDocument, onColumnEdit, onColumnDelete, onAddColumnClick, onRunColumn, runningColumnIds, processingCellKeys])
+  }, [tableData.columns, reviewId, sorting, onCellClick, onRemoveDocument, onColumnEdit, onColumnDelete, onAddColumnClick, onRunColumn, runningColumnIds, processingCellKeys])
 
   const table = useReactTable({
     data: tableRows,

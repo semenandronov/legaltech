@@ -140,6 +140,11 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
       onUpdate: ({ editor: ed }) => {
         debouncedOnChange(ed.getHTML())
       },
+      onCreate: ({ editor: ed }) => {
+        queueMicrotask(() => {
+          ed.commands.syncDraftGapMarks()
+        })
+      },
       onSelectionUpdate: ({ editor: ed }) => {
         const { from, to } = ed.state.selection
         onSelectionChangeRef.current(ed.state.doc.textBetween(from, to))
@@ -161,6 +166,9 @@ export const DocumentEditor = forwardRef<DocumentEditorRef, DocumentEditorProps>
     if (editor && content !== editor.getHTML() && content !== lastEditorContentRef.current) {
       editor.commands.setContent(content, false)
       lastEditorContentRef.current = content
+      queueMicrotask(() => {
+        editor.commands.syncDraftGapMarks()
+      })
     }
   }, [content, editor])
 

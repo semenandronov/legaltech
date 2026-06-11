@@ -994,6 +994,13 @@ class Config:
     CASE_ASSISTANT_STREAM_CASE_CHAT: bool = (
         os.getenv("CASE_ASSISTANT_STREAM_CASE_CHAT", "true").strip().lower() == "true"
     )
+    # Пошаговый прогресс в UI (этап + динамические детали из фактов пайплайна).
+    CASE_ASSISTANT_STREAM_ACTIVITY_UI: bool = (
+        os.getenv("CASE_ASSISTANT_STREAM_ACTIVITY_UI", "true").strip().lower() == "true"
+    )
+    CASE_ASSISTANT_STREAM_REASONING_UI: bool = (
+        os.getenv("CASE_ASSISTANT_STREAM_REASONING_UI", "false").strip().lower() == "true"
+    )
     # Не блокировать SSE на commit ответа ассистента (case + global).
     ASSISTANT_ASYNC_PERSIST_ENABLED: bool = (
         os.getenv("ASSISTANT_ASYNC_PERSIST_ENABLED", "true").strip().lower() == "true"
@@ -1253,49 +1260,24 @@ class Config:
     # LangGraph Postgres Checkpointer Pool Settings
     LANGGRAPH_POSTGRES_POOL_MAX_SIZE: int = int(os.getenv("LANGGRAPH_POSTGRES_POOL_MAX_SIZE", "20"))  # Max connections in pool
 
-    # Workflow DeepAgents integration flags (used in app.main startup + workflow engine)
-    WORKFLOW_DEEPAGENTS_CHECKPOINTER_ENABLED: bool = os.getenv(
-        "WORKFLOW_DEEPAGENTS_CHECKPOINTER_ENABLED", "true"
+    # Deep agent runs (Legora-style orchestration)
+    AGENT_RUNS_ENABLED: bool = os.getenv("AGENT_RUNS_ENABLED", "true").lower() == "true"
+    AGENT_RUNS_CHECKPOINTER_ENABLED: bool = os.getenv(
+        "AGENT_RUNS_CHECKPOINTER_ENABLED", "true"
     ).lower() == "true"
-    WORKFLOW_DEEPAGENTS_HITL_ENABLED: bool = os.getenv(
-        "WORKFLOW_DEEPAGENTS_HITL_ENABLED", "false"
-    ).lower() == "true"
-    WORKFLOW_DEEPAGENTS_SKILLS_PATHS: str = os.getenv("WORKFLOW_DEEPAGENTS_SKILLS_PATHS", "")
-    WORKFLOW_DEEPAGENTS_MEMORY_PATHS: str = os.getenv("WORKFLOW_DEEPAGENTS_MEMORY_PATHS", "")
-    WORKFLOW_DEEPAGENTS_MIDDLEWARE: str = os.getenv("WORKFLOW_DEEPAGENTS_MIDDLEWARE", "")
-    WORKFLOW_DEEPAGENTS_TOOL_CALL_RUN_LIMIT: int = int(
-        os.getenv("WORKFLOW_DEEPAGENTS_TOOL_CALL_RUN_LIMIT", "0") or "0"
+    AGENT_RUNS_RECURSION_LIMIT: int = int(os.getenv("AGENT_RUNS_RECURSION_LIMIT", "50") or "50")
+    AGENT_RUNS_TOOL_CALL_RUN_LIMIT: int = int(os.getenv("AGENT_RUNS_TOOL_CALL_RUN_LIMIT", "32") or "32")
+    AGENT_RUNS_MODEL_CALL_RUN_LIMIT: int = int(os.getenv("AGENT_RUNS_MODEL_CALL_RUN_LIMIT", "48") or "48")
+    AGENT_RUNS_TOOL_TIMEOUT_SEC: float = float(os.getenv("AGENT_RUNS_TOOL_TIMEOUT_SEC", "120") or "120")
+    AGENT_RUNS_INTERRUPT_ON_TOOLS: str = os.getenv("AGENT_RUNS_INTERRUPT_ON_TOOLS", "")
+    AGENT_RUNS_SYSTEM_PROMPT: str = os.getenv("AGENT_RUNS_SYSTEM_PROMPT", "")
+    AGENT_RUNS_WORKER_ENABLED: bool = os.getenv("AGENT_RUNS_WORKER_ENABLED", "true").lower() == "true"
+    AGENT_RUNS_WORKER_POLL_SEC: float = float(os.getenv("AGENT_RUNS_WORKER_POLL_SEC", "0.5") or "0.5")
+    AGENT_RUNS_SSE_IDLE_SEC: float = float(os.getenv("AGENT_RUNS_SSE_IDLE_SEC", "600") or "600")
+    AGENT_RUNS_DRAFT_TOOL_ENABLED: bool = os.getenv("AGENT_RUNS_DRAFT_TOOL_ENABLED", "true").lower() == "true"
+    AGENT_RUNS_DRAFT_TOOL_TIMEOUT_SEC: float = float(
+        os.getenv("AGENT_RUNS_DRAFT_TOOL_TIMEOUT_SEC", "900") or "900"
     )
-    WORKFLOW_DEEPAGENTS_MODEL_CALL_RUN_LIMIT: int = int(
-        os.getenv("WORKFLOW_DEEPAGENTS_MODEL_CALL_RUN_LIMIT", "0") or "0"
-    )
-    WORKFLOW_DEEPAGENTS_INTERRUPT_ON_TOOLS: str = os.getenv(
-        "WORKFLOW_DEEPAGENTS_INTERRUPT_ON_TOOLS",
-        "document_draft,tabular_review,playbook_check",
-    )
-    WORKFLOW_DEEPAGENTS_COMPOSITE_BACKEND_ENABLED: bool = os.getenv(
-        "WORKFLOW_DEEPAGENTS_COMPOSITE_BACKEND_ENABLED", "true"
-    ).lower() == "true"
-    WORKFLOW_DEEPAGENTS_MEMORIES_DIR: str = os.getenv(
-        "WORKFLOW_DEEPAGENTS_MEMORIES_DIR", "/memories"
-    ).strip()
-    WORKFLOW_DEEPAGENTS_PERMISSIONS_ENABLED: bool = os.getenv(
-        "WORKFLOW_DEEPAGENTS_PERMISSIONS_ENABLED", "true"
-    ).lower() == "true"
-    WORKFLOW_DEEPAGENTS_ALLOWED_READ_PATHS: str = os.getenv(
-        "WORKFLOW_DEEPAGENTS_ALLOWED_READ_PATHS",
-        "/memories,/tmp,/app/uploads,./uploads",
-    )
-    WORKFLOW_DEEPAGENTS_ALLOWED_WRITE_PATHS: str = os.getenv(
-        "WORKFLOW_DEEPAGENTS_ALLOWED_WRITE_PATHS",
-        "/memories,/tmp,./uploads",
-    )
-    WORKFLOW_DEEPAGENTS_LANGSMITH_TRACING: bool = os.getenv(
-        "WORKFLOW_DEEPAGENTS_LANGSMITH_TRACING", "false"
-    ).lower() == "true"
-    WORKFLOW_DEEPAGENTS_SUBAGENTS_ENABLED: bool = os.getenv(
-        "WORKFLOW_DEEPAGENTS_SUBAGENTS_ENABLED", "true"
-    ).lower() == "true"
 
 
 # Create config instance

@@ -132,8 +132,6 @@ export interface AssistantMessageProps {
   /** Как у глобального ассистента: цитаты без linkCitationsInline (внутренний ассистент по делу). */
   preferLegacyCitations?: boolean
   isStreaming?: boolean
-  workflowProgressPercent?: number
-  workflowStatus?: "running" | "completed" | "failed"
   /** Полный SourceInfo из inline-цитаты / блоков — не сужать, иначе теряются bbox_regions и текст для PDF. */
   onSourceClick?: (source: SourceInfo) => void
   className?: string
@@ -151,8 +149,6 @@ export const AssistantMessage = React.memo(function AssistantMessage({
   answerBlocks,
   preferLegacyCitations = false,
   isStreaming = false,
-  workflowProgressPercent,
-  workflowStatus,
   className,
   children,
   onSourceClick,
@@ -236,13 +232,13 @@ export const AssistantMessage = React.memo(function AssistantMessage({
     <Message role="assistant" className={className}>
       <div className="text-sm leading-relaxed prose prose-sm max-w-none" style={{ fontFamily: 'var(--font-body)' }}>
         {/* Unified reasoning + tool calls display (Leya-style) */}
-        {((toolCalls && toolCalls.length > 0) || (isStreaming && !content)) && (
+        {((toolCalls && toolCalls.length > 0) ||
+          (reasoningSteps && reasoningSteps.length > 0) ||
+          (isStreaming && !content)) && (
           <ThinkingBlock
-            steps={[]}
+            steps={reasoningSteps || []}
             toolCalls={toolCalls}
             isStreaming={isStreaming && !content}
-            progressPercent={workflowProgressPercent}
-            workflowStatus={workflowStatus}
             defaultOpen={true}
           />
         )}

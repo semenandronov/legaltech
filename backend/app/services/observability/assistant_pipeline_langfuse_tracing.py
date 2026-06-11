@@ -6,6 +6,18 @@
     case: http.*, orchestrator.*, session_context.*, graph_prepare.*, persist.*
     global: http.*, orchestrator.*, session_context.*, langgraph.*, generation.*, persist.*
 
+    graph.generate.build_prompt
+    graph.generate.structured_citations
+      ├── structured_citations.prepare_chunks
+      ├── structured_citations.llm_invoke   (Langfuse GENERATION)
+      └── structured_citations.map_citations
+    graph.generate.llm_stream               (Langfuse GENERATION, default path)
+    graph.generate.postprocess
+  stream.finalize_response
+  stream.emit_finish
+  orchestrator.prepare_session
+  orchestrator.save_assistant_message
+
 Включение: ASSISTANT_PIPELINE_LANGFUSE_DETAILED или CASE_ASSISTANT_LANGFUSE_DETAILED.
 """
 from __future__ import annotations

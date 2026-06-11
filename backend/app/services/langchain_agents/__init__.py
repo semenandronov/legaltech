@@ -5,11 +5,9 @@ LangChain Agents - Страничная архитектура v2
 
 agents/ — Настоящие агенты (ReAct, с tools, циклами, HITL)
   - ChatReActAgent: Агент для страницы чата
-  - WorkflowOrchestratorAgent: Агент для Workflows (планирование, параллелизация)
 
 graphs/ — LangGraph графы для страниц
   - ChatGraph: Граф для AssistantChatPage (режимы: normal/deep_think/garant/draft)
-  - WorkflowGraph: Граф для WorkflowsPage (параллельное выполнение)
 
 graphs/subgraphs/ — Sub-graphs для модульности
   - rag_retrieval: RAG поиск
@@ -40,7 +38,6 @@ assistants/ — Преднастроенные assistants
   - legal-assistant: Общий юридический ассистент
   - deep-analyst: Глубокий анализ
   - document-drafter: Составление документов
-  - workflow-orchestrator: Оркестратор workflows
 
 *_graph_service.py — Сервисы для интеграции графов в API
 """
@@ -48,25 +45,18 @@ assistants/ — Преднастроенные assistants
 # Агенты
 from app.services.langchain_agents.agents import (
     ChatReActAgent,
-    WorkflowOrchestratorAgent,
 )
 
 # Графы
 from app.services.langchain_agents.graphs import (
     create_chat_graph,
     ChatGraphState,
-    create_workflow_graph,
-    WorkflowGraphState,
 )
 
 # Сервисы интеграции
 from app.services.langchain_agents.chat_graph_service import (
     ChatGraphService,
     get_chat_graph_service,
-)
-from app.services.langchain_agents.workflow_graph_service import (
-    WorkflowGraphService,
-    get_workflow_graph_service,
 )
 
 # Узлы
@@ -150,19 +140,14 @@ from app.services.langchain_agents.graphs.subgraphs import (
 __all__ = [
     # Агенты
     "ChatReActAgent",
-    "WorkflowOrchestratorAgent",
     
     # Графы
     "create_chat_graph",
     "ChatGraphState",
-    "create_workflow_graph",
-    "WorkflowGraphState",
     
     # Сервисы
     "ChatGraphService",
     "get_chat_graph_service",
-    "WorkflowGraphService",
-    "get_workflow_graph_service",
     
     # Узлы
     "discrepancy_risk_node",

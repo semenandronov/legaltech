@@ -425,32 +425,6 @@ async def get_suggestions(
         raise HTTPException(status_code=500, detail=f"Ошибка при получении подсказок: {str(e)}")
 
 
-@router.get("/{case_id}/workflow-templates")
-async def get_workflow_templates(
-    case_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Получить список доступных workflow templates для дела"""
-    # Проверяем доступ к делу
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
-    
-    if not case:
-        raise HTTPException(status_code=404, detail="Дело не найдено")
-    
-    try:
-        from app.services.langchain_agents.legacy_stubs import list_workflow_templates
-        
-        templates = list_workflow_templates()
-        return [template.dict() for template in templates]
-    except Exception as e:
-        logger.error(f"Error getting workflow templates for case {case_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Ошибка при получении шаблонов: {str(e)}")
-
-
 @router.delete("/{case_id}", status_code=204)
 async def delete_case(
     case_id: str,
@@ -483,7 +457,7 @@ async def delete_case(
         dependent_tables = [
             "document_versions", "editor_documents",
             "tabular_reviews", "agent_interactions", "agent_interaction_steps",
-            "workflow_executions", "folder_items", "folders",
+            "folder_items", "folders",
             "playbook_validations",
             "analysis_results", "discrepancies", "timeline_events",
             "document_chunks", "document_classifications",

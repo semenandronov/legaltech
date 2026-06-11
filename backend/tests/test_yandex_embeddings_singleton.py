@@ -24,34 +24,26 @@ def test_openai_compat_one_string_per_request():
 
     texts = [f"chunk {i}" for i in range(5)]
 
-    with patch("app.services.yandex_openai_llm.yandex_openai_sdk_client") as client_fn:
-        client = MagicMock()
-        client_fn.return_value = client
-
-        def _create(*, model, input, encoding_format):
-            assert isinstance(input, str)
-            resp = MagicMock()
-            resp.data = [MagicMock(embedding=[0.1] * 256)]
-            return resp
-
-        client.embeddings.create.side_effect = _create
+    with patch(
+        "app.services.yandex_embeddings._create_yandex_embedding_openai_compat_http",
+    ) as create_http:
+        create_http.side_effect = lambda *, model, input_text: [0.1] * 256
 
         with patch.object(emb_mod.config, "YANDEX_EMBEDDINGS_TRANSPORT", "openai"):
-            with patch.object(emb_mod.config, "YANDEX_EMBEDDING_MAX_PARALLEL_REQUESTS", 5):
-                with patch.object(emb_mod.config, "YANDEX_EMBEDDING_MIN_REQUEST_INTERVAL_SEC", 0):
-                    with patch(
-                        "app.services.yandex_embeddings.split_text_for_embedding_api",
-                        side_effect=lambda t: [t],
-                    ):
-                        with patch.object(
-                            emb_mod,
-                            "_resolve_embedding_model_uri",
-                            return_value="emb://fld/text-search-doc/latest",
-                        ) as resolve:
-                            out = inst.embed_documents(texts)
+            with patch.object(emb_mod.config, "YANDEX_EMBEDDING_MIN_REQUEST_INTERVAL_SEC", 0):
+                with patch(
+                    "app.services.yandex_embeddings.split_text_for_embedding_api",
+                    side_effect=lambda t: [t],
+                ):
+                    with patch.object(
+                        emb_mod,
+                        "_resolve_embedding_model_uri",
+                        return_value="emb://fld/text-search-doc/latest",
+                    ) as resolve:
+                        out = inst.embed_documents(texts)
 
     assert len(out) == 5
-    assert client.embeddings.create.call_count == 5
+    assert create_http.call_count == 5
     resolve.assert_called()
     assert resolve.call_args.kwargs.get("for_query") is False
 

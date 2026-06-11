@@ -1,7 +1,6 @@
-"""Initialize system templates for Playbooks and Workflows"""
+"""Initialize system templates for Playbooks"""
 from sqlalchemy.orm import Session
 from app.models.playbook import Playbook, PlaybookRule
-from app.models.workflow import WorkflowDefinition, SYSTEM_WORKFLOW_TEMPLATES
 import logging
 
 logger = logging.getLogger(__name__)
@@ -159,37 +158,10 @@ def init_system_playbooks(db: Session):
     logger.info("System playbooks initialized: NDA, Service Agreement")
 
 
-def init_system_workflows(db: Session):
-    """Initialize system workflow definitions"""
-    
-    # Check if already initialized
-    existing = db.query(WorkflowDefinition).filter(WorkflowDefinition.is_system == True).first()
-    if existing:
-        logger.info("System workflows already initialized")
-        return
-    
-    for template in SYSTEM_WORKFLOW_TEMPLATES:
-        definition = WorkflowDefinition(
-            name=template["name"],
-            display_name=template["display_name"],
-            description=template["description"],
-            category=template["category"],
-            available_tools=template["available_tools"],
-            default_plan=template.get("default_plan"),
-            is_system=True,
-            is_public=True
-        )
-        db.add(definition)
-    
-    db.commit()
-    logger.info(f"System workflows initialized: {len(SYSTEM_WORKFLOW_TEMPLATES)} templates")
-
-
 def init_all_system_templates(db: Session):
     """Initialize all system templates"""
     try:
         init_system_playbooks(db)
-        init_system_workflows(db)
         logger.info("All system templates initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize system templates: {e}", exc_info=True)

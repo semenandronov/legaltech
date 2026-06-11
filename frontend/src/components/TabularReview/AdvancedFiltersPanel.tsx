@@ -27,6 +27,9 @@ import {
   Clear as ClearIcon,
 } from "@mui/icons-material"
 import { TabularColumn } from "@/services/tabularReviewApi"
+import type { ColumnValueFilterCondition } from "@/utils/tabularColumnFilters"
+
+export type { ColumnValueFilterCondition } from "@/utils/tabularColumnFilters"
 
 export interface AdvancedFilters {
   // Status filters
@@ -56,17 +59,11 @@ export interface AdvancedFilters {
   // Text search in specific columns
   columnTextFilters: Record<string, string> // columnId -> search text
   
-  // Column value conditions (column equals one of selected values)
+  // Column value conditions (equals, contains, date range, etc.)
   columnValueFilters: ColumnValueFilterCondition[]
   
   // Logic operator
   logicOperator: "AND" | "OR" // How to combine multiple filters
-}
-
-export interface ColumnValueFilterCondition {
-  columnId: string
-  operator: "equals"
-  selectedValues: string[]
 }
 
 const defaultFilters: AdvancedFilters = {

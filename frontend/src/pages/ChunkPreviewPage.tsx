@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
-import { FolderOpen, MessageSquare, Clock, Workflow, Scissors } from 'lucide-react'
+import { FolderOpen, MessageSquare, Clock, Scissors } from 'lucide-react'
 import api, { getApiUrl } from '../services/api'
 
 type ChunkPreviewRow = {
@@ -34,7 +34,6 @@ const ChunkPreviewPage = () => {
     () => [
       { id: 'cases', label: 'Дела', icon: FolderOpen, path: '/cases' },
       { id: 'assistant', label: 'Ассистент', icon: MessageSquare, path: '/assistant' },
-      { id: 'workflows', label: 'Workflows', icon: Workflow, path: '/workflows' },
       { id: 'history', label: 'История', icon: Clock, path: '/history' },
       { id: 'chunk-preview', label: 'Chunk Preview', icon: Scissors, path: '/chunk-preview' },
     ],

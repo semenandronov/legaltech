@@ -449,44 +449,24 @@ class CaseVectorStore:
             logger.error(f"Failed to add texts to PGVector store: {e}", exc_info=True)
             raise
     
-    def similarity_search(
+    def _embedding_vector_literal(self, query_embedding: Sequence[float]) -> str:
+        return "[" + ",".join(str(float(x)) for x in query_embedding) + "]"
+
+    def similarity_search_by_vector(
         self,
-        query: str,
+        query_embedding: Sequence[float],
         case_id: str,
         k: int = 5,
-        filter: Optional[Dict[str, Any]] = None
+        filter: Optional[Dict[str, Any]] = None,
     ) -> List[Document]:
-        """
-        Search for similar documents within a specific case
-        
-        Args:
-            query: Search query
-            case_id: Case identifier for filtering
-            k: Number of results
-            filter: Additional metadata filters
-            
-        Returns:
-            List of Document objects
-        """
-        # Create query embedding
-        query_embedding = self.embeddings.embed_query(query)
-        # Convert to PostgreSQL array format string
-        query_embedding_str = '[' + ','.join(str(float(x)) for x in query_embedding) + ']'
-        
-        # Combine case_id filter with additional filters
-        # Use case_id column for filtering (faster than JSONB)
-        search_filter = {}
-        if filter:
-            search_filter.update(filter)
-        
+        """Dense search with a precomputed query vector (tabular column runs, cached queries)."""
+        query_embedding_str = self._embedding_vector_literal(query_embedding)
+        search_filter = dict(filter or {})
         try:
             with self.engine.connect() as conn:
-                # Build filter condition with parameterized queries (prevents SQL injection)
-                # Use case_id column directly for better performance
                 filter_conditions = ["collection_id = %s", "case_id = %s"]
                 params = [self.collection_name, case_id]
-                
-                # Add additional filters using parameterized queries for JSONB
+
                 for key, value in search_filter.items():
                     if isinstance(value, (list, tuple, set)):
                         values = [str(v) for v in value if str(v).strip()]
@@ -499,67 +479,86 @@ class CaseVectorStore:
                         params.append(key)
                         params.extend(values)
                         continue
-                    # Use parameterized query for JSONB access
                     filter_conditions.append("document->'metadata'->>%s = %s")
                     params.extend([key, str(value)])
-                
+
                 where_sql = " AND ".join(filter_conditions)
-                
-                # Use raw psycopg2 cursor to avoid SQLAlchemy parameter style conflicts
                 table_name = VectorEmbedding.__tablename__
                 sql = f"""
-                    SELECT uuid, document, 
+                    SELECT uuid, document,
                            1 - (embedding <=> %s::vector) as similarity
                     FROM {table_name}
                     WHERE {where_sql}
                     ORDER BY embedding <=> %s::vector
                     LIMIT %s
                 """
-                
-                # ПРАВИЛЬНЫЙ ПОРЯДОК ПАРАМЕТРОВ:
-                # SQL использует: %s::vector (SELECT), затем WHERE параметры, затем %s::vector (ORDER BY), затем LIMIT
-                # Поэтому порядок: [query_embedding_str, collection_id, case_id, ...filters..., query_embedding_str, k]
-                # Текущий params = [collection_id, case_id, ...filters...]
-                # Нужно: [query_embedding_str] + params + [query_embedding_str, k]
                 params = [query_embedding_str] + params + [query_embedding_str, k]
-                
-                # Get raw connection properly - use conn.connection for SQLAlchemy 1.4+
-                # conn.connection is the underlying DBAPI connection
                 raw_conn = conn.connection
                 cursor = raw_conn.cursor()
                 try:
                     cursor.execute(sql, params)
-                    
                     documents = []
                     for row in cursor.fetchall():
-                        doc_data = row[1]  # document column is at index 1
+                        doc_data = row[1]
                         if isinstance(doc_data, str):
                             doc_data = json.loads(doc_data)
-                        elif isinstance(doc_data, dict):
-                            pass  # Already a dict
-                        else:
+                        elif not isinstance(doc_data, dict):
                             doc_data = {}
-                        
-                        doc = Document(
-                            page_content=doc_data.get("page_content", ""),
-                            metadata=doc_data.get("metadata", {})
+                        documents.append(
+                            Document(
+                                page_content=doc_data.get("page_content", ""),
+                                metadata=doc_data.get("metadata", {}),
+                            )
                         )
-                        documents.append(doc)
                 finally:
                     cursor.close()
-                
-                logger.debug(f"Found {len(documents)} similar documents for case {case_id}")
+                logger.debug(
+                    "Found %s similar documents for case %s (precomputed vector)",
+                    len(documents),
+                    case_id,
+                )
                 return documents
         except Exception as e:
-            logger.error(f"Failed to search PGVector store: {e}", exc_info=True)
+            logger.error(f"Failed vector search in PGVector store: {e}", exc_info=True)
             raise
+
+    def similarity_search(
+        self,
+        query: str,
+        case_id: str,
+        k: int = 5,
+        filter: Optional[Dict[str, Any]] = None,
+        query_embedding: Optional[Sequence[float]] = None,
+    ) -> List[Document]:
+        """
+        Search for similar documents within a specific case
+        
+        Args:
+            query: Search query
+            case_id: Case identifier for filtering
+            k: Number of results
+            filter: Additional metadata filters
+            query_embedding: Optional precomputed query vector (skips embed_query)
+            
+        Returns:
+            List of Document objects
+        """
+        if query_embedding is None:
+            query_embedding = self.embeddings.embed_query(query)
+        return self.similarity_search_by_vector(
+            query_embedding,
+            case_id=case_id,
+            k=k,
+            filter=filter,
+        )
     
     def similarity_search_with_score(
         self,
         query: str,
         case_id: str,
         k: int = 5,
-        filter: Optional[Dict[str, Any]] = None
+        filter: Optional[Dict[str, Any]] = None,
+        query_embedding: Optional[Sequence[float]] = None,
     ) -> List[tuple]:
         """
         Search for similar documents with similarity scores
@@ -569,14 +568,14 @@ class CaseVectorStore:
             case_id: Case identifier for filtering
             k: Number of results
             filter: Additional metadata filters
+            query_embedding: Optional precomputed query vector
             
         Returns:
             List of (Document, score) tuples
         """
-        # Create query embedding
-        query_embedding = self.embeddings.embed_query(query)
-        # Convert to PostgreSQL array format string
-        query_embedding_str = '[' + ','.join(str(float(x)) for x in query_embedding) + ']'
+        if query_embedding is None:
+            query_embedding = self.embeddings.embed_query(query)
+        query_embedding_str = self._embedding_vector_literal(query_embedding)
         
         # Combine case_id filter with additional filters
         # Use case_id column for filtering (faster than JSONB)

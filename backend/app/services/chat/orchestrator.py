@@ -41,6 +41,9 @@ from app.services.langchain_agents.draft_hitl import (
     is_explicit_draft_reject_message,
     normalize_draft_action,
 )
+from app.services.observability.assistant_pipeline_langfuse_tracing import (
+    assistant_step_span,
+)
 from app.services.observability.langfuse_service import (
     create_trace_context,
     end_trace,
@@ -330,6 +333,16 @@ class ChatOrchestrator:
                     status="success",
                 ),
             )
+
+            if getattr(config, "CASE_ASSISTANT_STREAM_ACTIVITY_UI", True):
+                from app.services.chat.assistant_activity import (
+                    activity_sse,
+                    build_preparing_session_activity,
+                )
+
+                yield activity_sse(
+                    build_preparing_session_activity(question=request.question or "")
+                )
             
             # Проверяем доступ к делу
             verify_span = trace_span(
@@ -371,7 +384,13 @@ class ChatOrchestrator:
                 metadata={"requested_session_id": request.session_id},
             )
             try:
-                session_id = request.session_id or self.history_service.get_or_create_session(request.case_id)
+                with assistant_step_span(
+                    "case",
+                    "orchestrator.prepare_session",
+                    metadata={"case_id": request.case_id},
+                ) as orch_prep_out:
+                    session_id = request.session_id or self.history_service.get_or_create_session(request.case_id)
+                    orch_prep_out["session_id"] = session_id
                 run_ctx = ConversationPolicyService.build_run_context(
                     session_id=session_id,
                     user_id=str(request.current_user.id),
@@ -437,6 +456,18 @@ class ChatOrchestrator:
                         logger.debug("case_chat_prepare_session span end failed", exc_info=True)
             # Сообщаем клиенту session_id чтобы он мог продолжать ту же сессию
             yield SSESerializer.session(session_id)
+            if getattr(config, "CASE_ASSISTANT_STREAM_ACTIVITY_UI", True):
+                from app.services.chat.assistant_activity import (
+                    activity_sse,
+                    build_preparing_session_activity,
+                    mark_step_completed,
+                )
+
+                yield activity_sse(
+                    mark_step_completed(
+                        build_preparing_session_activity(question=request.question or "")
+                    )
+                )
 
             # Создаём placeholder для ответа ассистента
             assistant_placeholder = self.history_service.create_assistant_placeholder(
@@ -540,19 +571,29 @@ class ChatOrchestrator:
                     )
                     try:
                         save_started_at = time.monotonic()
-                        refs_save = None
-                        if answer_blocks_data:
-                            refs_save = {
-                                "citations": citations_data or [],
-                                "answer_blocks": answer_blocks_data,
-                            }
-                        elif citations_data:
-                            refs_save = citations_data
-                        self.history_service.update_assistant_message(
-                            message_id=assistant_placeholder.id,
-                            content=full_response,
-                            source_references=refs_save,
-                        )
+                        with assistant_step_span(
+                            "case",
+                            "orchestrator.save_assistant_message",
+                            metadata={
+                                "case_id": request.case_id,
+                                "session_id": session_id,
+                            },
+                        ) as orch_save_out:
+                            refs_save = None
+                            if answer_blocks_data:
+                                refs_save = {
+                                    "citations": citations_data or [],
+                                    "answer_blocks": answer_blocks_data,
+                                }
+                            elif citations_data:
+                                refs_save = citations_data
+                            self.history_service.update_assistant_message(
+                                message_id=assistant_placeholder.id,
+                                content=full_response,
+                                source_references=refs_save,
+                            )
+                            orch_save_out["content_chars"] = len(full_response)
+                            orch_save_out["citations_count"] = len(citations_data or [])
                         save_latency_ms = int((time.monotonic() - save_started_at) * 1000)
                         trace_contract_event(
                             trace_ctx,
@@ -999,7 +1040,22 @@ class ChatOrchestrator:
             ),
         )
         yield SSESerializer.status("routing", route="fast_path", task_type=request.task_type or "")
-        if getattr(config, "CASE_ASSISTANT_STREAM_REASONING_UI", False):
+        stream_activity_ui = bool(getattr(config, "CASE_ASSISTANT_STREAM_ACTIVITY_UI", True))
+        if stream_activity_ui:
+            from app.services.chat.assistant_activity import (
+                activity_sse,
+                build_fast_path_scope_activity,
+                build_stream_started_activity,
+            )
+
+            yield activity_sse(build_stream_started_activity(question=request.question))
+            yield activity_sse(
+                build_fast_path_scope_activity(
+                    question=request.question,
+                    attached_count=len(request.attached_file_ids or []),
+                )
+            )
+        elif getattr(config, "CASE_ASSISTANT_STREAM_REASONING_UI", False):
             yield SSESerializer.reasoning(
                 phase="retrieving",
                 step=1,
@@ -1078,6 +1134,24 @@ class ChatOrchestrator:
             db=self.db,
             file_ids=request.attached_file_ids,
         )
+        if stream_activity_ui:
+            from app.services.chat.assistant_activity import (
+                activity_sse,
+                build_fast_path_recall_completed,
+            )
+
+            unique_files = {
+                str((d.metadata or {}).get("file_id") or "")
+                for d in docs
+                if (d.metadata or {}).get("file_id")
+            }
+            yield activity_sse(
+                build_fast_path_recall_completed(
+                    question=request.question,
+                    retrieved_chunks=len(docs),
+                    docs_used=len(unique_files),
+                )
+            )
         if self._is_document_date_query(request.question):
             date_answer = self._build_document_date_answer_from_docs(docs)
             if date_answer:
@@ -1144,7 +1218,16 @@ class ChatOrchestrator:
             tags=["assistant", "case_assistant", "fast_path"],
         )
 
-        if getattr(config, "CASE_ASSISTANT_STREAM_REASONING_UI", False):
+        if stream_activity_ui:
+            from app.services.chat.assistant_activity import (
+                activity_sse,
+                build_fast_path_synthesis_activity,
+            )
+
+            yield activity_sse(
+                build_fast_path_synthesis_activity(overview=is_overview_query)
+            )
+        elif getattr(config, "CASE_ASSISTANT_STREAM_REASONING_UI", False):
             yield SSESerializer.reasoning(
                 phase="synthesizing",
                 step=2,
@@ -1569,6 +1652,14 @@ def prewarm_chat_runtime() -> Dict[str, Any]:
         readiness["legal_llm_ready"] = llm is not None
     except Exception as exc:
         logger.warning("Case assistant prewarm: legal_llm failed: %s", exc, exc_info=True)
+
+    try:
+        from app.services.yandex_embeddings import warmup_yandex_embeddings
+
+        readiness["yandex_embeddings_ready"] = warmup_yandex_embeddings()
+    except Exception as exc:
+        logger.warning("Case assistant prewarm: yandex embeddings failed: %s", exc, exc_info=True)
+        readiness["yandex_embeddings_ready"] = False
 
     readiness["elapsed_ms"] = int((time.monotonic() - started) * 1000)
     return readiness

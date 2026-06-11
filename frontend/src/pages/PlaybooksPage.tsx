@@ -19,7 +19,6 @@ import {
   ArrowLeft,
   MessageSquare,
   FileEdit,
-  Workflow,
   X,
   MoreVertical,
   Copy,
@@ -732,7 +731,6 @@ export default function PlaybooksPage({ embedded = false }: { embedded?: boolean
     { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
     { id: 'editor', label: 'Редактор', icon: FileEdit, path: `/cases/${caseId}/editor` },
     { id: 'playbooks', label: 'Playbooks', icon: BookOpen, path: `/cases/${caseId}/playbooks` },
-    { id: 'workflows', label: 'Workflows', icon: Workflow, path: `/cases/${caseId}/workflows` },
   ]
 
   useEffect(() => {

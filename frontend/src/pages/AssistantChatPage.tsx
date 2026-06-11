@@ -17,25 +17,20 @@ import {
   ThinkingBlock,
   type ThinkingStep,
   type ToolCallInfo,
-  type WorkflowPlanOutlineRow,
-  type WorkflowAgentTodoItem,
 } from '../components/Chat/ThinkingBlock'
 import { TabularDocumentViewer } from '../components/TabularReview/TabularDocumentViewer'
-import {
-  consumePendingWorkflowResult,
-  createWorkflowResultChatMessage,
-  saveWorkflowMessageToHistory,
-} from '../services/workflowResultsService'
 import { toast } from 'sonner'
-import { useWorkflowLiveExecution } from '../workflow/useWorkflowLiveExecution'
-import { countWorkflowArtifacts, type WorkflowArtifactsPayload } from '../workflow/workflowLiveHelpers'
-import { WorkflowArtifactCards } from '../components/Workflow/WorkflowArtifactCards'
 import {
   canSelectDraftMode,
   canEnableLegalResearch,
   canEnableCourtPractice,
 } from '../lib/chatInstrumentPolicy'
+import { agentRunsEnabled } from '../lib/agentRunsPolicy'
 import { useChatInstrumentSettings } from '../hooks/useChatInstrumentSettings'
+import {
+  applyAssistantActivityEvent,
+  applyReasoningEvent,
+} from '../lib/assistantActivity'
 
 // ─────────────────────────────────────────────────────────
 // Types
@@ -46,12 +41,6 @@ interface ChatMessage {
   sources?: SourceInfo[]
   reasoningSteps?: ThinkingStep[]
   toolCalls?: ToolCallInfo[]
-  workflowArtifacts?: WorkflowArtifactsPayload
-  workflowProgressPercent?: number
-  workflowStatus?: 'running' | 'completed' | 'failed'
-  workflowPlanOutline?: WorkflowPlanOutlineRow[]
-  workflowAgentTodos?: WorkflowAgentTodoItem[]
-  workflowPlanSource?: 'deepagents' | 'definition'
   draftPlan?: {
     title?: string
     type?: string
@@ -442,61 +431,6 @@ function CaseFilePickerModal({
     </div>
   )
 }
-
-// ─────────────────────────────────────────────────────────
-// Case-specific workflows
-// ─────────────────────────────────────────────────────────
-const WORKFLOWS = [
-  {
-    id: 1,
-    title: 'Ключевые сроки',
-    description: 'Извлеките все важные даты и дедлайны из документов дела.',
-    outputLabel: 'Результат',
-    steps: 1,
-    prompt: 'Какие ключевые сроки важны в этом деле?',
-  },
-  {
-    id: 2,
-    title: 'Анализ рисков',
-    description: 'Выявите риски и уязвимые места в документах дела.',
-    outputLabel: 'Результат',
-    steps: 2,
-    prompt: 'Какие риски есть в документах этого дела?',
-  },
-  {
-    id: 3,
-    title: 'Составление документа',
-    description: 'Опишите нужный документ, и AI составит его с учётом контекста дела.',
-    outputLabel: 'Черновик',
-    steps: 2,
-    prompt: 'Составь юридический документ на основе следующего описания:',
-    isDraft: true,
-  },
-  {
-    id: 4,
-    title: 'Суммы и стороны',
-    description: 'Извлеките суммы, стороны договора, организации из документов дела.',
-    outputLabel: 'Результат',
-    steps: 1,
-    prompt: 'Какие суммы и стороны упоминаются в документах этого дела?',
-  },
-  {
-    id: 5,
-    title: 'Анализ договора',
-    description: 'Загрузите договор и получите анализ условий, обязательств и рисков.',
-    outputLabel: 'Результат',
-    steps: 2,
-    prompt: 'Проанализируй условия, обязательства и риски в этом договоре:',
-  },
-  {
-    id: 6,
-    title: 'Резюме дела',
-    description: 'Получите краткое резюме дела с ключевыми выводами по документам.',
-    outputLabel: 'Результат',
-    steps: 1,
-    prompt: 'Сделай краткое резюме этого дела с ключевыми выводами по документам.',
-  },
-]
 
 const LEGAL_PROMPTS = [
   {
@@ -1034,21 +968,6 @@ const AssistantChatPage = () => {
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
-  const workflowResultProcessed = useRef(false)
-
-  const caseChatPath = caseId ? `/cases/${caseId}/chat` : '/cases'
-  const [artifactReturnPath, setArtifactReturnPath] = useState(caseChatPath)
-  const onWorkflowReturnPath = useCallback((path: string) => {
-    setArtifactReturnPath(path)
-  }, [])
-
-  useWorkflowLiveExecution({
-    locationSearch: location.search,
-    setMessages,
-    setIsStreaming,
-    onReturnPath: onWorkflowReturnPath,
-    defaultReturnChatPath: caseChatPath,
-  })
 
   // Сброс тумблеров при входе в чат другого дела (или повторном открытии маршрута).
   useEffect(() => {
@@ -1067,34 +986,6 @@ const AssistantChatPage = () => {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
-
-  // Handle pending workflow result
-  useEffect(() => {
-    const timer = setTimeout(async () => {
-      if (workflowResultProcessed.current) return
-      const pendingResult = consumePendingWorkflowResult()
-      if (pendingResult && pendingResult.case_id === caseId) {
-        workflowResultProcessed.current = true
-        const message = createWorkflowResultChatMessage(pendingResult)
-        setMessages([{ role: 'assistant', content: message.content }])
-        try {
-          await saveWorkflowMessageToHistory(pendingResult)
-        } catch {}
-        if (pendingResult.status === 'completed') {
-          toast.success(`✨ Workflow "${pendingResult.workflow_name}" завершён!`, {
-            description: `Обработано ${pendingResult.documents_processed} документов за ${pendingResult.elapsed_time}`,
-            duration: 5000,
-          })
-        } else {
-          toast.error(`Workflow "${pendingResult.workflow_name}" завершён с ошибкой`, {
-            description: pendingResult.error || 'Неизвестная ошибка',
-            duration: 5000,
-          })
-        }
-      }
-    }, 500)
-    return () => clearTimeout(timer)
-  }, [caseId])
 
   // Handle autoQuery from navigation state (e.g. from GlobalAssistantPage)
   useEffect(() => {
@@ -1348,24 +1239,24 @@ const AssistantChatPage = () => {
               const last = prev[prev.length - 1]
               return [...prev.slice(0, -1), { ...last, answerBlocks }]
             })
+          } else if (data.type === 'assistant_activity') {
+            setMessages((prev) => {
+              const last = prev[prev.length - 1]
+              if (last.role !== 'assistant') return prev
+              const reasoningSteps = applyAssistantActivityEvent(
+                last.reasoningSteps || [],
+                data,
+              )
+              return [...prev.slice(0, -1), { ...last, reasoningSteps }]
+            })
           } else if (data.type === 'reasoning' && data.phase && data.content) {
             setMessages((prev) => {
               const last = prev[prev.length - 1]
               if (last.role !== 'assistant') return prev
-              const currentSteps = last.reasoningSteps || []
-              const newStep: ThinkingStep = {
-                phase: data.phase,
-                step: data.step ?? data.stepNumber ?? currentSteps.length + 1,
-                totalSteps: data.totalSteps ?? data.totalStepsNumber ?? 4,
-                content: data.content,
-              }
-              const stepIndex = currentSteps.findIndex(
-                (s) => s.phase === newStep.phase && s.step === newStep.step
+              const reasoningSteps = applyReasoningEvent(
+                last.reasoningSteps || [],
+                data,
               )
-              const reasoningSteps =
-                stepIndex >= 0
-                  ? currentSteps.map((s, i) => (i === stepIndex ? newStep : s))
-                  : [...currentSteps, newStep]
               return [...prev.slice(0, -1), { ...last, reasoningSteps }]
             })
           } else if (data.type === 'draft_plan' && data.plan) {
@@ -1558,7 +1449,6 @@ const AssistantChatPage = () => {
     setDraftDocId(null)
     if (caseId) {
       navigate(`/cases/${caseId}/chat`, { replace: true })
-      setArtifactReturnPath(`/cases/${caseId}/chat`)
     }
   }
 
@@ -1587,8 +1477,7 @@ const AssistantChatPage = () => {
   }
 
   const sessionParam = new URLSearchParams(location.search).get('session')
-  const workflowExecParam = new URLSearchParams(location.search).get('workflow_execution_id')
-  const chatActive = messages.length > 0 || loadingSession || !!sessionParam || !!workflowExecParam
+  const chatActive = messages.length > 0 || loadingSession || !!sessionParam
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -1693,11 +1582,9 @@ const AssistantChatPage = () => {
                     </div>
                   )}
                   {messages.map((msg, idx) => {
-                    const wfArtifactN = msg.role === 'assistant' ? countWorkflowArtifacts(msg.workflowArtifacts) : 0
                     const assistantTextBody =
                       msg.role === 'assistant'
-                        ? (msg.content && msg.content.trim()) ||
-                          (wfArtifactN > 0 ? 'Готово. Откройте нужный результат ниже.' : '')
+                        ? (msg.content && msg.content.trim()) || ''
                         : ''
                     const showAssistantTextBody = msg.role === 'assistant' && Boolean(assistantTextBody)
                     /** Не подменять стрим markdown блоками Phase 2 — иначе весь текст визуально исчезает и рисуется заново из `AnswerBlocks`. */
@@ -1724,28 +1611,13 @@ const AssistantChatPage = () => {
                       ) : (
                         <div className="max-w-[90%] w-full text-sm">
                           {((msg.toolCalls && msg.toolCalls.length > 0) ||
-                            (msg.workflowPlanOutline && msg.workflowPlanOutline.length > 0) ||
-                            (msg.workflowAgentTodos && msg.workflowAgentTodos.length > 0) ||
-                            msg.workflowStatus === 'running' ||
+                            (msg.reasoningSteps && msg.reasoningSteps.length > 0) ||
                             (isStreaming && idx === messages.length - 1 && !msg.content)) && (
                             <div className="mb-3">
                               <ThinkingBlock
                                 steps={msg.reasoningSteps || []}
                                 toolCalls={msg.toolCalls}
-                                planOutline={msg.workflowPlanOutline}
-                                planOutlineTitle={
-                                  msg.workflowPlanSource === 'deepagents'
-                                    ? 'План и подзадачи (Deep Agents)'
-                                    : undefined
-                                }
-                                agentTodos={msg.workflowAgentTodos}
-                                isStreaming={
-                                  isStreaming &&
-                                  idx === messages.length - 1 &&
-                                  (!msg.content || msg.workflowStatus === 'running')
-                                }
-                                progressPercent={msg.workflowProgressPercent}
-                                workflowStatus={msg.workflowStatus}
+                                isStreaming={isStreaming && idx === messages.length - 1 && !msg.content}
                                 defaultOpen
                               />
                             </div>
@@ -1786,13 +1658,6 @@ const AssistantChatPage = () => {
                                 ))}
                               </div>
                             )
-                          )}
-                          {msg.workflowArtifacts && (
-                            <WorkflowArtifactCards
-                              artifacts={msg.workflowArtifacts}
-                              navigate={navigate}
-                              returnChatPath={artifactReturnPath || caseChatPath}
-                            />
                           )}
                           {/* Draft indicator */}
                           {isDraftMode && idx === messages.length - 1 && (
@@ -1991,64 +1856,30 @@ const AssistantChatPage = () => {
               />
             </div>
 
-            {/* Workflows */}
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
-                  Рекомендуемые сценарии
-                </h3>
+            {agentRunsEnabled() && caseId && (
+              <div
+                className="rounded-xl border p-5 flex items-center justify-between gap-4"
+                style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-bg-elevated)' }}
+              >
+                <div>
+                  <h3 className="text-sm font-medium flex items-center gap-2" style={{ color: 'var(--color-text-primary)' }}>
+                    <Sparkles className="w-4 h-4" />
+                    Многошаговые задачи
+                  </h3>
+                  <p className="text-xs mt-1 max-w-lg" style={{ color: 'var(--color-text-muted)' }}>
+                    Анализ, таблицы, черновики и другие сложные сценарии — на отдельной странице Workflows с историей запусков.
+                  </p>
+                </div>
                 <button
                   type="button"
-                  className="flex items-center gap-1.5 text-sm transition-colors hover:text-gray-900"
-                  style={{ color: 'var(--color-text-muted)' }}
+                  onClick={() => navigate(`/cases/${caseId}/workflows`)}
+                  className="flex-shrink-0 px-4 py-2 rounded-lg text-sm font-medium text-white"
+                  style={{ backgroundColor: 'var(--color-text-primary)' }}
                 >
-                  <Search className="w-3.5 h-3.5" />
-                  Поиск
+                  Открыть Workflows
                 </button>
               </div>
-
-              <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-                {WORKFLOWS.map((w) => (
-                  <button
-                    key={w.id}
-                    type="button"
-                    onClick={() => {
-                      setQuestion(w.prompt)
-                      if (w.isDraft) setIsDraftMode(true)
-                    }}
-                    className="text-left p-4 rounded-xl border bg-white transition-all duration-150 hover:shadow-md hover:border-gray-300"
-                    style={{ borderColor: 'var(--color-border)' }}
-                  >
-                    <h4 className="text-sm font-medium mb-2 leading-snug" style={{ color: 'var(--color-text-primary)' }}>
-                      {w.title}
-                    </h4>
-                    <p
-                      className="text-xs leading-relaxed mb-4"
-                      style={{
-                        color: 'var(--color-text-muted)',
-                        display: '-webkit-box',
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: 'vertical' as const,
-                        overflow: 'hidden',
-                      }}
-                    >
-                      {w.description}
-                    </p>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs" style={{ color: 'var(--color-text-disabled)' }}>
-                        {w.outputLabel} · {w.steps} шагов
-                      </span>
-                      <div
-                        className="w-6 h-6 rounded flex items-center justify-center flex-shrink-0"
-                        style={{ backgroundColor: 'var(--color-text-primary)' }}
-                      >
-                        <span className="text-white font-bold" style={{ fontSize: '11px' }}>L</span>
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
+            )}
 
           </div>
         </div>

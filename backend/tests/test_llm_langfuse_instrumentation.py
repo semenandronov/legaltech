@@ -82,6 +82,19 @@ def test_get_langchain_callbacks_passes_trace_context(monkeypatch):
     assert captured["trace_context"]["parent_span_id"] == "rootspanid123456"
 
 
+def test_langfuse_llm_wrapper_is_runnable_in_prompt_chain(monkeypatch):
+    from langchain_core.prompts import ChatPromptTemplate
+    from langchain_core.runnables import RunnableLambda
+
+    monkeypatch.setattr(mod, "langfuse_enabled", lambda: False)
+    llm = _FakeLLM()
+    wrapped = mod.LangfuseInstrumentedLLMWrapper(llm)
+    prompt = ChatPromptTemplate.from_messages([("human", "{text}")])
+    chain = prompt | wrapped | RunnableLambda(lambda msg: getattr(msg, "content", msg))
+    out = chain.invoke({"text": "hello"})
+    assert out == "ok"
+
+
 def test_langfuse_llm_wrapper_injects_callbacks(monkeypatch):
     fake_handler = object()
 

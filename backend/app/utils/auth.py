@@ -98,7 +98,7 @@ def decode_token(token: str) -> Optional[dict]:
         return None
 
 
-async def get_current_user(
+def get_current_user(
     request: Request,
     db: Session = Depends(get_db)
 ) -> User:
@@ -172,13 +172,13 @@ async def get_current_user(
     return user
 
 
-async def get_current_user_optional(
+def get_current_user_optional(
     request: Request,
     db: Session = Depends(get_db)
 ) -> Optional[User]:
     """Get the current user if authenticated, None otherwise"""
     try:
-        return await get_current_user(request, db)
+        return get_current_user(request, db)
     except HTTPException:
         return None
 

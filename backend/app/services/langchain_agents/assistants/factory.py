@@ -124,19 +124,6 @@ def create_assistant(
             **kwargs
         )
     
-    elif config.graph == GraphType.WORKFLOW:
-        from app.services.langchain_agents.graphs.workflow_graph import create_workflow_graph
-        
-        graph = create_workflow_graph(
-            db=db,
-            rag_service=rag_service,
-            use_checkpointing=config.use_checkpointing,
-            use_send_api=config.use_send_api,
-            interrupt_before=config.interrupt_before or None,
-            interrupt_after=config.interrupt_after or None,
-            **kwargs
-        )
-    
     else:
         raise ValueError(f"Unknown graph type: {config.graph}")
     

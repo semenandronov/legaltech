@@ -16,6 +16,10 @@ def test_route_clarify():
     assert route_after_execution_tier({"execution_tier": "clarify"}) == "clarify_response"
 
 
+def test_parallel_runs_for_draft_mode():
+    assert parallel_retrieval_should_run({"execution_tier": "standard", "mode": "draft"}) is True
+
+
 def test_parallel_skips_for_clarify():
     assert parallel_retrieval_should_run({"execution_tier": "clarify", "mode": "normal"}) is False
 

@@ -138,7 +138,7 @@ except: pass
 # #endregion
 
 try:
-    from app.routes import upload, chat, auth, cases, dashboard, analysis, reports, settings, websocket, tabular_review, prompts, workflows, folders, review_table, assistant_chat_v2, legal_corpus, draft_admin_templates, workflow_execution, plan_execution, metrics, document_editor, playbooks, workflow_agentic, health
+    from app.routes import upload, chat, auth, cases, dashboard, analysis, reports, settings, websocket, tabular_review, prompts, folders, review_table, assistant_chat_v2, legal_corpus, draft_admin_templates, plan_execution, metrics, document_editor, playbooks, agent_runs, case_workflows, health
     # #region agent log
     try:
         _debug_log("main.py:97", "Routes imported successfully", {"step": "routes_imported"})
@@ -290,17 +290,40 @@ async def _redact_uvicorn_access_tokens():
 
 
 @app.on_event("startup")
-async def _warm_deepagents_async_checkpointer():
-    """Avoid multi-minute stall on first workflow: checkpoint pool is ready before astream."""
-    if not config.WORKFLOW_DEEPAGENTS_CHECKPOINTER_ENABLED:
+async def _start_agent_run_worker():
+    """Distributed worker: claims runs and publishes events to Postgres bus."""
+    if not getattr(config, "AGENT_RUNS_ENABLED", True):
+        return
+    try:
+        from app.services.agent_runs.worker import get_agent_run_worker
+
+        await get_agent_run_worker().start()
+    except Exception as exc:
+        logger.warning("Agent run worker startup skipped: %s", exc, exc_info=True)
+
+
+@app.on_event("shutdown")
+async def _stop_agent_run_worker():
+    try:
+        from app.services.agent_runs.worker import get_agent_run_worker
+
+        await get_agent_run_worker().stop()
+    except Exception:
+        logger.debug("Agent run worker shutdown failed", exc_info=True)
+
+
+@app.on_event("startup")
+async def _warm_agent_runs_checkpointer():
+    """Pre-warm AsyncPostgresSaver before first agent run stream."""
+    if not config.AGENT_RUNS_CHECKPOINTER_ENABLED:
         return
     try:
         from app.utils.checkpointer_setup import get_async_postgres_checkpointer
 
         await get_async_postgres_checkpointer()
-        logger.info("DeepAgents AsyncPostgresSaver pre-warmed at startup")
+        logger.info("Agent runs AsyncPostgresSaver pre-warmed at startup")
     except Exception as exc:
-        logger.warning("DeepAgents async checkpointer pre-warm skipped: %s", exc, exc_info=True)
+        logger.warning("Agent runs async checkpointer pre-warm skipped: %s", exc)
 
 
 @app.on_event("startup")
@@ -481,16 +504,14 @@ app.include_router(websocket.router, tags=["websocket"])
 app.include_router(tabular_review.router, prefix="/api/tabular-review", tags=["tabular-review"])
 app.include_router(review_table.router, prefix="/api/review-table", tags=["review-table"])
 app.include_router(prompts.router, prefix="/api", tags=["prompts"])
-app.include_router(workflows.router, prefix="/api", tags=["workflows"])
-# IMPORTANT: workflow_agentic MUST be before workflow_execution to prevent /workflow-agentic/* being matched by /{workflow_id}/*
-app.include_router(workflow_agentic.router, prefix="/api", tags=["workflow-agentic"])
-app.include_router(workflow_execution.router, prefix="/api", tags=["workflow-execution"])
 app.include_router(folders.router, prefix="/api", tags=["folders"])
 app.include_router(plan_execution.router, prefix="/api/plan", tags=["plan-execution"])
 app.include_router(metrics.router, prefix="/api/metrics", tags=["metrics"])
 app.include_router(document_editor.router, prefix="/api/documents-editor", tags=["document-editor"])
 # Playbooks router (all endpoints unified in one router with correct ordering)
 app.include_router(playbooks.router, prefix="/api", tags=["playbooks"])
+app.include_router(agent_runs.router, prefix="/api", tags=["agent-runs"])
+app.include_router(case_workflows.router, prefix="/api", tags=["case-workflows"])
 # Health endpoints (includes detailed health checks and metrics)
 app.include_router(health.router, tags=["health"])
 

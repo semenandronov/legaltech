@@ -118,6 +118,27 @@ def _submit_bm25_job(case_id: str, *, force_rebuild: bool) -> None:
     _prewarm_pool.submit(_run)
 
 
+def prepare_bm25_for_tabular_extraction(
+    document_processor: "DocumentProcessor",
+    case_id: str,
+) -> bool:
+    """
+    Ensure BM25 is ready for tabular hybrid search without blocking the HTTP request.
+
+    Schedules background prewarm when the in-memory index is missing; returns whether
+    the index is already available in this process.
+    """
+    cid = str(case_id or "").strip()
+    if not cid or not _bm25_enabled():
+        return False
+    if not document_processor.bm25_retriever.available:
+        return False
+    if document_processor.bm25_retriever.has_index(cid):
+        return True
+    schedule_bm25_prewarm(cid)
+    return False
+
+
 def schedule_bm25_prewarm(case_id: str, *, force_rebuild: bool = False) -> None:
     """Фоновый prewarm с debounce: серия store не запускает N параллельных rebuild."""
     cid = str(case_id or "").strip()

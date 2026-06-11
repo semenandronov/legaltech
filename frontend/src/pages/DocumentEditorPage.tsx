@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { Download, ArrowLeft, MessageSquare, FileText, FileEdit, History, BookOpen, Workflow, ChevronDown } from 'lucide-react'
+import { Download, ArrowLeft, MessageSquare, FileText, FileEdit, History, BookOpen, ChevronDown } from 'lucide-react'
 import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import { DocumentEditor, DocumentEditorRef } from '../components/Editor/DocumentEditor'
@@ -428,7 +428,6 @@ const DocumentEditorPage = ({ embedded = false }: { embedded?: boolean }) => {
     { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
     { id: 'editor', label: 'Редактор', icon: FileEdit, path: `/cases/${caseId}/editor` },
     { id: 'playbooks', label: 'Playbooks', icon: BookOpen, path: `/cases/${caseId}/playbooks` },
-    { id: 'workflows', label: 'Workflows', icon: Workflow, path: `/cases/${caseId}/workflows` },
   ] : []
 
   // Show loading state

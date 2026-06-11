@@ -415,6 +415,7 @@ class DocumentProcessor:
         db: Optional[Session] = None,
         chunk_levels: Optional[List[str]] = None,
         metadata_filter: Optional[Dict[str, Any]] = None,
+        query_embedding: Optional[List[float]] = None,
     ) -> List[Document]:
         """
         Retrieve relevant document chunks using PGVector search
@@ -437,6 +438,7 @@ class DocumentProcessor:
                 case_id=case_id,
                 k=k,
                 filter=filter_payload,
+                query_embedding=query_embedding,
             )
             
             # Filter by distance threshold if provided
@@ -447,6 +449,7 @@ class DocumentProcessor:
                     case_id=case_id,
                     k=k * 2,  # Get more to filter
                     filter=filter_payload,
+                    query_embedding=query_embedding,
                 )
                 # Filter by distance threshold
                 filtered_docs = []
@@ -475,6 +478,8 @@ class DocumentProcessor:
         db: Optional[Session] = None,
         chunk_levels: Optional[List[str]] = None,
         metadata_filter: Optional[Dict[str, Any]] = None,
+        bm25_sync: Optional[bool] = None,
+        query_embedding: Optional[List[float]] = None,
     ) -> List[Document]:
         """
         Hybrid search: объединяет dense search (semantic) и sparse search (BM25)
@@ -510,7 +515,12 @@ class DocumentProcessor:
             }
 
             if self.bm25_retriever.available:
-                if bool(getattr(config, "CASE_BM25_SYNC_ON_HYBRID_SEARCH", True)):
+                sync_bm25 = (
+                    bm25_sync
+                    if bm25_sync is not None
+                    else bool(getattr(config, "CASE_BM25_SYNC_ON_HYBRID_SEARCH", True))
+                )
+                if sync_bm25:
                     ensure_bm25_index(self, case_id)
                 elif not self.bm25_retriever.has_index(case_id):
                     schedule_bm25_prewarm(case_id)
@@ -539,6 +549,7 @@ class DocumentProcessor:
                     db=db,
                     chunk_levels=chunk_levels,
                     metadata_filter=metadata_filter,
+                    query_embedding=query_embedding,
                 )
                 if isinstance(dense_out, dict):
                     dense_out["docs_count"] = len(dense_docs or [])

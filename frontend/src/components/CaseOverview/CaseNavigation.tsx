@@ -1,5 +1,5 @@
 import { useNavigate, useLocation } from 'react-router-dom'
-import { MessageSquare, FileText, Table, FileEdit, BookOpen, Workflow } from 'lucide-react'
+import { MessageSquare, FileText, Table, FileEdit, BookOpen } from 'lucide-react'
 
 interface CaseNavigationProps {
   caseId: string
@@ -15,7 +15,6 @@ const CaseNavigation = ({ caseId }: CaseNavigationProps) => {
     { id: 'editor', label: 'Редактор', icon: FileEdit, path: `/cases/${caseId}/editor` },
     { id: 'tabular-review', label: 'Tabular Review', icon: Table, path: `/cases/${caseId}/tabular-review` },
     { id: 'playbooks', label: 'Playbooks', icon: BookOpen, path: `/cases/${caseId}/playbooks` },
-    { id: 'workflows', label: 'Workflows', icon: Workflow, path: `/cases/${caseId}/workflows` },
   ]
   
   const isActive = (path: string) => {

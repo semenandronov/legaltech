@@ -67,7 +67,11 @@ def _catalog_entries_for_llm(db: Optional[Session] = None) -> List[dict]:
 
 
 def select_system_template_id_via_llm(
-    user_question: str, db: Optional[Session] = None
+    user_question: str,
+    db: Optional[Session] = None,
+    *,
+    document_type_hint: str = "",
+    facts_summary: str = "",
 ) -> Optional[str]:
     """
     Один вызов LLM: какой системный шаблон из каталога подходит под запрос пользователя.
@@ -94,6 +98,12 @@ def select_system_template_id_via_llm(
 
     catalog_block = "\n".join(lines)
 
+    context_block = ""
+    if (document_type_hint or "").strip():
+        context_block += f"\nТИП ДОКУМЕНТА (из материалов дела): {document_type_hint.strip()}\n"
+    if (facts_summary or "").strip():
+        context_block += f"\nКРАТКИЕ ФАКТЫ ИЗ ДЕЛА:\n{facts_summary.strip()[:3000]}\n"
+
     prompt = f"""Ты маршрутизатор шаблонов юридических документов для ассистента в режиме Draft.
 
 ДОСТУПНЫЕ ШАБЛОНЫ (выбери не больше одного; template_id должен совпадать с полем id буквально):
@@ -101,10 +111,11 @@ def select_system_template_id_via_llm(
 
 ЗАПРОС ПОЛЬЗОВАТЕЛЯ:
 {q}
-
+{context_block}
 Правила:
-- Если запрос явно относится к одному из шаблонов по типу документа — верни его template_id.
-- Если формулировка расплывчатая или не ясно какой тип документа — верни template_id: null.
+- Если запрос и факты явно соответствуют одному шаблону — верни его template_id.
+- Если подходящего шаблона нет (другой тип документа, нестандартная задача) — верни template_id: null (писать с нуля).
+- Не подбирай шаблон «на всякий случай» — только при уверенном совпадении типа документа.
 - Не придумывай id; только из списка выше."""
 
     try:

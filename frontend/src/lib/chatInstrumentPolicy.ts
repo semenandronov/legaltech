@@ -55,6 +55,21 @@ export function canEnableCourtPractice(draftMode: boolean): boolean {
   return !draftMode
 }
 
+export function onDeepAgentModeChange(
+  enabled: boolean,
+  setDeepAgentMode: (v: boolean) => void,
+  setDraftMode: (v: boolean) => void,
+  setLegalResearch: (v: boolean) => void,
+  setCourtPractice: (v: boolean) => void,
+): void {
+  if (enabled) {
+    setDraftMode(false)
+    setLegalResearch(false)
+    setCourtPractice(false)
+  }
+  setDeepAgentMode(enabled)
+}
+
 /** Режим редактора: при справочнике или судебной практике — только ask. */
 export function effectiveEditorChatMode(
   legalResearch: boolean,

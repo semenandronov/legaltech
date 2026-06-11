@@ -47,6 +47,8 @@ from app.services.observability.llm_langfuse_instrumentation import (
     merge_langfuse_into_runnable_config,
     observe_generation,
     observe_llm_generation,
+    traced_collect_llm_stream_text,
+    traced_sync_llm_invoke,
 )
 
 __all__ = [
@@ -88,4 +90,6 @@ __all__ = [
     "merge_langfuse_into_runnable_config",
     "observe_generation",
     "observe_llm_generation",
+    "traced_collect_llm_stream_text",
+    "traced_sync_llm_invoke",
 ]

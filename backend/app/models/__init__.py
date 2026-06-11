@@ -23,7 +23,6 @@ from app.models.tabular_review import (
 )
 from app.models.agent_interaction import AgentInteraction, AgentExecutionLog
 from app.models.prompt_library import PromptTemplate, PromptCategory
-from app.models.workflow_template import WorkflowTemplate
 from app.models.folder import Folder, FileTag, FileTagAssociation
 from app.models.document_editor import Document, DocumentVersion
 from app.models.document_template import DocumentTemplate
@@ -35,14 +34,7 @@ from app.models.playbook import (
     CLAUSE_CATEGORIES,
     JURISDICTIONS,
 )
-from app.models.workflow import (
-    WorkflowDefinition,
-    WorkflowExecution,
-    WorkflowStep,
-    WORKFLOW_CATEGORIES,
-    WORKFLOW_TOOLS,
-    SYSTEM_WORKFLOW_TEMPLATES,
-)
+from app.models.agent_run import AgentRun, AgentRunStatus
 from app.models.langgraph_store import LangGraphStoreEntry
 
 __all__ = [
@@ -76,8 +68,6 @@ __all__ = [
     # Prompt library
     "PromptTemplate",
     "PromptCategory",
-    # Workflows
-    "WorkflowTemplate",
     # Folders and tags
     "Folder",
     "FileTag",
@@ -94,13 +84,9 @@ __all__ = [
     "CONTRACT_TYPES",
     "CLAUSE_CATEGORIES",
     "JURISDICTIONS",
-    # Workflows
-    "WorkflowDefinition",
-    "WorkflowExecution",
-    "WorkflowStep",
-    "WORKFLOW_CATEGORIES",
-    "WORKFLOW_TOOLS",
-    "SYSTEM_WORKFLOW_TEMPLATES",
+    # Agent runs
+    "AgentRun",
+    "AgentRunStatus",
     # LangGraph Store
     "LangGraphStoreEntry",
 ]

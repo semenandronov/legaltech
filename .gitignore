@@ -41,7 +41,10 @@ env/
 # Environment variables
 .env
 .env.local
+.env.neon-backup
 .env.*.local
+.local-db-experiment/
+.local-db-experiment-active
 .env.vite-build
 frontend/.env.local
 

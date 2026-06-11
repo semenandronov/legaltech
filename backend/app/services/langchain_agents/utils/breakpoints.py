@@ -329,30 +329,18 @@ CHAT_GRAPH_BREAKPOINTS = create_breakpoint_config(
     }
 )
 
-# Конфигурация breakpoints для WorkflowGraph
-WORKFLOW_GRAPH_BREAKPOINTS = create_breakpoint_config(
-    interrupt_before=[],
-    interrupt_after=["generate_plan"],  # Прерываем после генерации плана
-    conditions={
-        "approval_required": approval_required_condition(),
-        "has_errors": has_errors_condition(),
-    }
-)
-
-
 def get_breakpoint_config_for_graph(graph_name: str) -> BreakpointConfig:
     """
     Получить конфигурацию breakpoints для графа.
     
     Args:
-        graph_name: Имя графа ("chat", "workflow")
+        graph_name: Имя графа ("chat")
     
     Returns:
         BreakpointConfig
     """
     configs = {
         "chat": CHAT_GRAPH_BREAKPOINTS,
-        "workflow": WORKFLOW_GRAPH_BREAKPOINTS,
     }
     return configs.get(graph_name, create_breakpoint_config())
 
