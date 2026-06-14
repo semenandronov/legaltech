@@ -517,3 +517,84 @@ def traced_collect_llm_stream_text(
             )
             return text
     return _run()
+
+
+def traced_collect_structured_citation_stream(
+    llm: Any,
+    prepare: Any,
+    writer: Any,
+    *,
+    generation_name: str = "case_structured_citations_llm",
+    assistant_step: str = "structured_citations.llm_stream",
+    assistant_scope: Literal["case", "global"] = "case",
+    enrich_citations: Optional[Any] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    metrics_out: Optional[Dict[str, Any]] = None,
+    input_preview_chars: int = 600,
+) -> tuple[str, list[Any]]:
+    """Structured-citation stream with GENERATION + assistant step timing."""
+    from app.services.chat.structured_citation_streaming import (
+        collect_structured_citation_stream,
+    )
+    from app.services.observability.assistant_pipeline_langfuse_tracing import (
+        assistant_step_span,
+    )
+
+    model = _resolve_llm_model_name(llm)
+    meta = dict(metadata or {})
+    if model:
+        meta.setdefault("model", model)
+    inp = {
+        "messages_count": len(getattr(prepare, "messages", []) or []),
+        "num_chunks": getattr(prepare, "num_chunks", None),
+        "prompt_preview": str(getattr(prepare, "messages", ""))[:input_preview_chars],
+        "stream_to_client": writer is not None,
+    }
+
+    def _run() -> tuple[str, list[Any]]:
+        stream_metrics: Dict[str, Any] = {}
+        t0 = time.monotonic()
+        with observe_generation(
+            generation_name,
+            model=model,
+            input_payload=inp,
+            metadata=meta,
+        ) as generation:
+            answer_text, citations = collect_structured_citation_stream(
+                llm,
+                prepare,
+                writer,
+                enrich_citations=enrich_citations,
+                metrics_out=stream_metrics,
+            )
+            wall_ms = int((time.monotonic() - t0) * 1000)
+            stream_metrics.setdefault("stream_wall_ms", wall_ms)
+            _finalize_generation_observation(
+                generation,
+                output_text=answer_text,
+                wall_ms=wall_ms,
+                metrics=stream_metrics,
+            )
+            if metrics_out is not None:
+                metrics_out.update(stream_metrics)
+            return answer_text, citations
+
+    if assistant_step:
+        with assistant_step_span(
+            assistant_scope,
+            assistant_step,
+            input_payload=inp,
+            metadata=meta,
+        ) as holder:
+            answer_text, citations = _run()
+            holder.update(
+                {
+                    "stream_wall_ms": (metrics_out or {}).get("stream_wall_ms"),
+                    "ttft_ms": (metrics_out or {}).get("ttft_ms"),
+                    "output_chars": len(answer_text or ""),
+                    "chunk_count": (metrics_out or {}).get("chunk_count"),
+                    "citations_count": len(citations or []),
+                }
+            )
+            return answer_text, citations
+    return _run()

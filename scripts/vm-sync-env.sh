@@ -7,8 +7,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-VM_ID="${YC_VM_ID:-fv4qdpndf1f3c70ugkd3}"
-REMOTE_DIR="${REMOTE_DIR:-/home/andronovsemen04/legal-ai}"
+# shellcheck source=lib/vm-common.sh
+source "${ROOT}/scripts/lib/vm-common.sh"
+
+VM_ID="${YC_VM_ID}"
+REMOTE_DIR="${VM_REMOTE_DIR}"
 REMOTE_ENV="${REMOTE_DIR}/.env"
 LOCAL_ENV="${1:-${ROOT}/.env}"
 
@@ -20,11 +23,23 @@ fi
 TMP="$(mktemp)"
 trap 'rm -f "${TMP}"' EXIT
 
-# База: локальный .env; дополняем/перезаписываем ключи хранения uploads
-grep -v '^UPLOAD_DIR=' "${LOCAL_ENV}" | grep -v '^FILE_STORE_BYTES_IN_DB=' | grep -v '^CORS_ORIGINS=' > "${TMP}" || true
+vm_postgres_credentials "${LOCAL_ENV}"
+VM_DB_URL="$(vm_internal_database_url "${LOCAL_ENV}")"
+
+# База: локальный .env; на VM — Postgres в docker-сети (host postgres)
+grep -v '^UPLOAD_DIR=' "${LOCAL_ENV}" \
+  | grep -v '^FILE_STORE_BYTES_IN_DB=' \
+  | grep -v '^CORS_ORIGINS=' \
+  | grep -v '^DATABASE_URL=' \
+  > "${TMP}" || true
 VM_PUBLIC_URL="${VM_PUBLIC_URL:-https://158.160.212.167}"
 {
   cat "${TMP}"
+  echo ""
+  echo "# Postgres on same VM (docker-compose.vm.yml, service name: postgres)"
+  echo "POSTGRES_USER=${POSTGRES_USER}"
+  echo "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}"
+  echo "DATABASE_URL=${VM_DB_URL}"
   echo ""
   echo "# Case file storage (single container + VM volume)"
   echo "UPLOAD_DIR=/app/backend/uploads"

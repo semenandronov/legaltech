@@ -18,15 +18,19 @@ class TemplateFieldSpec(BaseModel):
     retrieval_query: str = ""
     data_type: str = "other"
     entity_role: Optional[str] = None
+    fill_question: str = ""
+    question_key: str = ""
+    variable: str = ""
 
     def to_placeholder_plan_item(self, data_status: str = "missing") -> Dict[str, Any]:
         return {
             "placeholder": self.marker,
             "field_id": self.field_id,
-            "plan_to_fill": self.what_to_find or self.semantic_label,
+            "plan_to_fill": self.fill_question or self.what_to_find or self.semantic_label,
             "data_status": data_status,
             "semantic_label": self.semantic_label,
             "retrieval_query": self.retrieval_query,
+            "question_key": self.question_key,
         }
 
     @classmethod
@@ -40,6 +44,8 @@ class TemplateFieldCatalogSnapshot(BaseModel):
     field_specs: List[TemplateFieldSpec] = Field(default_factory=list)
     indexed_html: str = ""
     indexer_version: str = "1"
+    engine: str = "html"
+    docx_file: str = ""
 
     @classmethod
     def from_db_row(cls, row: Any) -> "TemplateFieldCatalogSnapshot":
@@ -48,10 +54,16 @@ class TemplateFieldCatalogSnapshot(BaseModel):
             TemplateFieldSpec.from_dict(x) if isinstance(x, dict) else x
             for x in specs_raw
         ]
-        return cls(
+        snap = cls(
             template_key=str(row.template_key),
             content_sha256=str(row.content_sha256 or ""),
             field_specs=specs,
             indexed_html=str(row.indexed_html or ""),
             indexer_version=str(row.indexer_version or "1"),
         )
+        try:
+            from app.services.draft_template_indexer import _enrich_snapshot_meta
+
+            return _enrich_snapshot_meta(snap, snap.template_key)
+        except Exception:
+            return snap

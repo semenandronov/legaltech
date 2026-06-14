@@ -1024,17 +1024,22 @@ class Config:
     DRAFT_TEMPLATE_INDEX_ON_UPLOAD: bool = (
         os.getenv("DRAFT_TEMPLATE_INDEX_ON_UPLOAD", "true").strip().lower() == "true"
     )
-    DRAFT_TEMPLATE_INDEXER_VERSION: str = os.getenv("DRAFT_TEMPLATE_INDEXER_VERSION", "1").strip()
-    # Один RAG + один LLM на все поля; точечный per-field RAG только для пустых после bulk.
+    DRAFT_TEMPLATE_INDEXER_VERSION: str = os.getenv("DRAFT_TEMPLATE_INDEXER_VERSION", "3").strip()
+    DRAFT_TEMPLATE_INDEX_LLM_ENRICH: bool = (
+        os.getenv("DRAFT_TEMPLATE_INDEX_LLM_ENRICH", "false").strip().lower() == "true"
+    )
+    # Стратегия заполнения шаблона: parallel (дефолт) | bulk | per_field
+    DRAFT_FILL_STRATEGY: str = os.getenv("DRAFT_FILL_STRATEGY", "parallel").strip() or "parallel"
+    # Один RAG + один LLM на все поля (legacy bulk); при DRAFT_FILL_STRATEGY=bulk
     DRAFT_BULK_FILL_ENABLED: bool = (
         os.getenv("DRAFT_BULK_FILL_ENABLED", "true").strip().lower() == "true"
     )
     DRAFT_BULK_TARGETED_RETRY_ENABLED: bool = (
         os.getenv("DRAFT_BULK_TARGETED_RETRY_ENABLED", "true").strip().lower() == "true"
     )
-    DRAFT_BULK_RAG_K: int = int(os.getenv("DRAFT_BULK_RAG_K", "14") or "14")
+    DRAFT_BULK_RAG_K: int = int(os.getenv("DRAFT_BULK_RAG_K", "8") or "8")
     DRAFT_BULK_RAG_STRATEGY: str = os.getenv("DRAFT_BULK_RAG_STRATEGY", "hybrid").strip() or "hybrid"
-    DRAFT_BULK_CONTEXT_MAX_CHARS: int = int(os.getenv("DRAFT_BULK_CONTEXT_MAX_CHARS", "20000") or "20000")
+    DRAFT_BULK_CONTEXT_MAX_CHARS: int = int(os.getenv("DRAFT_BULK_CONTEXT_MAX_CHARS", "7000") or "7000")
     DRAFT_BULK_UNIFIED_MAX_FIELDS_PER_CALL: int = int(
         os.getenv("DRAFT_BULK_UNIFIED_MAX_FIELDS_PER_CALL", "48") or "48"
     )
@@ -1068,6 +1073,10 @@ class Config:
     DRAFT_FINANCIAL_CALCULATOR_ENABLED: bool = (
         os.getenv("DRAFT_FINANCIAL_CALCULATOR_ENABLED", "true").strip().lower() == "true"
     )
+    # Автоматический калькулятор перед заполнением полей шаблона (catalog_fill / docxtpl)
+    DRAFT_CATALOG_FILL_CALCULATOR_ENABLED: bool = (
+        os.getenv("DRAFT_CATALOG_FILL_CALCULATOR_ENABLED", "true").strip().lower() == "true"
+    )
     # unified = один LLM-проход с полным RAG (как case assistant); decomposed = legacy sections
     DRAFT_GENERATION_MODE: str = (
         os.getenv("DRAFT_GENERATION_MODE", "unified").strip().lower() or "unified"
@@ -1076,6 +1085,12 @@ class Config:
         os.getenv("DRAFT_UNIFIED_RAG_MAX_CHARS", "24000") or "24000"
     )
     DRAFT_UNIFIED_MAX_TOKENS: int = int(os.getenv("DRAFT_UNIFIED_MAX_TOKENS", "0") or "0")
+    # Hybrid draft workflow: bounded gap retrieval after coverage check
+    DRAFT_COVERAGE_MAX_RETRIES: int = int(os.getenv("DRAFT_COVERAGE_MAX_RETRIES", "2") or "2")
+    DRAFT_COVERAGE_MAX_GAPS_PER_ROUND: int = int(
+        os.getenv("DRAFT_COVERAGE_MAX_GAPS_PER_ROUND", "3") or "3"
+    )
+    DRAFT_COVERAGE_RETRY_RAG_K: int = int(os.getenv("DRAFT_COVERAGE_RETRY_RAG_K", "6") or "6")
     # False (default): draft mode сразу генерирует документ без отдельного плана и кнопки «Одобрить».
     DRAFT_PLAN_APPROVAL_ENABLED: bool = (
         os.getenv("DRAFT_PLAN_APPROVAL_ENABLED", "false").strip().lower() == "true"

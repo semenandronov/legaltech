@@ -7,9 +7,8 @@ from app.services.agent_runs.schemas import DraftToolInput, DraftToolOutput
 def test_draft_tool_input_valid():
     req = DraftToolInput(
         user_prompt="Составь претензию о взыскании задолженности по договору поставки",
-        template_system_id="tpl-1",
     )
-    assert req.template_system_id == "tpl-1"
+    assert "претензию" in req.user_prompt
 
 
 def test_draft_tool_rejects_short_prompt():

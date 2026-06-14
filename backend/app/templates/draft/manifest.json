@@ -1,0 +1,89 @@
+[
+  {
+    "id": "creditor_ul_general",
+    "title": "Заявление кредитора о банкротстве ЮЛ (общие правила)",
+    "description": "Заявление кредитора о признании должника-юрлица несостоятельным (банкротом)",
+    "engine": "docxtpl",
+    "file": "creditor_ul_general.docx",
+    "priority": 100,
+    "intent_keywords": [
+      "заявление кредитора о банкротстве",
+      "кредитор о банкротстве юл",
+      "банкротство юридического лица кредитор",
+      "признать должника банкротом кредитор"
+    ],
+    "variables": [
+      "court_name", "creditor_name", "creditor_inn", "creditor_address",
+      "debtor_name", "debtor_inn", "debtor_address", "state_duty",
+      "doc_city", "doc_date", "debt_total", "debt_main", "debt_penalty",
+      "debt_start_date", "debt_end_date", "debt_evidence",
+      "efrsb_num", "efrsb_date", "sro_name", "manager_fio",
+      "signatory_fio", "signatory_position"
+    ]
+  },
+  {
+    "id": "debtor_ul_general",
+    "title": "Заявление должника ЮЛ о банкротстве (общие правила)",
+    "description": "Заявление должника-юрлица о собственном банкротстве",
+    "engine": "docxtpl",
+    "file": "debtor_ul_general.docx",
+    "priority": 90,
+    "intent_keywords": [
+      "заявление должника о банкротстве",
+      "должник о банкротстве юл",
+      "собственное банкротство юридического лица",
+      "банкротство должника юл"
+    ],
+    "variables": [
+      "court_name", "debtor_name", "debtor_inn", "debtor_address",
+      "state_duty", "doc_city", "doc_date", "efrsb_num", "efrsb_date",
+      "sro_name", "debt_total", "debt_confirmed",
+      "debt_monetary", "debt_injury", "debt_salary", "debt_intellectual",
+      "debt_mandatory", "asset_immovable", "asset_movable", "asset_intangible",
+      "asset_receivable", "asset_total", "signatory_fio", "signatory_position"
+    ]
+  },
+  {
+    "id": "debtor_fl_general",
+    "title": "Заявление должника-гражданина о банкротстве",
+    "description": "Заявление физлица о собственном банкротстве",
+    "engine": "docxtpl",
+    "file": "debtor_fl_general.docx",
+    "priority": 85,
+    "intent_keywords": [
+      "заявление должника фл о банкротстве",
+      "банкротство гражданина должник",
+      "личное банкротство",
+      "должник гражданин банкротство"
+    ],
+    "variables": [
+      "court_name", "debtor_name", "debtor_birth", "debtor_passport",
+      "debtor_inn", "debtor_snils", "debtor_address", "state_duty",
+      "doc_city", "doc_date", "debt_total", "debtor_income_value",
+      "debtor_income_source", "asset_total", "marital_status",
+      "children_status", "alimony_obligations", "sro_name"
+    ]
+  },
+  {
+    "id": "creditor_fl_general",
+    "title": "Заявление кредитора о банкротстве должника-гражданина",
+    "description": "Заявление кредитора о признании гражданина банкротом",
+    "engine": "docxtpl",
+    "file": "creditor_fl_general.docx",
+    "priority": 95,
+    "intent_keywords": [
+      "заявление кредитора о банкротстве фл",
+      "кредитор банкротство гражданина",
+      "банкротство физического лица кредитор",
+      "признать гражданина банкротом"
+    ],
+    "variables": [
+      "court_name", "creditor_name", "creditor_inn", "creditor_address",
+      "debtor_name", "debtor_inn", "debtor_address", "state_duty",
+      "doc_city", "doc_date", "debt_total", "debt_main", "debt_penalty",
+      "debt_start_date", "debt_end_date", "debt_evidence",
+      "efrsb_num", "efrsb_date", "sro_name",
+      "signatory_fio", "signatory_position"
+    ]
+  }
+]

@@ -65,6 +65,32 @@ def format_money_rub(amount: Decimal) -> str:
     return f"{s} руб."
 
 
+def compute_state_duty_rub(claim_amount: Decimal) -> Decimal:
+    """
+    Госпошлина по имущественному иску (п. 1 ч. 1 ст. 333.19 НК РФ, общий порядок).
+    """
+    amount = claim_amount.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    if amount <= 0:
+        return Decimal("400")
+
+    if amount <= Decimal("20000"):
+        fee = (amount * Decimal("0.04")).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+        return max(fee, Decimal("400"))
+    if amount <= Decimal("100000"):
+        excess = amount - Decimal("20000")
+        return (Decimal("800") + excess * Decimal("0.03")).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    if amount <= Decimal("200000"):
+        excess = amount - Decimal("100000")
+        return (Decimal("3200") + excess * Decimal("0.02")).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    if amount <= Decimal("1000000"):
+        excess = amount - Decimal("200000")
+        return (Decimal("5200") + excess * Decimal("0.01")).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+
+    excess = amount - Decimal("1000000")
+    fee = (Decimal("13200") + excess * Decimal("0.005")).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    return min(fee, Decimal("200000"))
+
+
 def parse_date(value: Any) -> Optional[date]:
     if isinstance(value, date) and not isinstance(value, datetime):
         return value
@@ -244,6 +270,7 @@ def compute_verified_financials(facts: ExtractedFacts) -> Optional[VerifiedCalcu
     rate_fraction = rate / Decimal("100")
     penalty_amount = (net_principal * rate_fraction * Decimal(days)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
     total = net_principal + penalty_amount
+    state_duty = compute_state_duty_rub(total)
 
     trace_parts = [
         f"Срок оплаты: {terms.payment_term_value} рабоч. дн. с {event_date.isoformat()} "
@@ -266,15 +293,110 @@ def compute_verified_financials(facts: ExtractedFacts) -> Optional[VerifiedCalcu
         principal_outstanding=format_money_rub(net_principal),
         penalty_amount=format_money_rub(penalty_amount),
         total_claim=format_money_rub(total),
+        state_duty=format_money_rub(state_duty),
         penalty_rate_percent_per_day=str(rate),
         computation_trace="; ".join(trace_parts),
         source="python_rf_calendar_v1",
     )
 
 
+def _resolve_penalty_start_date(facts: ExtractedFacts, terms: PenaltyTerms) -> Optional[date]:
+    for candidate in (
+        parse_date(terms.act_date),
+        parse_date(terms.contract_date),
+        _find_date_in_facts(
+            facts,
+            "debt_start_date",
+            "дата начала",
+            "начало неустойки",
+            "просрочк",
+            "с даты",
+        ),
+    ):
+        if candidate:
+            return candidate
+    return None
+
+
+def _resolve_penalty_end_date(facts: ExtractedFacts, terms: PenaltyTerms) -> date:
+    for candidate in (
+        parse_date(terms.penalty_end_date),
+        _find_date_in_facts(
+            facts,
+            "debt_end_date",
+            "по состоянию на",
+            "дата иска",
+            "на дату",
+        ),
+    ):
+        if candidate:
+            return candidate
+    return date.today()
+
+
+def compute_verified_financials_from_explicit_period(
+    facts: ExtractedFacts,
+) -> Optional[VerifiedCalculations]:
+    """
+    Расчёт, когда срок оплаты в рабочих днях неизвестен, но заданы ставка,
+    основной долг и явный период неустойки (например «с 02.06.2025»).
+    """
+    terms = _merge_penalty_terms(facts)
+
+    principal = parse_money(terms.principal_amount)
+    if principal is None or principal <= 0:
+        return None
+
+    rate = parse_money(terms.penalty_rate_percent_per_day)
+    if rate is None or rate <= 0:
+        return None
+
+    penalty_start = _resolve_penalty_start_date(facts, terms)
+    if not penalty_start:
+        return None
+
+    penalty_end = _resolve_penalty_end_date(facts, terms)
+    days = count_penalty_days(penalty_start, penalty_end)
+    if days <= 0:
+        return None
+
+    net_principal, payment_notes = _net_principal(principal, terms.partial_payments)
+    rate_fraction = rate / Decimal("100")
+    penalty_amount = (net_principal * rate_fraction * Decimal(days)).quantize(
+        Decimal("1"), rounding=ROUND_HALF_UP
+    )
+    total = net_principal + penalty_amount
+    state_duty = compute_state_duty_rub(total)
+
+    trace_parts = [
+        f"Период неустойки (явный): {penalty_start.strftime('%d.%m.%Y')} — "
+        f"{penalty_end.strftime('%d.%m.%Y')} ({days} календ. дн.)",
+        f"База: {format_money_rub(net_principal)} × {rate}% × {days} дн. "
+        f"= {format_money_rub(penalty_amount)}",
+    ]
+    if payment_notes:
+        trace_parts.insert(0, "Частичные оплаты: " + "; ".join(payment_notes))
+
+    return VerifiedCalculations(
+        payment_deadline="",
+        penalty_start_date=penalty_start.isoformat(),
+        penalty_end_date=penalty_end.isoformat(),
+        penalty_days=days,
+        principal_outstanding=format_money_rub(net_principal),
+        penalty_amount=format_money_rub(penalty_amount),
+        total_claim=format_money_rub(total),
+        state_duty=format_money_rub(state_duty),
+        penalty_rate_percent_per_day=str(rate),
+        computation_trace="; ".join(trace_parts),
+        source="python_explicit_period_v1",
+    )
+
+
 def apply_verified_financials(facts: ExtractedFacts) -> ExtractedFacts:
     """Run calculator and merge verified numbers into financial block."""
     verified = compute_verified_financials(facts)
+    if not verified:
+        verified = compute_verified_financials_from_explicit_period(facts)
     if not verified:
         return facts
 

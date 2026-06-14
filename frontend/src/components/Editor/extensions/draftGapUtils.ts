@@ -1,9 +1,9 @@
 import type { MarkType, Node as ProseMirrorNode } from '@tiptap/pm/model'
 
-/** Matches backend draft_pipeline.markers: [? label ?] */
-export const DRAFT_GAP_PATTERN = /\[\?\s*(.+?)\s*\?\]/g
+/** Matches backend draft_pipeline.markers: [label] (legacy [? label ?] supported) */
+export const DRAFT_GAP_PATTERN = /\[\?\s*(.+?)\s*\?\]|\[([^\[\]]+)\]/g
 
-export const DRAFT_GAP_FULL_PATTERN = /^\[\?\s*(.+?)\s*\?\]$/
+export const DRAFT_GAP_FULL_PATTERN = /^\[\?\s*(.+?)\s*\?\]$|^\[([^\[\]]+)\]$/
 
 export interface DraftGapRange {
   from: number
@@ -24,7 +24,7 @@ export function findUnmarkedDraftGaps(doc: ProseMirrorNode, markType: MarkType):
       const to = from + m[0].length
       const $inside = doc.resolve(from + 1)
       if (!markType.isInSet($inside.marks())) {
-        out.push({ from, to, label: (m[1] || '').trim() || 'поле' })
+        out.push({ from, to, label: ((m[1] || m[2] || '').trim()) || 'поле' })
       }
     }
   })

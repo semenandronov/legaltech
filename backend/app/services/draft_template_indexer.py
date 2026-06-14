@@ -11,11 +11,19 @@ from sqlalchemy.orm import Session
 
 from app.config import config
 from app.services.draft_template_catalog import content_sha256, load_catalog_snapshot, upsert_catalog
+from app.services.draft_template_questions import (
+    assign_question_metadata,
+    audit_template_questions,
+    build_fill_question,
+    sanitize_fill_question,
+    unify_semantic_duplicate_questions,
+)
 from app.services.draft_template_schemas import TemplateFieldCatalogSnapshot, TemplateFieldSpec
 
 logger = logging.getLogger(__name__)
 
 _PLACEHOLDER_RE = re.compile(r"\[[^\[\]]+\]")
+_DOCXTPL_MARKER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
 
 
 @dataclass
@@ -24,6 +32,27 @@ class PlaceholderOccurrence:
     occurrence_index: int
     start_offset: int
     end_offset: int
+
+
+def scan_docxtpl_placeholder_occurrences(html: str) -> List[PlaceholderOccurrence]:
+    """Найти все {{ variable }} в HTML preview."""
+    if not html or not str(html).strip():
+        return []
+    seen: Dict[str, int] = {}
+    out: List[PlaceholderOccurrence] = []
+    for m in _DOCXTPL_MARKER_RE.finditer(html):
+        ph = m.group(0)
+        idx = seen.get(ph, 0)
+        seen[ph] = idx + 1
+        out.append(
+            PlaceholderOccurrence(
+                marker=ph,
+                occurrence_index=idx,
+                start_offset=m.start(),
+                end_offset=m.end(),
+            )
+        )
+    return out
 
 
 def scan_placeholder_occurrences(html: str) -> List[PlaceholderOccurrence]:
@@ -60,7 +89,8 @@ def _heuristic_field_spec(occ: PlaceholderOccurrence, html: str, template_title:
     inner = occ.marker.strip("[]").strip() or "поле"
     ctx = build_context_snippet(html, occ.start_offset, occ.end_offset)
     label = f"{inner} (контекст: {ctx[:120]})" if ctx else inner
-    return TemplateFieldSpec(
+    entity_role = _guess_entity_role(ctx)
+    spec = TemplateFieldSpec(
         field_id=f"ph_{occ.occurrence_index:03d}_{re.sub(r'[^a-zA-Z0-9_]', '_', inner)[:24]}",
         marker=occ.marker,
         occurrence_index=occ.occurrence_index,
@@ -71,7 +101,16 @@ def _heuristic_field_spec(occ: PlaceholderOccurrence, html: str, template_title:
         what_to_find=f"Найти в материалах дела значение для поля «{inner}» с учётом контекста шаблона.",
         retrieval_query=f"{template_title}: {inner}. Контекст в шаблоне: {ctx[:280]}",
         data_type=_guess_data_type(inner),
-        entity_role=_guess_entity_role(ctx),
+        entity_role=entity_role,
+    )
+    fq = build_fill_question(spec)
+    from app.services.draft_template_questions import question_key_for_fill_question
+
+    return spec.model_copy(
+        update={
+            "fill_question": fq,
+            "question_key": question_key_for_fill_question(fq),
+        }
     )
 
 
@@ -151,6 +190,184 @@ def _parse_enrich_batch(raw: str, batch: List[PlaceholderOccurrence]) -> Dict[st
     return by_id
 
 
+def _pick_manifest_placeholder_def(
+    defs: List[Dict[str, Any]],
+    occ: PlaceholderOccurrence,
+    html: str,
+) -> Dict[str, Any]:
+    """Выбор определения placeholder при нескольких вариантах одного marker."""
+    if len(defs) == 1:
+        return defs[0]
+    ctx = build_context_snippet(html, occ.start_offset, occ.end_offset).lower()
+    for item in defs:
+        hint = str(item.get("context_hint") or "").strip().lower()
+        if hint and hint in ctx:
+            return item
+    if occ.occurrence_index < len(defs):
+        return defs[occ.occurrence_index]
+    return defs[0]
+
+
+def build_specs_from_manifest_placeholders(
+    html: str,
+    occurrences: List[PlaceholderOccurrence],
+    *,
+    placeholders: List[Dict[str, Any]],
+    template_title: str,
+) -> List[TemplateFieldSpec]:
+    """Индексация по вопросам из manifest.json — без LLM."""
+    if not occurrences:
+        return []
+    if not placeholders:
+        raise ValueError("manifest placeholders: пустой список")
+
+    by_marker: Dict[str, List[Dict[str, Any]]] = {}
+    for item in placeholders:
+        marker = str(item.get("marker") or "").strip()
+        if marker:
+            by_marker.setdefault(marker, []).append(item)
+
+    specs: List[TemplateFieldSpec] = []
+    missing: List[str] = []
+
+    for i, occ in enumerate(occurrences):
+        defs = by_marker.get(occ.marker)
+        if not defs:
+            missing.append(occ.marker)
+            continue
+        defn = _pick_manifest_placeholder_def(defs, occ, html)
+        base = _heuristic_field_spec(occ, html, template_title)
+        fill_q = sanitize_fill_question(str(defn.get("fill_question") or ""), base)
+        entity_role = defn.get("entity_role") or base.entity_role
+        data_type = str(defn.get("data_type") or base.data_type).strip() or "other"
+        what = str(defn.get("what_to_find") or fill_q).strip()
+        specs.append(
+            base.model_copy(
+                update={
+                    "field_id": f"ph_{i:03d}",
+                    "fill_question": fill_q,
+                    "entity_role": entity_role,
+                    "data_type": data_type,
+                    "what_to_find": what,
+                    "semantic_label": str(defn.get("semantic_label") or base.semantic_label).strip(),
+                    "retrieval_query": str(defn.get("retrieval_query") or what).strip(),
+                }
+            )
+        )
+
+    if missing:
+        unique_missing = sorted(set(missing))
+        raise ValueError(
+            "в HTML есть плейсхолдеры без вопросов в manifest: " + ", ".join(unique_missing[:12])
+        )
+
+    specs = unify_semantic_duplicate_questions(specs)
+    finalized, unique = assign_question_metadata(specs)
+    logger.info(
+        "[draft_template_indexer] manifest questions unique=%s occurrences=%s",
+        len(unique),
+        len(finalized),
+    )
+    return finalized
+
+
+def build_specs_from_manifest_variables(
+    html: str,
+    occurrences: List[PlaceholderOccurrence],
+    *,
+    placeholders: List[Dict[str, Any]],
+    template_title: str,
+) -> List[TemplateFieldSpec]:
+    """Индексация docxtpl: variables[] + каталог вопросов."""
+    if not occurrences:
+        return []
+    if not placeholders:
+        raise ValueError("manifest variables: пустой список")
+
+    from app.services.bankruptcy_field_catalog import get_field_description, get_field_meta
+
+    by_var: Dict[str, Dict[str, Any]] = {}
+    for item in placeholders:
+        var = str(item.get("variable") or "").strip()
+        if not var:
+            marker = str(item.get("marker") or "")
+            m = _DOCXTPL_MARKER_RE.search(marker)
+            if m:
+                var = m.group(1)
+        if var:
+            by_var[var] = item
+
+    specs: List[TemplateFieldSpec] = []
+    missing: List[str] = []
+
+    for i, occ in enumerate(occurrences):
+        m = _DOCXTPL_MARKER_RE.search(occ.marker)
+        if not m:
+            continue
+        var = m.group(1)
+        defn = by_var.get(var)
+        if not defn:
+            missing.append(var)
+            continue
+        meta = get_field_meta(var)
+        fill_q = str(defn.get("fill_question") or get_field_description(var)).strip()
+        ctx = build_context_snippet(html, occ.start_offset, occ.end_offset)
+        specs.append(
+            TemplateFieldSpec(
+                field_id=f"var_{var}_{occ.occurrence_index:03d}",
+                marker=occ.marker,
+                occurrence_index=occ.occurrence_index,
+                start_offset=occ.start_offset,
+                end_offset=occ.end_offset,
+                context_snippet=ctx,
+                semantic_label=var,
+                what_to_find=fill_q,
+                retrieval_query=f"{template_title}: {var}. {ctx[:200]}",
+                data_type=str(defn.get("data_type") or meta.get("data_type") or "other"),
+                entity_role=defn.get("entity_role") or meta.get("entity_role"),
+                fill_question=fill_q,
+                question_key=var,
+                variable=var,
+            )
+        )
+
+    if missing:
+        unique_missing = sorted(set(missing))
+        raise ValueError(
+            "в шаблоне есть переменные без описания в manifest/каталоге: "
+            + ", ".join(unique_missing[:12])
+        )
+
+    finalized, unique = assign_question_metadata(specs)
+    logger.info(
+        "[draft_template_indexer] docxtpl variables unique=%s occurrences=%s",
+        len(unique),
+        len(finalized),
+    )
+    return finalized
+
+
+def _resolve_manifest_placeholders(template_key: str) -> Tuple[str, Optional[List[Dict[str, Any]]]]:
+    """('bankruptcy'|'db'|..., placeholders или None)."""
+    from app.services.draft_template_keys import parse_template_key
+    from app.services.bankruptcy_templates import get_manifest_placeholders
+
+    kind, ident = parse_template_key(template_key)
+    if kind == "bankruptcy" and ident:
+        return kind, get_manifest_placeholders(ident)
+    return kind, None
+
+
+def _build_heuristic_specs(html: str, occurrences: List[PlaceholderOccurrence], template_title: str) -> List[TemplateFieldSpec]:
+    specs: List[TemplateFieldSpec] = []
+    for i, occ in enumerate(occurrences):
+        spec = _heuristic_field_spec(occ, html, template_title)
+        specs.append(spec.model_copy(update={"field_id": f"ph_{i:03d}"}))
+    specs = unify_semantic_duplicate_questions(specs)
+    finalized, _ = assign_question_metadata(specs)
+    return finalized
+
+
 def enrich_fields_via_llm(
     html: str,
     occurrences: List[PlaceholderOccurrence],
@@ -174,7 +391,8 @@ def enrich_fields_via_llm(
         from app.services.llm_factory import create_legal_llm
     except Exception as e:
         logger.warning("[draft_template_indexer] LLM import failed: %s", e)
-        return base_specs
+        finalized, _ = assign_question_metadata(unify_semantic_duplicate_questions(base_specs))
+        return finalized
 
     llm = create_legal_llm(provider="yandex", use_rate_limiting=False)
     enriched: List[TemplateFieldSpec] = []
@@ -188,13 +406,31 @@ def enrich_fields_via_llm(
                 f"  context: {s.context_snippet}"
             )
         prompt = (
-            "Ты индексируешь юридический HTML-шаблон. Для каждого поля опиши, ЧТО именно нужно найти "
-            "в материалах дела (учитывай контекст — одинаковый marker в разных местах = разные поля).\n"
+            "Ты готовишь вопросы для автозаполнения юридического шаблона банкротства.\n"
+            "Для КАЖДОГО плейсхолдера сформулируй fill_question — один чёткий вопрос на русском, "
+            "заканчивающийся «?».\n\n"
+            "ПРАВИЛА:\n"
+            "1. Вопрос должен быть самодостаточным: LLM ответит только по запросу юриста и материалам дела.\n"
+            "2. Указывай роль стороны, если видна из контекста: кредитор / должник / суд.\n"
+            "3. Одинаковый смысл в разных местах шаблона → ДОСЛОВНО одинаковый fill_question "
+            "(например, все [наименование кредитора] → «Какое полное наименование кредитора?»).\n"
+            "4. Одинаковый marker, но разный контекст → РАЗНЫЕ вопросы "
+            "(например, [дата составления] ≠ дата договора).\n"
+            "5. Не используй общие фразы «найти в материалах», «заполните поле».\n"
+            "6. Примеры хороших вопросов:\n"
+            "   - Какое полное наименование кредитора?\n"
+            "   - Какой ИНН должника?\n"
+            "   - Какова сумма основного долга по требованию кредитора?\n"
+            "   - Какой размер государственной пошлины?\n"
+            "   - В какой арбитражный суд подаётся заявление?\n"
+            "   - Какая дата составления заявления?\n\n"
             f"Шаблон: {template_title}\n\n"
             "ПОЛЯ:\n" + "\n".join(lines) + "\n\n"
             "Ответь ТОЛЬКО JSON:\n"
-            '{"fields":[{"field_id":"ph_000","semantic_label":"...","what_to_find":"...","retrieval_query":"...",'
-            '"data_type":"inn|party_name|court_name|date|amount|address|other","entity_role":"creditor|debtor|court|null"}]}\n'
+            '{"fields":[{"field_id":"ph_000","fill_question":"Какой ИНН кредитора?",'
+            '"semantic_label":"ИНН кредитора","what_to_find":"ИНН организации-кредитора",'
+            '"retrieval_query":"ИНН кредитора из договора или выписки",'
+            '"data_type":"inn","entity_role":"creditor"}]}\n'
         )
         try:
             resp = llm.invoke([HumanMessage(content=prompt)])
@@ -209,23 +445,52 @@ def enrich_fields_via_llm(
 
         for s in batch:
             extra = by_id.get(s.field_id) or {}
-            enriched.append(
-                TemplateFieldSpec(
-                    field_id=s.field_id,
-                    marker=s.marker,
-                    occurrence_index=s.occurrence_index,
-                    start_offset=s.start_offset,
-                    end_offset=s.end_offset,
-                    context_snippet=s.context_snippet,
-                    semantic_label=str(extra.get("semantic_label") or s.semantic_label).strip(),
-                    what_to_find=str(extra.get("what_to_find") or s.what_to_find).strip(),
-                    retrieval_query=str(extra.get("retrieval_query") or s.retrieval_query).strip(),
-                    data_type=str(extra.get("data_type") or s.data_type).strip() or "other",
-                    entity_role=extra.get("entity_role") if extra.get("entity_role") else s.entity_role,
-                )
+            raw_fill_q = str(extra.get("fill_question") or "").strip()
+            entity_role = extra.get("entity_role") if extra.get("entity_role") else s.entity_role
+            draft = TemplateFieldSpec(
+                field_id=s.field_id,
+                marker=s.marker,
+                occurrence_index=s.occurrence_index,
+                start_offset=s.start_offset,
+                end_offset=s.end_offset,
+                context_snippet=s.context_snippet,
+                semantic_label=str(extra.get("semantic_label") or s.semantic_label).strip(),
+                what_to_find=str(extra.get("what_to_find") or s.what_to_find).strip(),
+                retrieval_query=str(extra.get("retrieval_query") or s.retrieval_query).strip(),
+                data_type=str(extra.get("data_type") or s.data_type).strip() or "other",
+                entity_role=entity_role,
             )
+            fill_q = sanitize_fill_question(raw_fill_q, draft) if raw_fill_q else build_fill_question(draft)
+            enriched.append(draft.model_copy(update={"fill_question": fill_q}))
 
-    return enriched or base_specs
+    specs_out = enriched or base_specs
+    specs_out = unify_semantic_duplicate_questions(specs_out)
+    finalized, unique = assign_question_metadata(specs_out)
+    logger.info(
+        "[draft_template_indexer] questions unique=%s occurrences=%s",
+        len(unique),
+        len(finalized),
+    )
+    return finalized
+
+
+def _enrich_snapshot_meta(
+    snap: TemplateFieldCatalogSnapshot,
+    template_key: str,
+) -> TemplateFieldCatalogSnapshot:
+    """Добавить engine/docx_file из manifest для bankruptcy-шаблонов."""
+    from app.services.draft_template_keys import parse_template_key
+    from app.services.bankruptcy_templates import get_template_engine, get_template_meta
+
+    kind, ident = parse_template_key(template_key)
+    if kind != "bankruptcy" or not ident:
+        return snap
+    meta = get_template_meta(ident)
+    if not meta:
+        return snap
+    engine = get_template_engine(ident)
+    docx_file = str(meta.get("file") or "") if engine == "docxtpl" else ""
+    return snap.model_copy(update={"engine": engine, "docx_file": docx_file})
 
 
 def index_template_html(
@@ -253,14 +518,16 @@ def index_template_html(
         return TemplateFieldCatalogSnapshot(template_key=template_key, indexed_html="", field_specs=[]), "empty"
 
     sha = content_sha256(html)
-    version = str(getattr(config, "DRAFT_TEMPLATE_INDEXER_VERSION", "1") or "1")
+    version = str(getattr(config, "DRAFT_TEMPLATE_INDEXER_VERSION", "3") or "3")
 
     if not force:
         existing = load_catalog_snapshot(db, template_key, require_sha256=sha)
-        if existing and existing.field_specs:
-            return existing, "skipped_unchanged"
+        if existing and existing.field_specs and str(existing.indexer_version or "") == version:
+            return _enrich_snapshot_meta(existing, template_key), "skipped_unchanged"
 
-    occs = scan_placeholder_occurrences(html)
+    docxtpl_occs = scan_docxtpl_placeholder_occurrences(html)
+    bracket_occs = scan_placeholder_occurrences(html) if not docxtpl_occs else []
+    occs = docxtpl_occs or bracket_occs
     if not occs:
         snap = upsert_catalog(
             db,
@@ -270,9 +537,54 @@ def index_template_html(
             indexed_html=html,
             indexer_version=version,
         )
-        return snap, "no_placeholders"
+        return _enrich_snapshot_meta(snap, template_key), "no_placeholders"
 
-    specs = enrich_fields_via_llm(html, occs, template_title=template_title or template_key)
+    kind, manifest_placeholders = _resolve_manifest_placeholders(template_key)
+    llm_enrich = bool(getattr(config, "DRAFT_TEMPLATE_INDEX_LLM_ENRICH", False))
+    is_docxtpl = bool(docxtpl_occs)
+
+    try:
+        if kind == "bankruptcy":
+            if not manifest_placeholders:
+                logger.error(
+                    "[draft_template_indexer] bankruptcy key=%s: добавьте variables в manifest.json",
+                    template_key,
+                )
+                return (
+                    _enrich_snapshot_meta(
+                        TemplateFieldCatalogSnapshot(template_key=template_key, indexed_html=html, field_specs=[]),
+                        template_key,
+                    ),
+                    "missing_manifest_placeholders",
+                )
+            if is_docxtpl:
+                specs = build_specs_from_manifest_variables(
+                    html,
+                    occs,
+                    placeholders=manifest_placeholders,
+                    template_title=template_title or template_key,
+                )
+            else:
+                specs = build_specs_from_manifest_placeholders(
+                    html,
+                    occs,
+                    placeholders=manifest_placeholders,
+                    template_title=template_title or template_key,
+                )
+        elif llm_enrich:
+            specs = enrich_fields_via_llm(html, occs, template_title=template_title or template_key)
+        else:
+            specs = _build_heuristic_specs(html, occs, template_title or template_key)
+    except ValueError as e:
+        logger.error("[draft_template_indexer] manifest index failed key=%s: %s", template_key, e)
+        return (
+            _enrich_snapshot_meta(
+                TemplateFieldCatalogSnapshot(template_key=template_key, indexed_html=html, field_specs=[]),
+                template_key,
+            ),
+            "manifest_error",
+        )
+
     indexed_html = inject_field_anchors(html, specs)
     snap = upsert_catalog(
         db,
@@ -282,4 +594,4 @@ def index_template_html(
         indexed_html=indexed_html,
         indexer_version=version,
     )
-    return snap, "indexed"
+    return _enrich_snapshot_meta(snap, template_key), "indexed"

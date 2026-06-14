@@ -1,4 +1,4 @@
-"""Draft document tool — production draft_pipeline + DocumentEditor persist."""
+"""Draft document tool — draft agent writer + DocumentEditor persist."""
 from __future__ import annotations
 
 import asyncio
@@ -14,6 +14,11 @@ from app.services.agent_runs.tools._helpers import (
     emit_tool_completed,
     emit_tool_started,
     run_with_timeout,
+)
+from app.services.draft_agent.writer import (
+    persist_draft_document,
+    resolve_template_for_draft,
+    write_draft_document_html,
 )
 from app.utils.database import SessionLocal
 
@@ -38,54 +43,59 @@ def build_draft_tool(
     default_file_ids: List[str],
     on_tool_completed: Callable[[], None] | None = None,
 ) -> Any:
-    """Factory: runs full draft_pipeline and persists to document editor."""
+    """Factory: creates document via draft agent writer (same engine as chat draft mode)."""
 
     @tool(TOOL_NAME, args_schema=DraftToolInput)
     async def agent_draft(
         user_prompt: str,
-        template_system_id: Optional[str] = None,
         file_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """Создаёт юридический черновик через production draft pipeline и сохраняет в редактор дела."""
+        """Создаёт юридический черновик и сохраняет в редактор дела."""
         if not getattr(config, "AGENT_RUNS_DRAFT_TOOL_ENABLED", True):
             raise RuntimeError("agent_draft tool is disabled")
 
         payload = DraftToolInput(
             user_prompt=user_prompt,
-            template_system_id=template_system_id,
             file_ids=file_ids,
         )
-        scope_file_ids = payload.file_ids if payload.file_ids else list(default_file_ids or [])
 
         emit_tool_started(
             TOOL_NAME,
             {
                 "user_prompt": payload.user_prompt[:200],
-                "file_count": len(scope_file_ids),
-                "template_system_id": payload.template_system_id,
+                "file_count": len(file_ids or default_file_ids or []),
             },
         )
 
         db = SessionLocal()
         try:
 
-            def _run_pipeline() -> Dict[str, Any]:
-                from app.services.draft_pipeline.runner import execute_draft_pipeline
-
-                state = {
-                    "case_id": case_id,
-                    "user_id": user_id,
-                    "question": payload.user_prompt,
-                    "attached_file_ids": scope_file_ids or None,
-                    "template_system_id": payload.template_system_id,
-                }
-                return execute_draft_pipeline(state, db=db)
+            def _run_writer() -> Dict[str, Any]:
+                template_html, template_label, _ = resolve_template_for_draft(
+                    db,
+                    template_file_id=None,
+                    template_file_content=None,
+                    user_question=payload.user_prompt,
+                )
+                html = write_draft_document_html(
+                    document_instruction=payload.user_prompt,
+                    template_html=template_html or None,
+                    template_label=template_label,
+                )
+                title = payload.user_prompt.strip().split("\n")[0][:255] or "Новый документ"
+                return persist_draft_document(
+                    db,
+                    case_id=case_id,
+                    user_id=user_id,
+                    title=title,
+                    content=html,
+                )
 
             async def _run_with_draft_timeout():
                 timeout = _draft_timeout_sec()
                 try:
                     return await asyncio.wait_for(
-                        asyncio.to_thread(_run_pipeline),
+                        asyncio.to_thread(_run_writer),
                         timeout=timeout,
                     )
                 except asyncio.TimeoutError as exc:
@@ -93,18 +103,10 @@ def build_draft_tool(
                         f"{TOOL_NAME} превысил лимит {timeout:.0f} с"
                     ) from exc
 
-            result = await _run_with_draft_timeout()
-            doc = result.get("document_created") if isinstance(result, dict) else None
-            errors = result.get("errors") if isinstance(result, dict) else None
-
+            doc = await _run_with_draft_timeout()
             if not isinstance(doc, dict) or not doc.get("id"):
-                message = "draft_pipeline_failed"
-                if isinstance(errors, list) and errors:
-                    message = str(errors[-1])[:500]
-                elif isinstance(result, dict) and result.get("response"):
-                    message = str(result.get("response"))[:500]
-                emit_tool_completed(TOOL_NAME, success=False, output_summary=message)
-                raise RuntimeError(message)
+                emit_tool_completed(TOOL_NAME, success=False, output_summary="draft_write_failed")
+                raise RuntimeError("draft_write_failed")
 
             output = DraftToolOutput(
                 status="completed",

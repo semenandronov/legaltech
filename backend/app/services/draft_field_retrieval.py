@@ -23,6 +23,76 @@ from app.services.rag_service import RAGService
 
 logger = logging.getLogger(__name__)
 
+_EDITOR_RAG_FILE_PREFIXES = ("editor_doc_", "editor_")
+
+
+def is_editor_rag_file_id(file_id: str) -> bool:
+    """Виртуальные file_id из текстового редактора — не материалы загруженного дела."""
+    fid = str(file_id or "").strip()
+    return any(fid.startswith(p) for p in _EDITOR_RAG_FILE_PREFIXES)
+
+
+def resolve_bulk_case_file_ids(
+    db: Optional[Session],
+    case_id: str,
+    attached_file_ids: Optional[List[str]] = None,
+) -> Optional[List[str]]:
+    """
+    ID только загруженных файлов дела (таблица files), без черновиков редактора.
+
+    Если attached_file_ids заданы — отбрасываем editor_doc_*; иначе берём все files по case_id.
+    """
+    if attached_file_ids:
+        ids = [
+            str(x).strip()
+            for x in attached_file_ids
+            if x and str(x).strip() and not is_editor_rag_file_id(str(x))
+        ]
+        return ids or None
+
+    if not db or not case_id:
+        return None
+
+    from app.models.case import File as CaseFile
+    from app.utils.database import ensure_db_session_live
+
+    try:
+        ensure_db_session_live(db)
+        rows = (
+            db.query(CaseFile.id)
+            .filter(CaseFile.case_id == case_id)
+            .order_by(CaseFile.created_at.asc())
+            .all()
+        )
+        ids = [str(r[0]) for r in rows if r and r[0]]
+        return ids or None
+    except Exception as e:
+        logger.warning(
+            "[draft_field_retrieval] resolve_bulk_case_file_ids case=%s: %s", case_id, e
+        )
+        return None
+
+
+def filter_case_material_docs(docs: List[Any]) -> List[Any]:
+    """Убирает чанки из текстового редактора (editor_doc_*), если они попали в recall."""
+    out: List[Any] = []
+    for doc in docs or []:
+        meta = getattr(doc, "metadata", None) or {}
+        fid = str(meta.get("file_id") or "")
+        if is_editor_rag_file_id(fid):
+            continue
+        out.append(doc)
+    return out
+
+
+def _bulk_context_max_chars() -> int:
+    return max(4000, int(getattr(config, "DRAFT_BULK_CONTEXT_MAX_CHARS", 7000) or 7000))
+
+
+def _bulk_snippet_max_chars() -> int:
+    # ~900 символов на чанк при k=8 укладывается в лимит 6–8k.
+    return 900
+
 
 @contextmanager
 def _worker_db_session(parent_db: Optional[Session]) -> Iterator[Optional[Session]]:
@@ -168,9 +238,10 @@ def retrieve_bulk_document_context(
     if not q:
         return "", {**meta, "status": "empty_query"}
 
-    top_k = k if k is not None else int(getattr(config, "DRAFT_BULK_RAG_K", 14) or 14)
-    top_k = max(4, min(top_k, 20))
-    max_chars = int(getattr(config, "DRAFT_BULK_CONTEXT_MAX_CHARS", 20000) or 20000)
+    top_k = k if k is not None else int(getattr(config, "DRAFT_BULK_RAG_K", 8) or 8)
+    top_k = max(4, min(top_k, 12))
+    max_chars = _bulk_context_max_chars()
+    snippet_max = _bulk_snippet_max_chars()
     strategy = str(getattr(config, "DRAFT_BULK_RAG_STRATEGY", "hybrid") or "hybrid").strip() or "hybrid"
 
     if db is not None:
@@ -181,7 +252,9 @@ def retrieve_bulk_document_context(
         except Exception as e:
             logger.warning("[draft_field_retrieval] bulk ensure_db_session_live: %s", e)
 
-    file_ids = list(attached_file_ids) if attached_file_ids else None
+    file_ids = resolve_bulk_case_file_ids(db, case_id, attached_file_ids)
+    meta["scoped_file_ids"] = file_ids
+    meta["exclude_editor_docs"] = True
     docs = rag_service.retrieve_context(
         case_id=case_id,
         query=q,
@@ -191,15 +264,17 @@ def retrieve_bulk_document_context(
         retrieval_strategy=strategy,
         use_hybrid=True,
     )
+    docs = filter_case_material_docs(docs or [])
     meta["strategy"] = strategy
     snippets = [
-        d.page_content[:1200]
-        for d in (docs or [])
+        d.page_content[:snippet_max]
+        for d in docs
         if getattr(d, "page_content", "").strip()
     ]
     ctx = "\n\n".join(snippets)[:max_chars]
-    meta["docs"] = len(docs or [])
+    meta["docs"] = len(docs)
     meta["k"] = top_k
+    meta["max_chars"] = max_chars
     meta["status"] = "ok" if ctx else "no_snippets"
     return ctx, meta
 
@@ -274,17 +349,21 @@ def retrieve_field_context_lightweight(
         except Exception as e:
             logger.warning("[draft_field_retrieval] light ensure_db_session_live: %s", e)
 
+    file_ids = resolve_bulk_case_file_ids(db, case_id, attached_file_ids)
     docs = rag_service.retrieve_context(
         case_id=case_id,
         query=query,
         k=k,
         db=db,
-        file_ids=list(attached_file_ids) if attached_file_ids else None,
+        file_ids=file_ids,
         retrieval_strategy="hybrid",
         use_hybrid=True,
     )
-    snippets = [d.page_content[:1200] for d in (docs or []) if getattr(d, "page_content", "").strip()]
-    ctx = "\n\n".join(snippets)[:4000]
+    docs = filter_case_material_docs(docs or [])
+    snippet_max = min(_bulk_snippet_max_chars(), 800)
+    max_chars = min(_bulk_context_max_chars(), 4000)
+    snippets = [d.page_content[:snippet_max] for d in docs if getattr(d, "page_content", "").strip()]
+    ctx = "\n\n".join(snippets)[:max_chars]
     if query_cache is not None:
         query_cache[query] = ctx
     meta["docs"] = len(docs or [])

@@ -46,7 +46,6 @@ from app.services.chat.assistant_turn_persistence import (
     schedule_global_assistant_persist,
     should_sync_persist_before_finish,
 )
-from app.services.langchain_agents.draft_hitl import normalize_draft_action
 from app.services.chat.metrics import get_metrics
 from app.config import config
 from app.services.llm_factory import create_legal_llm
@@ -345,7 +344,6 @@ async def assistant_chat_v2(
         - selected_text: выделенный текст
         - template_file_id: ID файла-шаблона
         - template_file_content: контент локального шаблона
-        - template_system_id: id системного шаблона (библиотека банкротства)
         - attached_file_ids: прикреплённые файлы
         
     Returns:
@@ -402,12 +400,8 @@ async def assistant_chat_v2(
                 requested_deep_think,
             )
 
-        draft_action = normalize_draft_action(body.get("draft_action"))
+
         question = (last_message.get("content") or "").strip()
-        if draft_mode and draft_action == "approve" and not question:
-            question = "Одобрить план"
-        if draft_mode and draft_action == "reject" and not question:
-            question = "отмена"
         if not question:
             raise HTTPException(status_code=400, detail="Question is required")
         
@@ -418,7 +412,6 @@ async def assistant_chat_v2(
         editor_mode_hint = body.get("editor_mode_hint")  # 'edit' or 'ask' from UI toggle
         template_file_id = body.get("template_file_id")
         template_file_content = body.get("template_file_content")
-        template_system_id = body.get("template_system_id")
         attached_file_ids = body.get("attached_file_ids")
         if attached_file_ids is not None and not isinstance(attached_file_ids, list):
             raise HTTPException(status_code=400, detail="attached_file_ids must be a list")
@@ -550,10 +543,8 @@ async def assistant_chat_v2(
                         selected_text=selected_text,
                         template_file_id=template_file_id,
                         template_file_content=template_file_content,
-                        template_system_id=template_system_id,
                         attached_file_ids=attached_file_ids,
                         editor_mode_hint=editor_mode_hint,
-                        draft_action=draft_action,
                         corpus_size_hint=corpus_size_hint,
                     ),
                 )
@@ -874,17 +865,6 @@ async def _stream_with_trace(
             )
         if trace_token is not None:
             reset_active_trace_context(trace_token)
-
-
-@router.get("/api/v2/assistant/document-templates")
-async def list_document_templates_v2(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Системные шаблоны + админские публичные шаблоны Draft."""
-    from app.services.draft_admin_template_service import list_merged_public_templates
-
-    return {"templates": list_merged_public_templates(db)}
 
 
 @router.get("/api/v2/assistant/chat/{case_id}/sessions")

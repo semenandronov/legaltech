@@ -390,7 +390,7 @@
   border-radius: 2px;
 }
 
-/* Draft gap bubbles — missing fields from AI draft pipeline [? label ?] */
+/* Draft gap bubbles — missing fields from AI draft pipeline [label] */
 .draft-gap-bubble {
   display: inline;
   background: color-mix(in srgb, var(--color-warning, #d97706) 14%, transparent);

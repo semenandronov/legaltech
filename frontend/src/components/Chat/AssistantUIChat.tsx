@@ -348,12 +348,6 @@ interface AssistantUIChatProps {
 }
 
 // Компонент-обертка для PromptInput с поддержкой drag&drop
-export interface SystemDocumentTemplate {
-  id: string
-  title: string
-  description?: string
-}
-
 interface PromptInputWithDropProps {
   actualCaseId: string
   onDocumentDrop?: (documentFilename: string) => void
@@ -369,9 +363,6 @@ interface PromptInputWithDropProps {
   onLegalResearchChange: (value: boolean) => void
   onCourtPracticeChange: (value: boolean) => void
   onDraftModeChange: (value: boolean) => void
-  systemTemplates?: SystemDocumentTemplate[]
-  systemTemplateId?: string
-  onSystemTemplateIdChange?: (id: string) => void
 }
 
 // Компонент для отображения файла как чипа (chip)
@@ -442,9 +433,6 @@ const PromptInputWithDrop = ({
   onLegalResearchChange: setLegalResearchProp,
   onCourtPracticeChange: setCourtPracticeProp,
   onDraftModeChange: setDraftModeProp,
-  systemTemplates = [],
-  systemTemplateId = '',
-  onSystemTemplateIdChange,
 }: PromptInputWithDropProps) => {
   const attachments = useOptionalProviderAttachments()
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -650,27 +638,6 @@ const PromptInputWithDrop = ({
               }}
             />
             <PromptInputFooter className="flex flex-col gap-2 px-3 py-2 mt-1">
-              {draftMode && systemTemplates.length > 0 && (
-                <div className="flex items-center gap-2 w-full flex-wrap">
-                  <label htmlFor="system-template-select" className="text-xs shrink-0" style={{ color: 'var(--color-text-secondary)' }}>
-                    Шаблон
-                  </label>
-                  <select
-                    id="system-template-select"
-                    value={systemTemplateId}
-                    onChange={(e) => onSystemTemplateIdChange?.(e.target.value)}
-                    className="text-sm rounded-lg border border-[#E7EAF0] bg-white px-2 py-1.5 min-w-0 flex-1 max-w-md focus:outline-none focus:ring-2 focus:ring-ring/40"
-                    aria-label="Системный шаблон документа"
-                  >
-                    <option value="">— без системного шаблона (только свой файл) —</option>
-                    {systemTemplates.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.title}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
               <div className="flex items-center justify-between w-full gap-2">
               <div className="flex items-center gap-0.5">
                 <SettingsPanel
@@ -835,8 +802,6 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
     setDraftMode,
     reset: resetChatInstruments,
   } = useChatInstrumentSettings()
-  const [systemTemplates, setSystemTemplates] = useState<SystemDocumentTemplate[]>([])
-  const [systemTemplateId, setSystemTemplateId] = useState('')
   const [globalSessionId, setGlobalSessionId] = useState<string | null>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
@@ -889,39 +854,6 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
-
-  useEffect(() => {
-    if (!draftMode || !actualCaseId) {
-      return
-    }
-    const token = localStorage.getItem('access_token')
-    if (!token) return
-    let cancelled = false
-    ;(async () => {
-      try {
-        const res = await fetch(getApiUrl('/api/v2/assistant/document-templates'), {
-          headers: { 'X-Access-Token': token },
-        })
-        if (!res.ok) return
-        const data = await res.json()
-        const list = data?.templates
-        if (!cancelled && Array.isArray(list)) {
-          setSystemTemplates(list)
-        }
-      } catch {
-        /* ignore */
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [draftMode, actualCaseId])
-
-  useEffect(() => {
-    if (!draftMode) {
-      setSystemTemplateId('')
-    }
-  }, [draftMode])
 
   const sendMessage = useCallback(async (userMessage: string, filesSnapshot: ExtendedFileUIPart[] = []) => {
     const hasText = userMessage.trim().length > 0
@@ -981,12 +913,8 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
         requestBody.session_id = globalSessionId
       }
 
-      // Обработка файлов-шаблонов в draft mode
+      // Файл-шаблон в draft mode (свой файл); системный — автоподбор на бэкенде
       if (draftMode) {
-        if (systemTemplateId) {
-          requestBody.template_system_id = systemTemplateId
-          logger.info(`[Draft Mode] Using system template: ${systemTemplateId}`)
-        }
         logger.info(`[Draft Mode] Checking attachments: draftMode=${draftMode}, attachments=${!!attachments}, filesCount=${attachments?.files?.length || 0}`)
         if (currentAttachments.length > 0) {
           logger.info(`[Draft Mode] Files found: ${currentAttachments.map(f => ({ name: f.filename, hasFile: !!f.file, hasSourceFileId: !!f.sourceFileId }))}`)
@@ -1478,7 +1406,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
         })
       }
     }
-  }, [actualCaseId, isLoading, messages, legalResearch, courtPractice, draftMode, documentEditorMode, currentDocumentContent, currentDocumentId, selectedText, systemTemplateId, editorChatMode])
+  }, [actualCaseId, isLoading, messages, legalResearch, courtPractice, draftMode, documentEditorMode, currentDocumentContent, currentDocumentId, selectedText, editorChatMode])
 
   // Auto-submit: when autoSubmit=true, fire initialQuery once after mount
   const autoSubmittedRef = useRef(false)
@@ -1779,9 +1707,6 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
               onLegalResearchChange={setLegalResearch}
               onCourtPracticeChange={setCourtPractice}
               onDraftModeChange={setDraftMode}
-              systemTemplates={systemTemplates}
-              systemTemplateId={systemTemplateId}
-              onSystemTemplateIdChange={setSystemTemplateId}
             />
             <div className="flex flex-wrap gap-2 justify-center">
               {QUICK_ACTIONS.map((q) => (
@@ -2221,9 +2146,6 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
               onLegalResearchChange={setLegalResearch}
               onCourtPracticeChange={setCourtPractice}
               onDraftModeChange={setDraftMode}
-              systemTemplates={systemTemplates}
-              systemTemplateId={systemTemplateId}
-              onSystemTemplateIdChange={setSystemTemplateId}
             />
           </div>
         </div>

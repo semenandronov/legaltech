@@ -1,8 +1,8 @@
 """
-Системные шаблоны документов (файлы в app/templates/bankruptcy/).
+Системные шаблоны Draft (docxtpl DOCX + manifest.json).
 
-Манифест: id, title, description, file; опционально intent_keywords для режима
-DRAFT_TEMPLATE_SELECTION_MODE=keywords. Режим llm (по умолчанию) передаёт все шаблоны с file в LLM.
+Манифест: id, title, engine, file, variables[].
+Вопросы для LLM — в bankruptcy_field_catalog.py (единый каталог).
 """
 from __future__ import annotations
 
@@ -15,12 +15,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-_DIR = Path(__file__).resolve().parent.parent / "templates" / "bankruptcy"
+_DIR = Path(__file__).resolve().parent.parent / "templates" / "draft"
 _MANIFEST = _DIR / "manifest.json"
 
-# Жёсткий лимит длины шаблона снят: HTML-шаблоны передаются и сохраняются целиком,
-# чтобы не ломать верстку. Константа оставлена для обратной совместимости.
-MAX_TEMPLATE_CHARS = 0  # 0 = без ограничения
+MAX_TEMPLATE_CHARS = 0
 
 
 @lru_cache(maxsize=1)
@@ -36,8 +34,88 @@ def _load_manifest_raw() -> List[Dict[str, Any]]:
         return []
 
 
+def clear_manifest_cache() -> None:
+    _load_manifest_raw.cache_clear()
+
+
+def get_template_meta(template_id: str) -> Optional[Dict[str, Any]]:
+    for item in _load_manifest_raw():
+        if isinstance(item, dict) and item.get("id") == template_id:
+            return item
+    return None
+
+
+def get_template_engine(template_id: str) -> str:
+    meta = get_template_meta(template_id)
+    if not meta:
+        return "html"
+    return str(meta.get("engine") or "html").strip().lower()
+
+
+def get_manifest_variables(template_id: str) -> List[str]:
+    """Список переменных docxtpl из manifest."""
+    meta = get_template_meta(template_id)
+    if not meta:
+        from app.services.bankruptcy_field_catalog import get_template_variables
+
+        return get_template_variables(template_id)
+    raw = meta.get("variables")
+    if isinstance(raw, list) and raw:
+        return [str(v).strip() for v in raw if v]
+    return []
+
+
+def get_manifest_placeholders(template_id: str) -> List[Dict[str, Any]]:
+    """
+    Обратная совместимость: для docxtpl возвращает placeholders из variables + каталог.
+    Для html-шаблонов — placeholders из manifest.
+    """
+    if get_template_engine(template_id) == "docxtpl":
+        from app.services.bankruptcy_field_catalog import docxtpl_marker, get_field_meta, get_field_description
+
+        out: List[Dict[str, Any]] = []
+        for var in get_manifest_variables(template_id):
+            meta = get_field_meta(var)
+            out.append(
+                {
+                    "variable": var,
+                    "marker": docxtpl_marker(var),
+                    "fill_question": get_field_description(var),
+                    "entity_role": meta.get("entity_role"),
+                    "data_type": meta.get("data_type", "other"),
+                }
+            )
+        return out
+
+    meta = get_template_meta(template_id)
+    if not meta:
+        return []
+    raw = meta.get("placeholders")
+    if not isinstance(raw, list):
+        return []
+    out: List[Dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        marker = str(item.get("marker") or "").strip()
+        fill_question = str(item.get("fill_question") or "").strip()
+        if marker and fill_question:
+            out.append(item)
+    return out
+
+
+def get_docx_path(template_id: str) -> Optional[Path]:
+    meta = get_template_meta(template_id)
+    if not meta:
+        return None
+    fname = meta.get("file")
+    if not fname:
+        return None
+    path = _DIR / str(fname)
+    return path if path.is_file() else None
+
+
 def list_public_templates() -> List[Dict[str, Any]]:
-    """Список шаблонов для API (без путей к файлам на диске)."""
     out: List[Dict[str, Any]] = []
     for item in _load_manifest_raw():
         if not isinstance(item, dict):
@@ -53,6 +131,7 @@ def list_public_templates() -> List[Dict[str, Any]]:
                 "id": tid,
                 "title": item.get("title", tid),
                 "description": item.get("description", ""),
+                "engine": item.get("engine", "html"),
                 "auto_matchable": has_file,
                 "keyword_routable": keyword_mode,
             }
@@ -60,26 +139,11 @@ def list_public_templates() -> List[Dict[str, Any]]:
     return out
 
 
-def get_template_meta(template_id: str) -> Optional[Dict[str, Any]]:
-    for item in _load_manifest_raw():
-        if isinstance(item, dict) and item.get("id") == template_id:
-            return item
-    return None
-
-
 def find_best_system_template_match(
     user_query: str,
     *,
     min_score: int = 8,
 ) -> Optional[str]:
-    """
-    Детерминированный выбор id шаблона по тексту запроса (Draft).
-
-    Скоринг: сумма длин совпавших intent_keywords (подстрока в нормализованном запросе).
-    При равном score побеждает больший priority из манифеста.
-
-    Шаблоны без intent_keywords в манифесте не участвуют в автоподборе.
-    """
     if not user_query or not str(user_query).strip():
         return None
     q = str(user_query).lower().strip()
@@ -108,7 +172,6 @@ def find_best_system_template_match(
                 continue
             if kl not in q:
                 continue
-            # Короткие токены не усиливают score, если в шаблоне много ключей (избегаем шума «иск»).
             if len(kl) < 4 and len(kws) > 1:
                 continue
             score += len(kl)
@@ -140,10 +203,10 @@ def find_best_system_template_match(
 
 def load_system_template_body(template_id: str) -> Tuple[Optional[str], Optional[str]]:
     """
-    Загрузить текст шаблона по id из манифеста.
+    Загрузить тело шаблона для редактора.
 
-    Returns:
-        (text, title) или (None, None) если не найдено / ошибка чтения.
+    docxtpl: DOCX → preview HTML (с сохранением {{ variable }}).
+    html: читает .html/.htm напрямую.
     """
     meta = get_template_meta(template_id)
     if not meta:
@@ -156,6 +219,11 @@ def load_system_template_body(template_id: str) -> Tuple[Optional[str], Optional
         logger.error("[bankruptcy_templates] template file missing: %s", path)
         return None, meta.get("title")
     try:
+        engine = get_template_engine(template_id)
+        if engine == "docxtpl" and path.suffix.lower() == ".docx":
+            from app.services.draft_docxtpl_service import docx_to_preview_html
+
+            return docx_to_preview_html(path), meta.get("title")
         if path.suffix.lower() == ".pdf":
             from app.services.document_converter_service import DocumentConverterService
 

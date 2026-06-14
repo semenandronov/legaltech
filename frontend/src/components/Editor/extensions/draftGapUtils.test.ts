@@ -27,18 +27,18 @@ const schema = new Schema({
 
 describe('draftGapUtils', () => {
   it('counts gap markers in plain text', () => {
-    expect(countDraftGapsInText('ИНН [? ИНН должника ?] и сумма [? сумма ?]')).toBe(2)
+    expect(countDraftGapsInText('ИНН [ИНН должника] и сумма [сумма]')).toBe(2)
   })
 
   it('matches full gap pattern', () => {
-    expect(DRAFT_GAP_FULL_PATTERN.test('[? ИНН ?]')).toBe(true)
-    expect(DRAFT_GAP_FULL_PATTERN.test('частично [? x ?] текст')).toBe(false)
+    expect(DRAFT_GAP_FULL_PATTERN.test('[ИНН]')).toBe(true)
+    expect(DRAFT_GAP_FULL_PATTERN.test('частично [x] текст')).toBe(false)
   })
 
   it('finds unmarked gaps in ProseMirror doc', () => {
     const doc = schema.node('doc', null, [
       schema.node('paragraph', null, [
-        schema.text('Должник [? наименование ?]'),
+        schema.text('Должник [наименование]'),
       ]),
     ])
     const ranges = findUnmarkedDraftGaps(doc, schema.marks.draftGap)

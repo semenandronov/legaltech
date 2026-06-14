@@ -13,7 +13,6 @@ import { getDocument, createDocument, updateDocument, exportDocx, exportPdf, lis
 import { getPlaybooks, checkDocument as runPlaybookCheck, getCheck, Playbook } from '../services/playbooksApi'
 import { DocumentsList } from '../components/Editor/DocumentsList'
 import { PlaybookResultsPanel } from '../components/Playbooks/PlaybookResultsPanel'
-import { normalizeLegalDocumentHtml } from '../utils/legalDocumentHtmlNormalize'
 import type { CommentItem } from '../components/Editor/extensions/Comment'
 
 interface DocumentData {
@@ -104,7 +103,7 @@ const DocumentEditorPage = ({ embedded = false }: { embedded?: boolean }) => {
           const doc = await getDocument(documentId)
           setDocument(doc)
           setTitle(doc.title)
-          setContent(normalizeLegalDocumentHtml(doc.content || ''))
+          setContent(doc.content || '')
           setComments((doc.metadata?.comments as CommentItem[]) || [])
         } catch (error: any) {
           toast.error(error.message || 'Ошибка при загрузке документа')
@@ -314,7 +313,7 @@ const DocumentEditorPage = ({ embedded = false }: { embedded?: boolean }) => {
   }
 
   const handleVersionRestored = (restoredContent: string) => {
-    setContent(normalizeLegalDocumentHtml(restoredContent))
+    setContent(restoredContent)
     setHasUnsavedChanges(true)
     // Reload document to get updated version
     if (documentId) {
@@ -332,16 +331,14 @@ const DocumentEditorPage = ({ embedded = false }: { embedded?: boolean }) => {
                                  .replace(/<\/body>[\s\S]*?<\/html>/i, '')
                                  .trim() || cleanHtml
 
-    const laidOut = normalizeLegalDocumentHtml(bodyContent)
-
     if (editorRef.current) {
       // Already inside editor — just set content
-      editorRef.current.setContent(laidOut)
+      editorRef.current.setContent(bodyContent)
       setHasUnsavedChanges(true)
     } else {
       // In list mode — create a new document with the imported content
       try {
-        const doc = await createDocument(caseId!, 'Импортированный документ', laidOut)
+        const doc = await createDocument(caseId!, 'Импортированный документ', bodyContent)
         toast.success('Документ импортирован')
         navigate(`/cases/${caseId}/editor/${doc.id}`)
       } catch (err: any) {

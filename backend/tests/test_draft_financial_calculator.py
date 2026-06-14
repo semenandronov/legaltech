@@ -8,6 +8,7 @@ import pytest
 
 from app.services.draft_pipeline.financial_calculator import (
     apply_verified_financials,
+    compute_state_duty_rub,
     compute_verified_financials,
     format_money_rub,
     parse_date,
@@ -95,6 +96,7 @@ def test_full_supply_contract_scenario():
     assert parse_money(verified.principal_outstanding) == Decimal("3000000")
     assert parse_money(verified.penalty_amount) == Decimal("1065000")
     assert parse_money(verified.total_claim) == Decimal("4065000")
+    assert parse_money(verified.state_duty) == compute_state_duty_rub(Decimal("4065000"))
 
     updated = apply_verified_financials(facts)
     assert updated.financial.verified is not None
@@ -107,5 +109,38 @@ def test_apply_skipped_without_terms():
     assert apply_verified_financials(facts).financial.verified is None
 
 
+def test_compute_state_duty_for_4m_claim():
+    assert compute_state_duty_rub(Decimal("4083000")) == Decimal("28615")
+
+
 def test_format_money_rub():
     assert format_money_rub(Decimal("1065000")) == "1 065 000 руб."
+
+
+def test_explicit_period_without_business_days():
+    """Юрист указал ставку и дату начала — без срока оплаты в рабочих днях."""
+    from app.services.draft_pipeline.financial_calculator import (
+        compute_verified_financials_from_explicit_period,
+    )
+
+    facts = ExtractedFacts(
+        amounts={"основной долг": "3 000 000"},
+        dates={"дата акта": "2025-06-02"},
+        penalty_terms=PenaltyTerms(
+            act_date="2025-06-02",
+            penalty_rate_percent_per_day="0.1",
+            principal_amount="3000000",
+            penalty_end_date="2026-06-01",
+            partial_payments=[
+                FinancialLineItem(amount="1 500 000", source="п/п", date="2025-07-01"),
+            ],
+        ),
+    )
+    verified = compute_verified_financials_from_explicit_period(facts)
+    assert verified is not None
+    assert verified.source == "python_explicit_period_v1"
+    assert parse_money(verified.principal_outstanding) == Decimal("1500000")
+    assert verified.penalty_days > 0
+
+    updated = apply_verified_financials(facts)
+    assert updated.financial.verified is not None

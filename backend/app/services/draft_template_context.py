@@ -1,10 +1,9 @@
 """
 Единая сборка текста шаблона для draft:
 
-1) явный template_system_id
-2) template_file_content (вложение)
-3) template_file_id (файл дела в БД)
-4) автоподбор системного шаблона по запросу (LLM или keywords — см. DRAFT_TEMPLATE_SELECTION_MODE)
+1) template_file_content (вложение)
+2) template_file_id (файл дела в БД)
+3) автоподбор системного шаблона по запросу (LLM или keywords — см. DRAFT_TEMPLATE_SELECTION_MODE)
 """
 from __future__ import annotations
 
@@ -82,7 +81,6 @@ MAX_USER_TEMPLATE_CHARS = 0  # 0 = без ограничения
 def resolve_draft_template_context(
     db: Session,
     *,
-    template_system_id: Optional[str] = None,
     template_file_content: Optional[str] = None,
     template_file_id: Optional[str] = None,
     user_question: Optional[str] = None,
@@ -93,26 +91,9 @@ def resolve_draft_template_context(
     """
     Returns:
         (template_text, label) — label для логов/UI; может быть None.
-    Приоритет: template_system_id > template_file_content > template_file_id >
+    Приоритет: template_file_content > template_file_id >
                автоподбор по user_question (если включён).
     """
-    if template_system_id:
-        tid = template_system_id.strip()
-        text, title = _load_template_body_unified(db, tid)
-        if text:
-            tkey = template_key_for_system_id(db, tid)
-            logger.info(
-                "[draft_template_context] using system template id=%s title=%s key=%s",
-                template_system_id,
-                title,
-                tkey,
-            )
-            return text, title, tkey
-        logger.warning(
-            "[draft_template_context] system template not found or empty: %s",
-            template_system_id,
-        )
-
     if template_file_content and str(template_file_content).strip():
         raw = str(template_file_content).strip()
         return raw, None, None

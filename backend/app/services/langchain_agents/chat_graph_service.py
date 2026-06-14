@@ -292,7 +292,6 @@ class ChatGraphService:
 
         return resolve_draft_template_context(
             self.db,
-            template_system_id=template_system_id,
             template_file_content=template_file_content,
             template_file_id=template_file_id,
             user_question=question,
@@ -1144,6 +1143,16 @@ class ChatGraphService:
 
                             yield f"data: {_json_act.dumps(payload, ensure_ascii=False)}\n\n"
                             _record_first_sse_to_client()
+                            continue
+                        if payload.get("type") == "citations" and payload.get("citations"):
+                            node_citations = payload.get("citations")
+                            if isinstance(node_citations, list):
+                                citations = node_citations
+                                _cj = json.dumps(citations, ensure_ascii=False, default=str)
+                                if _cj != last_citations_json:
+                                    last_citations_json = _cj
+                                    yield f"data: {json.dumps({'type': 'citations', 'citations': citations}, ensure_ascii=False)}\n\n"
+                                    _record_first_sse_to_client()
                             continue
                         delta = payload.get("textDelta") or payload.get("text_delta")
                         if delta:
@@ -2078,131 +2087,6 @@ class ChatGraphService:
             logger.error(f"[ChatGraphService] Stream error: {e}", exc_info=True)
             yield format_sse_event(StreamEvent(type="error", data={"error": str(e)}))
     
-    async def resume_draft(
-        self,
-        case_id: str,
-        thread_id: str,
-        approved: bool = True,
-        user: User = None
-    ) -> AsyncGenerator[str, None]:
-        """
-        Возобновить выполнение draft после подтверждения/отмены пользователем.
-        
-        Используется для HITL - когда граф прерывается перед созданием документа,
-        пользователь может подтвердить или отменить операцию.
-        
-        Args:
-            case_id: ID дела
-            thread_id: ID потока (из предыдущего запроса)
-            approved: Подтверждено ли создание документа
-            user: Текущий пользователь (для проверки доступа)
-        
-        Yields:
-            JSON строки в формате assistant-ui SSE
-        """
-        logger.info(f"[ChatGraphService] Resuming draft for thread {thread_id}, approved: {approved}")
-        
-        # Проверяем доступ к делу
-        if user:
-            case = self.db.query(Case).filter(
-                Case.id == case_id,
-                Case.user_id == user.id
-            ).first()
-            if not case:
-                yield f"data: {json.dumps({'error': 'Дело не найдено'})}\n\n"
-                return
-        
-        # Получаем граф
-        graph, _ = self._get_or_create_graph()
-        
-        config = {
-            "configurable": {"thread_id": thread_id},
-            "recursion_limit": _case_graph_recursion_limit()
-        }
-        
-        try:
-            from app.services.langchain_agents.utils.state_editing import update_state
-
-            # Жёстко фиксируем состояние перед resume:
-            # если есть draft_plan, считаем, что остаёмся в draft flow и продолжаем исполнение.
-            current_state = await graph.aget_state(config)
-            has_plan = bool(current_state and current_state.values and current_state.values.get("draft_plan"))
-            waiting_for_approval = bool(
-                current_state and current_state.values and current_state.values.get("waiting_for_approval")
-            )
-            if not (has_plan and waiting_for_approval):
-                # Нельзя «проскочить» этап плана: approval/resume только после plan_ready.
-                yield (
-                    f"data: {json.dumps({'type': 'error', 'error': 'plan_not_ready'}, ensure_ascii=False)}\n\n"
-                )
-                yield f"data: {json.dumps({'type': 'finish', 'finishReason': 'error'}, ensure_ascii=False)}\n\n"
-                return
-            if has_plan:
-                await update_state(
-                    graph,
-                    thread_id,
-                    {
-                        "mode": "draft",
-                        "draft_approved": approved,
-                        "waiting_for_approval": True,
-                    },
-                )
-            else:
-                await update_state(graph, thread_id, {"draft_approved": approved})
-            
-            # Создаём Command для resume
-            resume_command = Command(resume={"draft_approved": approved})
-            
-            # Продолжаем выполнение
-            full_response = ""
-            citations = []
-            document_created = None
-            
-            async for chunk in graph.astream(resume_command, config=config):
-                if isinstance(chunk, dict):
-                    for node_name, node_data in chunk.items():
-                        if not isinstance(node_data, dict):
-                            continue
-                        
-                        # Обрабатываем response
-                        response = node_data.get("response")
-                        if response:
-                            if response != full_response:
-                                if full_response and response.startswith(full_response):
-                                    delta = response[len(full_response):]
-                                else:
-                                    delta = response
-                                
-                                if delta:
-                                    yield f"data: {json.dumps({'type': 'text-delta', 'textDelta': delta})}\n\n"
-                                
-                                full_response = response
-                        
-                        # Обрабатываем document_created
-                        doc_created = node_data.get("document_created")
-                        if doc_created:
-                            document_created = doc_created
-                            yield f"data: {json.dumps({'type': 'document-card', 'data': doc_created})}\n\n"
-                        
-                        # Обрабатываем citations
-                        node_citations = node_data.get("citations")
-                        if node_citations:
-                            citations = node_citations
-            
-            # Отправляем citations если есть
-            if citations:
-                yield f"data: {json.dumps({'type': 'citations', 'citations': citations})}\n\n"
-            
-            # Отправляем финальное событие
-            yield f"data: {json.dumps({'type': 'finish', 'finishReason': 'stop'})}\n\n"
-            
-            logger.info(f"[ChatGraphService] Draft resume completed: {len(full_response)} chars")
-            
-        except Exception as e:
-            logger.error(f"[ChatGraphService] Draft resume error: {e}", exc_info=True)
-            error_msg = f"Ошибка при возобновлении: {str(e)}"
-            yield f"data: {json.dumps({'type': 'text-delta', 'textDelta': error_msg})}\n\n"
-            yield f"data: {json.dumps({'type': 'finish', 'finishReason': 'error', 'error': str(e)})}\n\n"
 
 
 # Глобальный экземпляр для переиспользования

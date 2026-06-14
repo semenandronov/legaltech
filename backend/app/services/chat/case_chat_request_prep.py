@@ -45,7 +45,6 @@ class CaseChatPrepParams:
     selected_text: Optional[str] = None
     template_file_id: Optional[str] = None
     template_file_content: Optional[str] = None
-    template_system_id: Optional[str] = None
     attached_file_ids: Optional[List[str]] = None
     editor_mode_hint: Optional[str] = None
     draft_action: Optional[str] = None
@@ -329,7 +328,6 @@ def prepare_case_chat_request(db: Session, params: CaseChatPrepParams) -> CaseCh
         selected_text=params.selected_text,
         template_file_id=params.template_file_id,
         template_file_content=params.template_file_content,
-        template_system_id=params.template_system_id,
         attached_file_ids=attached_file_ids,
         editor_mode_hint=params.editor_mode_hint,
         session_id=session_id,

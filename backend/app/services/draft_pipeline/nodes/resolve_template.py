@@ -56,7 +56,6 @@ def resolve_template_strategy(
     if not tc:
         tc, tl, tkey = resolve_draft_template_context(
             db,
-            template_system_id=template_system_id,
             user_question=user_prompt,
             auto_match_system_template=True,
             document_type_hint=facts.document_type or (task_plan.target_document_type or ""),

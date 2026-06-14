@@ -70,7 +70,7 @@ def compile_scratch_document(
             else:
                 parts.append(f"<section><h2>{spec.title}</h2>{gen}</section>")
         else:
-            parts.append(f"<section><h2>{spec.title}</h2><p>[? раздел не сгенерирован ?]</p></section>")
+            parts.append(f"<section><h2>{spec.title}</h2><p>[раздел не сгенерирован]</p></section>")
     parts.append("</article>")
     return normalize_legacy_fillers("\n".join(parts))
 

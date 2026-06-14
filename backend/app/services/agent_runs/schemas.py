@@ -241,10 +241,6 @@ class DraftToolInput(BaseModel):
         max_length=16_000,
         description="Что нужно составить: тип документа, стороны, факты, требования",
     )
-    template_system_id: Optional[str] = Field(
-        default=None,
-        description="Опциональный системный шаблон (draft admin templates)",
-    )
     file_ids: Optional[List[str]] = Field(
         default=None,
         description="Документы дела в scope; иначе — file_ids запуска агента",

@@ -1,0 +1,30 @@
+[
+  {
+    "id": "creditor_ul_general",
+    "title": "Заявление кредитора о банкротстве ЮЛ",
+    "description": "Пример — замените на свой шаблон",
+    "file": "creditor_ul_general.html",
+    "priority": 100,
+    "intent_keywords": ["заявление кредитора о банкротстве"],
+    "placeholders": [
+      {
+        "marker": "[наименование суда]",
+        "fill_question": "В какой арбитражный суд подаётся заявление?",
+        "entity_role": "court",
+        "data_type": "court_name"
+      },
+      {
+        "marker": "[наименование кредитора]",
+        "fill_question": "Какое полное наименование кредитора?",
+        "entity_role": "creditor",
+        "data_type": "party_name"
+      },
+      {
+        "marker": "[ИНН кредитора]",
+        "fill_question": "Какой ИНН кредитора?",
+        "entity_role": "creditor",
+        "data_type": "inn"
+      }
+    ]
+  }
+]

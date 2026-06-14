@@ -34,7 +34,8 @@ def canonicalize_postgres_dsn(raw_url: str) -> PostgresDsn:
         return PostgresDsn(dsn=url)
 
     host = (parts.hostname or "").strip().lower()
-    is_local = host in ("localhost", "127.0.0.1", "::1", "")
+    # localhost + docker-compose service name on VM (no TLS on internal network)
+    is_local = host in ("localhost", "127.0.0.1", "::1", "", "postgres")
 
     # Preserve existing query params; add sslmode=require for remote DBs if missing.
     query = dict(parse_qsl(parts.query, keep_blank_values=True))

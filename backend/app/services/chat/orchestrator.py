@@ -2,7 +2,7 @@
 Chat Orchestrator — оркестратор case-assistant запросов.
 
 Execution branches:
-- Draft workflow через LangGraph chat graph (draft_mode=True)
+- Draft hybrid workflow (draft_mode=True) — пайплайн + bounded gap retrieval
 - Editor workflow через EditorHandler (document_context!=None)
 - Strict mixed path (СПРАВОЧНИК) через RAG+legal_research
 - Deterministic fast case-only path (default mode)
@@ -36,11 +36,6 @@ from app.services.document_processor import DocumentProcessor, get_document_proc
 from app.models.case import Case, File as CaseFile
 from app.models.user import User
 from app.services.langchain_agents.chat_graph_service import get_chat_graph_service
-from app.services.langchain_agents.draft_hitl import (
-    is_explicit_draft_approval_message,
-    is_explicit_draft_reject_message,
-    normalize_draft_action,
-)
 from app.services.observability.assistant_pipeline_langfuse_tracing import (
     assistant_step_span,
 )
@@ -173,8 +168,7 @@ class ChatRequest:
     selected_text: Optional[str] = None
     editor_mode_hint: Optional[str] = None  # 'edit' or 'ask' from UI toggle
     
-    # Шаблон для draft mode
-    template_system_id: Optional[str] = None  # id из системной библиотеки (manifest)
+    # Шаблон для draft mode (файл пользователя; системный — автоподбор)
     template_file_id: Optional[str] = None
     template_file_content: Optional[str] = None
     
@@ -477,6 +471,7 @@ class ChatOrchestrator:
 
             # Определяем handler и обрабатываем запрос
             full_response = ""
+            draft_document_created: Optional[dict] = None
             citations_data = []
             answer_blocks_data: list = []
             route_started_at = time.monotonic()
@@ -495,6 +490,9 @@ class ChatOrchestrator:
                         yield event
                         # Извлекаем текст для сохранения
                         full_response += self._extract_text_from_event(event)
+                        doc_card = self._extract_document_card_from_event(event)
+                        if doc_card:
+                            draft_document_created = doc_card
                         # Захватываем citations для сохранения в БД
                         extracted_citations = self._extract_citations_from_event(event)
                         if extracted_citations:
@@ -527,6 +525,17 @@ class ChatOrchestrator:
                             logger.debug("case_chat_route_to_handler span end failed", exc_info=True)
 
             finally:
+                # Draft: документ в редакторе — валидный исход даже без textDelta.
+                if not (full_response or "").strip() and draft_document_created:
+                    doc_title = str(draft_document_created.get("title") or "Документ")
+                    doc_id = str(draft_document_created.get("id") or "")
+                    case_id = str(draft_document_created.get("case_id") or request.case_id)
+                    full_response = (
+                        f'✅ Документ «{doc_title}» создан.\n'
+                        f"Открыть в редакторе: /cases/{case_id}/editor/{doc_id}"
+                    )
+                    yield SSESerializer.text_delta(full_response)
+
                 # Fail-closed: пустой финальный ответ не допускаем.
                 if not (full_response or "").strip():
                     trace_contract_event(
@@ -540,6 +549,7 @@ class ChatOrchestrator:
                                 "gate_status": "answer_generation_failed",
                                 "mode": mode,
                                 "session_id": session_id,
+                                "document_created": bool(draft_document_created),
                             },
                             step_name="answer_generation_gate",
                             status="blocked",
@@ -831,129 +841,21 @@ class ChatOrchestrator:
         """
         
         if request.draft_mode:
-            # Draft mode через LangGraph HITL:
-            # plan -> (уточнения/правки) -> approval -> resume -> generate document.
-            chat_service = get_chat_graph_service(
-                db=self.db,
-                rag_service=self.rag_service,
-                document_processor=self.document_processor,
-            )
-            graph = chat_service._get_or_create_graph()
-            thread_id = chat_service._get_or_create_thread_id(request.case_id, session_id)
-            draft_graph_config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 25}
+            from app.services.draft_agent import DraftAgentStreamService
 
-            question = (request.question or "").strip()
-            _dact = normalize_draft_action(getattr(request, "draft_action", None))
-            # Сначала явное действие из UI (кнопка), затем короткие текстовые команды.
-            if _dact == "approve":
-                # Одобрение возможно только если план уже показан (граф ждёт approval).
-                try:
-                    st = await graph.aget_state(draft_graph_config)
-                    waiting = bool(st and st.values and st.values.get("waiting_for_approval"))
-                except Exception:
-                    waiting = False
-                if waiting:
-                    async for event in chat_service.resume_draft(
-                        case_id=request.case_id,
-                        thread_id=thread_id,
-                        approved=True,
-                        user=request.current_user,
-                    ):
-                        yield event
-                    return
-            if _dact == "reject":
-                try:
-                    st = await graph.aget_state(draft_graph_config)
-                    waiting = bool(st and st.values and st.values.get("waiting_for_approval"))
-                except Exception:
-                    waiting = False
-                if waiting:
-                    async for event in chat_service.resume_draft(
-                        case_id=request.case_id,
-                        thread_id=thread_id,
-                        approved=False,
-                        user=request.current_user,
-                    ):
-                        yield event
-                    return
-            if is_explicit_draft_reject_message(question):
-                try:
-                    st = await graph.aget_state(draft_graph_config)
-                    waiting = bool(st and st.values and st.values.get("waiting_for_approval"))
-                except Exception:
-                    waiting = False
-                if waiting:
-                    async for event in chat_service.resume_draft(
-                        case_id=request.case_id,
-                        thread_id=thread_id,
-                        approved=False,
-                        user=request.current_user,
-                    ):
-                        yield event
-                    return
-            if is_explicit_draft_approval_message(question):
-                try:
-                    st = await graph.aget_state(draft_graph_config)
-                    waiting = bool(st and st.values and st.values.get("waiting_for_approval"))
-                except Exception:
-                    waiting = False
-                if waiting:
-                    async for event in chat_service.resume_draft(
-                        case_id=request.case_id,
-                        thread_id=thread_id,
-                        approved=True,
-                        user=request.current_user,
-                    ):
-                        yield event
-                    return
-
-            # Для обычных сообщений/правок проверяем state — если он ждёт approval,
-            # считаем сообщение уточнениями к плану и перегенерируем план.
-            try:
-                existing_state = await graph.aget_state(draft_graph_config)
-                waiting_for_approval = bool(
-                    existing_state
-                    and existing_state.values
-                    and existing_state.values.get("waiting_for_approval")
-                )
-                if waiting_for_approval:
-                    logger.info("[ChatOrchestrator] Draft waiting_for_approval=True; treating message as plan refinement")
-            except Exception as e:
-                logger.warning("[ChatOrchestrator] Could not read draft graph state: %s", e)
-
-            # Новый draft-запрос ИЛИ уточнения к плану: прогоняем через LangGraph,
-            # он сгенерирует/обновит план и при необходимости попросит подтверждение.
-            async for event in chat_service.stream_response(
+            draft_service = DraftAgentStreamService(self.db)
+            async for event in draft_service.stream(
                 case_id=request.case_id,
                 question=request.question,
                 user=request.current_user,
-                deep_think=False,
-                legal_research=request.legal_research,
-                court_practice=bool(request.court_practice),
-                draft_mode=True,
-                document_context=request.document_context,
-                document_id=request.document_id,
-                selected_text=request.selected_text,
-                existing_messages=None,
-                editor_mode_hint=request.editor_mode_hint,
-                template_system_id=request.template_system_id,
+                session_id=session_id,
+                attached_file_ids=request.attached_file_ids,
                 template_file_id=request.template_file_id,
                 template_file_content=request.template_file_content,
-                session_id=session_id,
-                persist_history=False,
-                attached_file_ids=request.attached_file_ids,
-                task_type=request.task_type,
-                depth_tier=request.depth_tier,
-                budget_profile=request.budget_profile,
-                corpus_size=request.corpus_size,
-                clarification_needed=bool(request.clarification_needed),
-                retrieval_task=request.retrieval_task,
-                scoped_file_ids=request.scoped_file_ids,
-                scoped_doc_type=request.scoped_doc_type,
             ):
                 yield event
             return
-        
+
         elif request.document_context:
             # Editor mode: редактирование документов
             async for event in self.editor_handler.handle(
@@ -988,7 +890,6 @@ class ChatOrchestrator:
                 selected_text=None,
                 existing_messages=None,
                 editor_mode_hint=request.editor_mode_hint,
-                template_system_id=None,
                 template_file_id=None,
                 template_file_content=None,
                 session_id=session_id,
@@ -1513,6 +1414,22 @@ class ChatOrchestrator:
         except:
             return ""
 
+    def _extract_document_card_from_event(self, event: str) -> Optional[dict]:
+        """Извлечь document-card из SSE (draft workflow)."""
+        import json
+
+        if "document-card" not in event:
+            return None
+
+        try:
+            data = json.loads(event.replace("data: ", "").strip())
+            if data.get("type") != "document-card":
+                return None
+            payload = data.get("data")
+            return payload if isinstance(payload, dict) else None
+        except Exception:
+            return None
+
     def _extract_citations_from_event(self, event: str) -> list:
         """Извлечь citations из SSE события типа citations"""
         import json
@@ -1619,6 +1536,7 @@ def prewarm_chat_runtime() -> Dict[str, Any]:
         "rag_service_ready": False,
         "classifier_ready": False,
         "legal_llm_ready": False,
+        "reranker_ready": False,
     }
     try:
         document_processor = get_document_processor()
@@ -1660,6 +1578,17 @@ def prewarm_chat_runtime() -> Dict[str, Any]:
     except Exception as exc:
         logger.warning("Case assistant prewarm: yandex embeddings failed: %s", exc, exc_info=True)
         readiness["yandex_embeddings_ready"] = False
+
+    try:
+        from app.services.reranker_service import get_light_reranker_service
+
+        reranker = get_light_reranker_service()
+        if reranker._cross_encoder is not None:
+            reranker._cross_encoder.predict([["prewarm", "prewarm query"]])
+        readiness["reranker_ready"] = reranker._cross_encoder is not None
+    except Exception as exc:
+        logger.warning("Case assistant prewarm: reranker failed: %s", exc, exc_info=True)
+        readiness["reranker_ready"] = False
 
     readiness["elapsed_ms"] = int((time.monotonic() - started) * 1000)
     return readiness

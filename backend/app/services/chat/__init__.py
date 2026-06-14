@@ -5,9 +5,6 @@ v6.0: маршрутизация fast/deep/clarify + graph runtime
 
 Содержит:
 - ChatOrchestrator: главный оркестратор запросов
-- universal_tools: универсальные инструменты для агента
-- RequestClassifier: классификация запросов (для метрик)
-- DraftHandler: создание документов
 - EditorHandler: редактирование документов
 - ChatHistoryService: управление историей чата
 - SSE события и сериализатор
@@ -36,7 +33,6 @@ from app.services.chat.events import (
 from app.services.chat.classifier import RequestClassifier, ClassificationResult
 from app.services.chat.history_service import ChatHistoryService
 from app.services.chat.universal_tools import get_universal_tools
-from app.services.chat.draft_handler import DraftHandler
 from app.services.chat.editor_handler import EditorHandler
 from app.services.chat.metrics import ChatMetrics, get_metrics, MetricTimer, Timer
 from app.services.chat.conversation_policy_service import ConversationPolicyService, RunContext
@@ -82,7 +78,6 @@ __all__ = [
     # Tools
     "get_universal_tools",
     # Handlers
-    "DraftHandler",
     "EditorHandler",
     # Metrics
     "ChatMetrics",

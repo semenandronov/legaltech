@@ -37,7 +37,7 @@ def _disable_llm_blueprint(monkeypatch):
 
 def test_gap_marker_format():
     m = gap_marker("ИНН должника")
-    assert m == "[? ИНН должника ?]"
+    assert m == "[ИНН должника]"
     found = find_gap_markers(f"ИНН {m} указан")
     assert found and found[0][0] == "ИНН должника"
 
@@ -153,7 +153,7 @@ def test_plan_scratch_blueprint_fallback():
 
 
 def test_linter_preserves_gaps_when_disabled():
-    html = "<section><p>Долг [? сумма ?]</p></section>"
+    html = "<section><p>Долг [сумма]</p></section>"
     facts = ExtractedFacts(amounts={"долг": "3000000"})
     out = run_document_linter(html=html, facts=facts, user_prompt="иск")
     assert out == html
@@ -161,7 +161,7 @@ def test_linter_preserves_gaps_when_disabled():
 
 def test_linter_rejects_bad_output(monkeypatch):
     monkeypatch.setattr("app.config.config.DRAFT_LINTER_ENABLED", True)
-    html = "<section><p>Долг 3 000 000 руб. [? ИНН ?]</p></section>"
+    html = "<section><p>Долг 3 000 000 руб. [ИНН]</p></section>"
     facts = ExtractedFacts(amounts={"долг": "3000000"})
 
     bad_llm = MagicMock()

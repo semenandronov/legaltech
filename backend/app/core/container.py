@@ -182,19 +182,6 @@ class Container:
             classifier=self.create_classifier()
         )
     
-    def create_draft_handler(self, db: Session):
-        """
-        Создать DraftHandler
-        
-        Args:
-            db: SQLAlchemy сессия
-        """
-        if "draft_handler" in self._overrides:
-            return self._overrides["draft_handler"]
-        
-        from app.services.chat.draft_handler import DraftHandler
-        return DraftHandler(db)
-    
     def create_editor_handler(self, db: Session):
         """
         Создать EditorHandler

@@ -2,22 +2,31 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
 from app.config import config
+from app.services.draft_calculator_for_fill import attach_calculator_context_for_fill
 from app.services.draft_field_fill import (
     apply_field_values,
     extract_fields_batch,
-    extract_fields_unified,
-    fields_needing_targeted_retry,
+)
+from app.services.draft_template_questions import (
+    build_unique_fill_questions,
+    extract_fill_question_answers,
+    extract_variable_answers,
+    propagate_answers_to_fields,
+    questions_needing_retry,
+    _is_variable_keyed_questions,
 )
 from app.services.draft_field_retrieval import (
     retrieve_bulk_document_context,
     retrieve_fields_parallel,
     retrieve_fields_retry_lightweight,
 )
+from app.services.draft_fill_pipeline import execute_parallel_unified_fill
 from app.services.draft_rag_query import build_bulk_rag_query
 from app.services.draft_template_catalog import content_sha256, load_catalog_snapshot
 from app.services.draft_template_indexer import index_template_html
@@ -43,6 +52,8 @@ def catalog_from_state(raw: Any) -> Optional[TemplateFieldCatalogSnapshot]:
             field_specs=specs,
             indexed_html=str(raw.get("indexed_html") or ""),
             indexer_version=str(raw.get("indexer_version") or "1"),
+            engine=str(raw.get("engine") or "html"),
+            docx_file=str(raw.get("docx_file") or ""),
         )
     return None
 
@@ -54,6 +65,8 @@ def catalog_to_state_dict(snap: TemplateFieldCatalogSnapshot) -> Dict[str, Any]:
         "field_specs": [s.model_dump() for s in snap.field_specs],
         "indexed_html": snap.indexed_html,
         "indexer_version": snap.indexer_version,
+        "engine": snap.engine,
+        "docx_file": snap.docx_file,
     }
 
 
@@ -68,9 +81,10 @@ def ensure_catalog(
     if not template_key or not (template_html or "").strip():
         return None
     sha = content_sha256(template_html)
+    indexer_version = str(getattr(config, "DRAFT_TEMPLATE_INDEXER_VERSION", "3") or "3")
     if not force_reindex:
         snap = load_catalog_snapshot(db, template_key, require_sha256=sha)
-        if snap and snap.field_specs:
+        if snap and snap.field_specs and str(snap.indexer_version or "") == indexer_version:
             return snap
     snap, status = index_template_html(
         db,
@@ -95,7 +109,19 @@ def build_placeholder_fill_plan_from_catalog(
     return plan
 
 
+def _fill_strategy() -> str:
+    raw = str(getattr(config, "DRAFT_FILL_STRATEGY", "parallel") or "parallel").strip().lower()
+    if raw in ("parallel", "bulk", "per_field", "legacy"):
+        return "per_field" if raw == "legacy" else raw
+    return "parallel"
+
+
 def _bulk_fill_enabled() -> bool:
+    strategy = _fill_strategy()
+    if strategy == "bulk":
+        return True
+    if strategy in ("parallel", "per_field"):
+        return False
     return bool(getattr(config, "DRAFT_BULK_FILL_ENABLED", True))
 
 
@@ -105,6 +131,29 @@ def _per_field_fill_enabled() -> bool:
 
 def _targeted_retry_enabled() -> bool:
     return bool(getattr(config, "DRAFT_BULK_TARGETED_RETRY_ENABLED", True))
+
+
+def _is_docxtpl_catalog(catalog: TemplateFieldCatalogSnapshot) -> bool:
+    if (catalog.engine or "").strip().lower() == "docxtpl":
+        return True
+    return bool(catalog.field_specs) and all(
+        (s.variable or "").strip() for s in catalog.field_specs
+    )
+
+
+def _resolve_docx_path(catalog: TemplateFieldCatalogSnapshot) -> Optional[Path]:
+    from app.services.draft_template_keys import parse_template_key
+    from app.services.bankruptcy_templates import get_docx_path
+
+    if catalog.docx_file:
+        draft_dir = Path(__file__).resolve().parent.parent / "templates" / "draft"
+        path = draft_dir / catalog.docx_file
+        if path.is_file():
+            return path
+    kind, ident = parse_template_key(catalog.template_key)
+    if kind == "bankruptcy" and ident:
+        return get_docx_path(ident)
+    return None
 
 
 def execute_catalog_field_fill_bulk(
@@ -119,17 +168,20 @@ def execute_catalog_field_fill_bulk(
     template_label: str = "",
 ) -> Tuple[str, Dict[str, Any]]:
     """
-    Быстрый путь: один RAG по делу → один LLM на все поля → точечный дожим для пустых.
+    Вопросы шаблона → один RAG → LLM на уникальные вопросы → подстановка во все вхождения.
     """
+    fields = catalog.field_specs
+    unique_questions = build_unique_fill_questions(fields)
     stats: Dict[str, Any] = {
-        "fields_total": len(catalog.field_specs),
+        "fields_total": len(fields),
+        "questions_total": len(unique_questions),
         "fields_filled": 0,
+        "questions_filled": 0,
         "fields_missing": 0,
         "replacement_ops": 0,
         "used_field_catalog": True,
-        "fill_mode": "bulk",
+        "fill_mode": "question_bulk",
     }
-    fields = catalog.field_specs
     if not fields:
         stats["status"] = "no_fields"
         return catalog.indexed_html or "", stats
@@ -138,6 +190,7 @@ def execute_catalog_field_fill_bulk(
         user_context=user_context,
         template_label=template_label,
         field_specs=fields,
+        unique_questions=unique_questions,
     )
     shared_ctx, bulk_meta = retrieve_bulk_document_context(
         rag_service=rag_service,
@@ -148,23 +201,46 @@ def execute_catalog_field_fill_bulk(
     )
     stats["bulk_rag"] = bulk_meta
 
-    values, confidences = extract_fields_unified(
-        fields,
-        shared_ctx,
+    fill_user_context, calc_meta = attach_calculator_context_for_fill(
         user_context=user_context,
+        rag_context=shared_ctx,
+        field_specs=fields,
     )
-    stats["bulk_extract_fields"] = sum(1 for v in values.values() if v)
+    stats["calculator"] = calc_meta
 
-    retry_fields: List[TemplateFieldSpec] = []
-    if _targeted_retry_enabled() and _per_field_fill_enabled():
-        retry_fields = fields_needing_targeted_retry(fields, values, confidences)
-    stats["retry_fields"] = len(retry_fields)
+    use_structured = _is_variable_keyed_questions(unique_questions)
+    if use_structured:
+        answers, confidences = extract_variable_answers(
+            unique_questions,
+            shared_ctx,
+            user_context=fill_user_context,
+        )
+        stats["extract_mode"] = "structured_variables"
+    else:
+        answers, confidences = extract_fill_question_answers(
+            unique_questions,
+            shared_ctx,
+            user_context=fill_user_context,
+        )
+        stats["extract_mode"] = "question_bulk"
+    stats["questions_filled"] = sum(1 for v in answers.values() if v)
 
-    if retry_fields:
+    retry_questions = []
+    if _targeted_retry_enabled():
+        retry_questions = questions_needing_retry(unique_questions, answers, confidences)
+    stats["retry_questions"] = len(retry_questions)
+
+    if retry_questions:
         retry_ctx = shared_ctx
         min_ctx = int(getattr(config, "DRAFT_BULK_RETRY_MIN_SHARED_CHARS", 800) or 800)
         use_light_rag = bool(getattr(config, "DRAFT_BULK_RETRY_LIGHT_RAG_ENABLED", True))
         if len((shared_ctx or "").strip()) < min_ctx and use_light_rag and _per_field_fill_enabled():
+            from app.services.draft_template_schemas import TemplateFieldSpec
+
+            retry_fields = [
+                next(s for s in fields if s.field_id == q.field_ids[0])
+                for q in retry_questions
+            ]
             extra = retrieve_fields_retry_lightweight(
                 rag_service=rag_service,
                 case_id=case_id,
@@ -173,26 +249,30 @@ def execute_catalog_field_fill_bulk(
                 attached_file_ids=attached_file_ids,
             )
             parts = [shared_ctx] if shared_ctx.strip() else []
-            for f in retry_fields:
+            for q, f in zip(retry_questions, retry_fields):
                 bit = (extra.get(f.field_id) or "").strip()
                 if bit:
-                    parts.append(f"[{f.semantic_label or f.field_id}]\n{bit}")
-            retry_ctx = "\n\n".join(parts)[:20000]
+                    parts.append(f"[{q.fill_question}]\n{bit}")
+            retry_ctx = "\n\n".join(parts)[
+                : max(4000, int(getattr(config, "DRAFT_BULK_CONTEXT_MAX_CHARS", 7000) or 7000))
+            ]
             stats["retry_mode"] = "light_rag"
         else:
             stats["retry_mode"] = "shared_context_only"
 
-        retry_values, retry_conf = extract_fields_unified(
-            retry_fields,
-            retry_ctx,
-            user_context=user_context,
+        retry_answers, retry_conf = (
+            extract_variable_answers(retry_questions, retry_ctx, user_context=fill_user_context)
+            if use_structured
+            else extract_fill_question_answers(retry_questions, retry_ctx, user_context=fill_user_context)
         )
-        for fid, val in retry_values.items():
+        for qk, val in retry_answers.items():
             if val and str(val).strip():
-                values[fid] = val
-                confidences[fid] = max(float(retry_conf.get(fid) or 0.0), 0.6)
-        stats["retry_filled"] = sum(1 for f in retry_fields if values.get(f.field_id))
+                answers[qk] = val
+                confidences[qk] = max(float(retry_conf.get(qk) or 0.0), 0.6)
+        stats["retry_filled"] = sum(1 for q in retry_questions if answers.get(q.question_key))
+        stats["questions_filled"] = sum(1 for v in answers.values() if v)
 
+    values, _field_conf = propagate_answers_to_fields(fields, answers, confidences)
     filled_count = sum(1 for v in values.values() if v)
     stats["fields_filled"] = filled_count
     stats["fields_missing"] = len(fields) - filled_count
@@ -201,17 +281,42 @@ def execute_catalog_field_fill_bulk(
         for f in fields
     }
 
-    html_out, rep_ops = apply_field_values(catalog.indexed_html, values)
-    stats["replacement_ops"] = rep_ops
+    fill_context: Dict[str, str] = {}
+    for q in unique_questions:
+        val = answers.get(q.question_key)
+        if val and str(val).strip():
+            fill_context[q.question_key] = str(val).strip()
+    stats["fill_context"] = fill_context
+
+    docx_path = _resolve_docx_path(catalog) if _is_docxtpl_catalog(catalog) else None
+    if docx_path and fill_context:
+        from app.services.draft_docxtpl_service import render_docxtpl, rendered_docx_to_html
+
+        try:
+            docx_bytes = render_docxtpl(docx_path, fill_context)
+            html_out = rendered_docx_to_html(docx_bytes)
+            stats["replacement_ops"] = len(fill_context)
+            stats["render_engine"] = "docxtpl"
+        except Exception as e:
+            logger.warning("[draft_execute] docxtpl render failed: %s — fallback to HTML spans", e)
+            html_out, rep_ops = apply_field_values(catalog.indexed_html, values)
+            stats["replacement_ops"] = rep_ops
+            stats["render_engine"] = "html_spans_fallback"
+    else:
+        html_out, rep_ops = apply_field_values(catalog.indexed_html, values)
+        stats["replacement_ops"] = rep_ops
+        stats["render_engine"] = "html_spans"
     stats["template_chars"] = len(catalog.indexed_html or "")
     stats["out_chars"] = len(html_out or "")
     stats["status"] = "ok"
     logger.info(
-        "[draft_execute] bulk fill case=%s fields=%s filled=%s retry=%s",
+        "[draft_execute] question fill case=%s questions=%s/%s fields=%s/%s retry=%s",
         case_id,
-        len(fields),
+        stats["questions_filled"],
+        len(unique_questions),
         filled_count,
-        len(retry_fields),
+        len(fields),
+        len(retry_questions),
     )
     return html_out, stats
 
@@ -280,8 +385,8 @@ def execute_catalog_field_fill(
     """
     Заполнение шаблона по каталогу полей.
 
-    По умолчанию: bulk RAG + unified extract + точечный дожим.
-    При DRAFT_BULK_FILL_ENABLED=false — legacy per-field RAG (если включён).
+    По умолчанию (DRAFT_FILL_STRATEGY=parallel): параллельный RAG + unified extract.
+    bulk — один общий RAG; per_field — legacy RAG+LLM на каждое поле.
     """
     if not catalog.field_specs:
         return catalog.indexed_html or "", {
@@ -289,6 +394,36 @@ def execute_catalog_field_fill(
             "status": "no_fields",
             "used_field_catalog": True,
         }
+
+    strategy = _fill_strategy()
+    if strategy == "parallel":
+        return execute_parallel_unified_fill(
+            rag_service=rag_service,
+            case_id=case_id,
+            catalog=catalog,
+            db=db,
+            attached_file_ids=attached_file_ids,
+            corpus_size=corpus_size,
+            user_context=user_context,
+            template_label=template_label,
+        )
+
+    if strategy == "per_field":
+        if not _per_field_fill_enabled():
+            return catalog.indexed_html or "", {
+                "fields_total": len(catalog.field_specs),
+                "status": "fill_disabled",
+                "used_field_catalog": True,
+            }
+        return execute_catalog_field_fill_legacy(
+            rag_service=rag_service,
+            case_id=case_id,
+            catalog=catalog,
+            db=db,
+            attached_file_ids=attached_file_ids,
+            corpus_size=corpus_size,
+            user_context=user_context,
+        )
 
     if _bulk_fill_enabled():
         return execute_catalog_field_fill_bulk(

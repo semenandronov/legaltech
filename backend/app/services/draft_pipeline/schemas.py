@@ -91,6 +91,7 @@ class VerifiedCalculations(BaseModel):
     principal_outstanding: str = ""
     penalty_amount: str = ""
     total_claim: str = ""
+    state_duty: str = ""
     penalty_rate_percent_per_day: str = ""
     computation_trace: str = ""
     source: str = "python_rf_calendar_v1"

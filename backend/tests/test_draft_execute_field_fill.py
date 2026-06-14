@@ -21,7 +21,7 @@ def test_execute_catalog_field_fill_applies_values():
         ],
         indexed_html='<p>ИНН <span data-draft-field="ph_000">[ИНН]</span></p>',
     )
-    with patch("app.services.draft_execute_service._bulk_fill_enabled", return_value=False):
+    with patch("app.services.draft_execute_service._fill_strategy", return_value="per_field"):
         with patch("app.services.draft_execute_service.retrieve_fields_parallel") as mock_rag:
             with patch("app.services.draft_execute_service.extract_fields_batch") as mock_ext:
                 mock_rag.return_value = {"ph_000": ("ИНН 7701000000", {})}

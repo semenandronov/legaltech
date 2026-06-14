@@ -17,6 +17,10 @@ _FIELD_SPAN_RE = re.compile(
 )
 
 
+def _bulk_context_char_limit() -> int:
+    return max(4000, int(getattr(config, "DRAFT_BULK_CONTEXT_MAX_CHARS", 7000) or 7000))
+
+
 def _parse_extract_json(raw: str) -> Dict[str, Any]:
     if not raw or not str(raw).strip():
         return {}
@@ -70,8 +74,7 @@ def extract_field_value(
         "Извлеки значение для одного поля юридического шаблона из фрагментов материалов дела.\n"
         "Ответь ТОЛЬКО JSON: {\"value\": \"строка\" или null, \"confidence\": 0.0-1.0}\n"
         "null если в фрагментах нет однозначного значения. Не выдумывай.\n\n"
-        f"ПОЛЕ: {field.semantic_label or field.marker}\n"
-        f"ЧТО ИСКАТЬ: {field.what_to_find or field.retrieval_query}\n"
+        f"ВОПРОС: {field.fill_question or field.what_to_find or field.semantic_label or field.marker}\n"
         f"МАРКЕР В ШАБЛОНЕ: {field.marker}\n"
     )
     if user_context.strip():
@@ -210,7 +213,7 @@ def extract_fields_unified(
         if user_context.strip():
             prompt += f"КОНТЕКСТ ЗАПРОСА:\n{user_context[:2000]}\n\n"
         prompt += "ПОЛЯ:\n" + "\n".join(field_lines) + "\n\n"
-        prompt += f"ФРАГМЕНТЫ ИЗ ДЕЛА:\n{ctx[:18000]}\n"
+        prompt += f"ФРАГМЕНТЫ ИЗ ДЕЛА:\n{ctx[:_bulk_context_char_limit()]}\n"
 
         try:
             resp = llm.invoke([HumanMessage(content=prompt)])

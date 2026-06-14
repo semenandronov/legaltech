@@ -47,7 +47,6 @@ def run_router_extractor(
     if not tc:
         tc, tl, tkey = resolve_draft_template_context(
             db,
-            template_system_id=template_system_id,
             user_question=user_prompt,
             auto_match_system_template=True,
         )

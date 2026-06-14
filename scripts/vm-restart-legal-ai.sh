@@ -1,52 +1,61 @@
 #!/usr/bin/env bash
-# Перезапуск legal-ai на VM после pull/build образа.
-# Оригиналы дел хранятся на диске ВМ (volume), не в контейнере.
+# Restart legal-ai stack on VM (Postgres + API via docker compose).
 #
 #   export YC_VM_ID=fv4qdpndf1f3c70ugkd3
 #   export IMAGE_TAG=latest
 #   ./scripts/vm-restart-legal-ai.sh
 set -euo pipefail
 
-VM_ID="${YC_VM_ID:-fv4qdpndf1f3c70ugkd3}"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=lib/vm-common.sh
+source "${ROOT}/scripts/lib/vm-common.sh"
+
 IMAGE="${IMAGE:-cr.yandex/crpllsmk62iiorpelole/legal-ai:${IMAGE_TAG:-latest}}"
-ENV_FILE="${ENV_FILE:-/home/andronovsemen04/legal-ai/.env}"
-# Постоянная папка на ВМ (создайте один раз: mkdir -p … && chmod 755 …)
-UPLOADS_HOST_DIR="${UPLOADS_HOST_DIR:-/home/andronovsemen04/legal-ai/uploads}"
-# Путь внутри контейнера (WORKDIR CMD = /app/backend, см. Dockerfile)
-UPLOADS_CONTAINER_DIR="${UPLOADS_CONTAINER_DIR:-/app/backend/uploads}"
+REMOTE_COMPOSE="${VM_REMOTE_DIR}/docker-compose.vm.yml"
 
-echo "==> Ensure uploads dir on VM: ${UPLOADS_HOST_DIR}"
-yc compute ssh --id "$VM_ID" -- "mkdir -p '${UPLOADS_HOST_DIR}' && chmod 755 '${UPLOADS_HOST_DIR}'"
+vm_postgres_credentials "${ROOT}/.env"
 
-echo "==> Pull $IMAGE"
-yc compute ssh --id "$VM_ID" -- "sudo docker pull $IMAGE"
+echo "==> Ensure dirs on VM (uploads: mkdir only, never delete)"
+UPLOADS_BEFORE="$(vm_uploads_file_count)"
+echo "==> Uploads on disk before restart: ${UPLOADS_BEFORE} file(s)"
+vm_ssh "mkdir -p '${VM_REMOTE_DIR}'"
+vm_ensure_uploads_dir
 
-echo "==> Restart container legal-ai (volume: ${UPLOADS_HOST_DIR} -> ${UPLOADS_CONTAINER_DIR})"
-yc compute ssh --id "$VM_ID" -- bash -s <<EOF
+echo "==> Upload docker-compose.vm.yml"
+vm_upload_file "${ROOT}/docker-compose.vm.yml" "${REMOTE_COMPOSE}"
+
+echo "==> Pull ${IMAGE}"
+vm_ssh "sudo docker pull ${IMAGE}"
+
+echo "==> Start stack (postgres + legal-ai)"
+vm_ssh bash -s <<EOF
 set -euo pipefail
+cd '${VM_REMOTE_DIR}'
+export POSTGRES_USER='${POSTGRES_USER}'
+export POSTGRES_PASSWORD='${POSTGRES_PASSWORD}'
+export LEGAL_AI_IMAGE='${IMAGE}'
+
+# Stop legacy standalone container if present
 sudo docker stop legal-ai 2>/dev/null || true
 sudo docker rm legal-ai 2>/dev/null || true
-# Only localhost — Caddy terminates TLS on :443 and redirects :80 (see vm-setup-https.sh).
-# For HTTP-only debug: export VM_EXPOSE_HTTP_PORTS=1
-EXTRA_PORTS=""
-if [[ "${VM_EXPOSE_HTTP_PORTS:-}" == "1" ]]; then
-  EXTRA_PORTS="-p 80:8000 -p 8000:8000"
-else
-  EXTRA_PORTS="-p 127.0.0.1:8000:8000"
-fi
-sudo docker run -d --name legal-ai --restart unless-stopped \\
-  \${EXTRA_PORTS} \\
-  -v ${UPLOADS_HOST_DIR}:${UPLOADS_CONTAINER_DIR} \\
-  --env-file ${ENV_FILE} \\
-  ${IMAGE}
-sudo docker ps --filter name=legal-ai
-echo "==> Mounts:"
-sudo docker inspect legal-ai --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}'
-for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
-  if curl -sf http://127.0.0.1:8000/api/health; then echo; echo "health OK (:8000)"; break; fi
+
+sudo env POSTGRES_USER="\${POSTGRES_USER}" POSTGRES_PASSWORD="\${POSTGRES_PASSWORD}" \\
+  LEGAL_AI_IMAGE="\${LEGAL_AI_IMAGE}" docker compose -f docker-compose.vm.yml up -d
+
+sudo docker compose -f docker-compose.vm.yml ps
+echo "==> Mounts (legal-ai):"
+sudo docker inspect legal-ai --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}' 2>/dev/null || true
+
+for i in \$(seq 1 12); do
+  if curl -sf http://127.0.0.1:8000/api/health; then
+    echo
+    echo "health OK (:8000)"
+    exit 0
+  fi
   sleep 5
 done
-if [[ "${VM_EXPOSE_HTTP_PORTS:-}" == "1" ]]; then
-  curl -sf http://127.0.0.1/api/health && echo "health OK (:80)" || echo "health :80 — wait for warmup"
-fi
+echo "WARN: health check timed out (app may still be warming up)" >&2
 EOF
+
+UPLOADS_AFTER="$(vm_uploads_file_count)"
+vm_assert_uploads_preserved "${UPLOADS_BEFORE}" "${UPLOADS_AFTER}"

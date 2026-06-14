@@ -40,6 +40,6 @@ def run_parallel_section_generation(
                 results[section_id] = text
             except Exception as exc:
                 logger.error("[draft_pipeline.sections] failed section_id=%s: %s", sid, exc, exc_info=True)
-                results[sid] = f"<section><h2>{sid}</h2><p>[? ошибка генерации раздела ?]</p></section>"
+                results[sid] = f"<section><h2>{sid}</h2><p>[ошибка генерации раздела]</p></section>"
 
     return results

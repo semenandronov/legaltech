@@ -41,31 +41,7 @@ interface ChatMessage {
   sources?: SourceInfo[]
   reasoningSteps?: ThinkingStep[]
   toolCalls?: ToolCallInfo[]
-  draftPlan?: {
-    title?: string
-    type?: string
-    template_name?: string
-    user_intent_summary?: string
-    template_alignment?: string
-    /** Человекочитаемо: что за документ и в какой ситуации */
-    document_overview?: string
-    /** Что планируется изложить в сгенерированном тексте */
-    planned_content?: string
-    placeholder_fill_plan?: Array<{
-      placeholder?: string
-      marker?: string
-      plan_to_fill?: string
-      fill_with?: string
-      what_to_fill?: string
-      description?: string
-      data_status?: string
-      status?: string
-    }>
-    estimated_length?: string
-    sections?: Array<{ name?: string; description?: string }>
-    required_fields?: string[]
-    clarifying_questions?: string[]
-  }
+  agentTodos?: Array<{ content: string; status: string }>
   /** Структурированные блоки ответа (SSE answer_blocks / история). */
   answerBlocks?: Array<{ block_id: string; markdown_text: string; citation_ids: string[] }>
 }
@@ -85,191 +61,6 @@ interface CaseFileItem {
   id: string
   filename: string
   file_type: string
-}
-
-function DraftPlanCard({
-  plan,
-  onApprove,
-  onReject,
-  onModify,
-}: {
-  plan: NonNullable<ChatMessage['draftPlan']>
-  onApprove: () => void
-  onReject: () => void
-  onModify: (text: string) => void
-}) {
-  const [modifyOpen, setModifyOpen] = useState(false)
-  const [modifyText, setModifyText] = useState('')
-  return (
-    <div
-      className="mb-3 rounded-xl border p-4"
-      style={{ borderColor: 'color-mix(in srgb, var(--color-info) 28%, var(--color-border))', backgroundColor: 'var(--color-info-bg)' }}
-    >
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold" style={{ color: 'var(--color-info)' }}>План документа</h3>
-        {plan.estimated_length && (
-          <span className="text-xs px-2 py-0.5 rounded-md" style={{ backgroundColor: 'var(--color-info-bg)', color: 'var(--color-info)' }}>
-            {plan.estimated_length}
-          </span>
-        )}
-      </div>
-      {(plan.title || plan.type) && (
-        <p className="mt-2 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-          {plan.title ? <><strong>{plan.title}</strong>{plan.type ? ` · ${plan.type}` : ''}</> : plan.type}
-        </p>
-      )}
-      {plan.template_name?.trim() && (
-        <p className="mt-1 text-xs" style={{ color: 'var(--color-text-muted)' }}>
-          Шаблон: <span style={{ color: 'var(--color-text-secondary)' }}>{plan.template_name.trim()}</span>
-        </p>
-      )}
-      {plan.user_intent_summary?.trim() && (
-        <div className="mt-3">
-          <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--color-text-muted)' }}>
-            Суть запроса
-          </p>
-          <p className="mt-1 text-sm whitespace-pre-wrap" style={{ color: 'var(--color-text-secondary)' }}>
-            {plan.user_intent_summary.trim()}
-          </p>
-        </div>
-      )}
-      {plan.template_alignment?.trim() && (
-        <div className="mt-3">
-          <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--color-text-muted)' }}>
-            Шаблон и задача
-          </p>
-          <p className="mt-1 text-sm whitespace-pre-wrap" style={{ color: 'var(--color-text-secondary)' }}>
-            {plan.template_alignment.trim()}
-          </p>
-        </div>
-      )}
-      {Array.isArray(plan.placeholder_fill_plan) && plan.placeholder_fill_plan.length > 0 && (
-        <div className="mt-3">
-          <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--color-text-muted)' }}>
-            Поля шаблона
-          </p>
-          <ul className="mt-1 max-h-48 overflow-y-auto space-y-1.5">
-            {plan.placeholder_fill_plan.slice(0, 24).map((row, i) => {
-              const marker = (row.placeholder || row.marker || '').trim()
-              const hint =
-                row.plan_to_fill || row.fill_with || row.what_to_fill || row.description || ''
-              const st = (row.data_status || row.status || '').trim()
-              if (!marker && !hint) return null
-              return (
-                <li key={i} className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-                  <code className="text-[11px] px-1 rounded" style={{ backgroundColor: 'var(--color-surface)' }}>{marker || '—'}</code>
-                  {hint ? ` — ${hint}` : ''}
-                  {st ? <span style={{ color: 'var(--color-text-muted)' }}> ({st})</span> : null}
-                </li>
-              )
-            })}
-          </ul>
-        </div>
-      )}
-      {plan.document_overview?.trim() && (
-        <div className="mt-3">
-          <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--color-text-muted)' }}>
-            Что за документ
-          </p>
-          <p className="mt-1 text-sm whitespace-pre-wrap" style={{ color: 'var(--color-text-secondary)' }}>
-            {plan.document_overview.trim()}
-          </p>
-        </div>
-      )}
-      {plan.planned_content?.trim() && (
-        <div className="mt-3">
-          <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--color-text-muted)' }}>
-            Что будет в тексте
-          </p>
-          <p className="mt-1 text-sm whitespace-pre-wrap" style={{ color: 'var(--color-text-secondary)' }}>
-            {plan.planned_content.trim()}
-          </p>
-        </div>
-      )}
-      {Array.isArray(plan.sections) && plan.sections.length > 0 && (
-        <div className="mt-3">
-          <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--color-text-muted)' }}>Разделы</p>
-          <ul className="mt-1 space-y-1">
-            {plan.sections.slice(0, 6).map((s, i) => (
-              <li key={i} className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-                • {s.name || `Раздел ${i + 1}`}{s.description ? ` — ${s.description}` : ''}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {Array.isArray(plan.clarifying_questions) && plan.clarifying_questions.length > 0 && (
-        <div className="mt-3">
-          <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--color-text-muted)' }}>Нужно уточнить</p>
-          <ul className="mt-1 space-y-1">
-            {plan.clarifying_questions.slice(0, 5).map((q, i) => (
-              <li key={i} className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-                {i + 1}. {q}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {modifyOpen ? (
-        <div className="mt-3">
-          <textarea
-            value={modifyText}
-            onChange={(e) => setModifyText(e.target.value)}
-            placeholder="Опишите, что изменить в плане…"
-            className="w-full rounded-lg border px-3 py-2 text-sm"
-            style={{ borderColor: 'var(--color-border-strong)' }}
-            rows={3}
-          />
-          <div className="mt-2 flex gap-2">
-            <button
-              onClick={() => {
-                const v = modifyText.trim()
-                if (!v) return
-                onModify(v)
-                setModifyText('')
-                setModifyOpen(false)
-              }}
-              className="px-3 py-1.5 rounded-lg text-xs font-medium"
-              style={{ backgroundColor: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
-            >
-              Отправить правки
-            </button>
-            <button
-              onClick={() => { setModifyOpen(false); setModifyText('') }}
-              className="px-3 py-1.5 rounded-lg text-xs font-medium border"
-              style={{ borderColor: 'var(--color-border-strong)', color: 'var(--color-accent-muted)' }}
-            >
-              Отмена
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="mt-3 flex gap-2">
-          <button
-            onClick={onApprove}
-            className="px-3 py-1.5 rounded-lg text-xs font-medium"
-            style={{ backgroundColor: 'var(--color-success)', color: 'var(--color-on-accent)' }}
-          >
-            Одобрить и создать
-          </button>
-          <button
-            onClick={() => setModifyOpen(true)}
-            className="px-3 py-1.5 rounded-lg text-xs font-medium"
-            style={{ backgroundColor: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
-          >
-            Изменить план
-          </button>
-          <button
-            onClick={onReject}
-            className="px-3 py-1.5 rounded-lg text-xs font-medium"
-            style={{ backgroundColor: 'var(--color-error)', color: 'var(--color-on-accent)' }}
-          >
-            Отклонить
-          </button>
-        </div>
-      )}
-    </div>
-  )
 }
 
 // ─────────────────────────────────────────────────────────
@@ -1144,7 +935,7 @@ const AssistantChatPage = () => {
   // ── Send message ──
   const handleSubmit = async (
     overrideText?: unknown,
-    options?: { draftAction?: 'approve' | 'reject' },
+    options?: Record<string, never>,
   ) => {
     // Может вызываться как onSubmit(event) и как handleSubmit("текст").
     if (overrideText && typeof overrideText === 'object' && 'preventDefault' in (overrideText as any)) {
@@ -1152,8 +943,6 @@ const AssistantChatPage = () => {
     }
     const rawText = typeof overrideText === 'string' ? overrideText : question
     let text = String(rawText ?? '').trim()
-    if (options?.draftAction === 'approve' && !text) text = 'Одобрить план'
-    if (options?.draftAction === 'reject' && !text) text = 'отмена'
     if (!text || isStreaming) return
 
     const contextsToSend = [...fileContexts]
@@ -1197,7 +986,6 @@ const AssistantChatPage = () => {
           use_legal_corpus: isDraftMode ? false : isLegalResearch,
           court_practice: isDraftMode ? false : isCourtPractice,
           draft_mode: isDraftMode,
-          ...(options?.draftAction ? { draft_action: options.draftAction } : {}),
           document_context: isDraftMode && currentDraft ? currentDraft.content : undefined,
           attached_file_ids: selectedCaseFileIds.length > 0 ? selectedCaseFileIds : undefined,
         }),
@@ -1259,11 +1047,20 @@ const AssistantChatPage = () => {
               )
               return [...prev.slice(0, -1), { ...last, reasoningSteps }]
             })
-          } else if (data.type === 'draft_plan' && data.plan) {
+          } else if (data.type === 'draft_todos' && Array.isArray(data.todos)) {
             setMessages((prev) => {
               const last = prev[prev.length - 1]
               if (!last || last.role !== 'assistant') return prev
-              return [...prev.slice(0, -1), { ...last, draftPlan: data.plan }]
+              return [
+                ...prev.slice(0, -1),
+                {
+                  ...last,
+                  agentTodos: data.todos.map((t: { content?: string; status?: string }) => ({
+                    content: String(t.content || ''),
+                    status: String(t.status || 'pending'),
+                  })),
+                },
+              ]
             })
           } else if (data.type === 'tool_call' && data.name) {
             setMessages((prev) => {
@@ -1612,23 +1409,18 @@ const AssistantChatPage = () => {
                         <div className="max-w-[90%] w-full text-sm">
                           {((msg.toolCalls && msg.toolCalls.length > 0) ||
                             (msg.reasoningSteps && msg.reasoningSteps.length > 0) ||
+                            (msg.agentTodos && msg.agentTodos.length > 0) ||
                             (isStreaming && idx === messages.length - 1 && !msg.content)) && (
                             <div className="mb-3">
                               <ThinkingBlock
                                 steps={msg.reasoningSteps || []}
                                 toolCalls={msg.toolCalls}
+                                agentTodos={msg.agentTodos}
+                                planOutlineTitle="Draft Agent"
                                 isStreaming={isStreaming && idx === messages.length - 1 && !msg.content}
                                 defaultOpen
                               />
                             </div>
-                          )}
-                          {msg.draftPlan && (
-                            <DraftPlanCard
-                              plan={msg.draftPlan}
-            onApprove={() => { void handleSubmit('Одобрить план', { draftAction: 'approve' }) }}
-            onReject={() => { void handleSubmit('отмена', { draftAction: 'reject' }) }}
-            onModify={(text) => { void handleSubmit(text) }}
-                            />
                           )}
                           {showAnswerBlocks ? (
                             <AnswerBlocks
