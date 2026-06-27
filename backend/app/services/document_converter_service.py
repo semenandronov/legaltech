@@ -1,18 +1,37 @@
 """Document Converter Service for Legal AI Vault"""
-from typing import Optional, Any
+from typing import Dict, Optional, Any, Tuple
 import logging
 import io
 import tempfile
 import os
 import re
+import threading
 from io import BytesIO
 from app.config import config
 
 logger = logging.getLogger(__name__)
 
+# Minimal single-page PDF for startup warmup (loads Docling/MPS weights once).
+_MINIMAL_WARMUP_PDF_BYTES = (
+    b"%PDF-1.4\n"
+    b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+    b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
+    b"3 0 obj<</Type/Page/MediaBox[0 0 200 200]/Parent 2 0 R>>endobj\n"
+    b"xref\n0 4\n"
+    b"0000000000 65535 f \n"
+    b"0000000009 00000 n \n"
+    b"0000000052 00000 n \n"
+    b"0000000101 00000 n \n"
+    b"trailer<</Size 4/Root 1 0 R>>\n"
+    b"startxref\n178\n%%EOF"
+)
+
 
 class DocumentConverterService:
     """Service for converting documents to HTML format"""
+
+    _instances: Dict[Tuple[str, bool], Any] = {}
+    _lock = threading.Lock()
     
     def __init__(self):
         """Initialize document converter service"""
@@ -196,23 +215,106 @@ class DocumentConverterService:
         return pipeline_options
 
     @staticmethod
+    def _converter_cache_key(ext: str, *, do_ocr: bool) -> Tuple[str, bool]:
+        normalized = (ext or "").strip().lower()
+        if normalized and not normalized.startswith("."):
+            normalized = f".{normalized}"
+        return (normalized, bool(do_ocr))
+
+    @classmethod
+    def _create_converter_instance(cls, ext: str, *, do_ocr: bool) -> Optional[Any]:
+        if ext == ".pdf":
+            return cls._build_docling_pdf_converter(do_ocr=do_ocr)
+        try:
+            from docling.document_converter import DocumentConverter
+
+            return DocumentConverter()
+        except Exception as exc:
+            logger.debug("Docling DocumentConverter unavailable for %s: %s", ext, exc)
+            return None
+
+    @classmethod
+    def get_cached_converter(cls, ext: str, *, do_ocr: bool = True) -> Optional[Any]:
+        """Process-wide cached DocumentConverter (keyed by extension + OCR mode)."""
+        key = cls._converter_cache_key(ext, do_ocr=do_ocr)
+        cached = cls._instances.get(key)
+        if cached is not None:
+            return cached
+
+        with cls._lock:
+            cached = cls._instances.get(key)
+            if cached is not None:
+                return cached
+            instance = cls._create_converter_instance(key[0], do_ocr=key[1])
+            if instance is None:
+                return None
+            cls._instances[key] = instance
+            logger.info(
+                "[Docling] Initialized cached converter ext=%s do_ocr=%s",
+                key[0],
+                key[1],
+            )
+            return instance
+
+    @classmethod
+    def reset_converter_cache_for_tests(cls) -> None:
+        """Drop cached converters (unit tests only)."""
+        with cls._lock:
+            cls._instances.clear()
+
+    @classmethod
+    def warmup(cls) -> bool:
+        """Pre-warm Docling models at application startup (native PDF path)."""
+        if not bool(getattr(config, "DOCLING_WARMUP_ON_STARTUP", True)):
+            logger.info("Docling warmup skipped (DOCLING_WARMUP_ON_STARTUP=false)")
+            return False
+
+        converter = cls.get_cached_converter(".pdf", do_ocr=False)
+        if converter is None:
+            logger.warning("Docling warmup skipped: converter unavailable")
+            return False
+
+        try:
+            cls._run_warmup_convert(converter)
+            logger.info("Docling warmup ok (pdf, do_ocr=False, convert completed)")
+        except Exception as exc:
+            logger.warning(
+                "Docling warmup convert failed (converter still cached): %s",
+                exc,
+                exc_info=True,
+            )
+        return True
+
+    @staticmethod
+    def _run_warmup_convert(converter: Any) -> None:
+        from docling.datamodel.base_models import DocumentStream
+
+        pdf_bytes = _MINIMAL_WARMUP_PDF_BYTES
+        source = DocumentStream(name="warmup.pdf", stream=BytesIO(pdf_bytes))
+        try:
+            converter.convert(
+                source=source,
+                max_num_pages=1,
+                max_file_size=max(len(pdf_bytes), 1),
+            )
+        except TypeError:
+            converter.convert(source=source)
+        finally:
+            source.stream.close()
+
+    @staticmethod
     def extract_pdf_text_via_docling(content: bytes, filename: str) -> str:
         """
-        Один проход Docling по PDF → markdown для паспорта/БД.
-        Без metadata ocr:true — дальше LegalChunkerV2 снова конвертирует PDF и получает prov/bbox.
+        Один проход Docling по PDF → markdown (OCR внутри Docling).
+
+        Не используется в ingest-пайплайне сканов: для них — Yandex OCR → LegalChunkerV2
+        без повторного Docling. Оставлен для явных вызовов вне file ingest.
         """
-        pipeline_options = DocumentConverterService._build_pdf_pipeline_options(do_ocr=True)
-        if pipeline_options is None:
-            raise RuntimeError("Docling недоступен (импорт pipeline_options)")
+        converter = DocumentConverterService.get_cached_converter(".pdf", do_ocr=True)
+        if converter is None:
+            raise RuntimeError("Docling недоступен (конвертер не инициализирован)")
 
-        from docling.datamodel.base_models import InputFormat, DocumentStream
-        from docling.document_converter import DocumentConverter, PdfFormatOption
-
-        converter = DocumentConverter(
-            format_options={
-                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
-            }
-        )
+        from docling.datamodel.base_models import DocumentStream
         safe_name = (filename or "document.pdf").replace("\\", "/").split("/")[-1] or "document.pdf"
         source = DocumentStream(name=safe_name, stream=BytesIO(content))
         max_pages = max(1, int(getattr(config, "DOCLING_MAX_PAGES_PER_DOC", 2000) or 2000))
@@ -268,7 +370,9 @@ class DocumentConverterService:
         if not file_content:
             raise ValueError("File content is empty")
 
-        converter = self._build_docling_pdf_converter() or DocumentConverter()
+        converter = DocumentConverterService.get_cached_converter(".pdf", do_ocr=True)
+        if converter is None:
+            converter = DocumentConverter()
         max_pages = max(1, int(getattr(config, "DOCLING_MAX_PAGES_PER_DOC", 300) or 300))
         max_file_size = max(
             1,

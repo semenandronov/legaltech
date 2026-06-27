@@ -6,6 +6,9 @@
 /* Import design tokens (must be before other styles) */
 @import './styles/design-tokens.css';
 
+/* Workspace pages (assistant, case, tabular) */
+@import './styles/workspace-pages.css';
+
 /* Import typography */
 @import './styles/typography.css';
 
@@ -77,7 +80,7 @@
     --border: 35 12% 86%;
     --input: 35 12% 86%;
     --ring: 30 6% 28%;
-    --radius: 0.5rem;
+    --radius: 0.625rem;
     --sidebar-background: 38 14% 91%;
     --sidebar-foreground: 30 8% 18%;
     --sidebar-primary: 30 6% 12%;
@@ -296,7 +299,7 @@
 }
 
 .citation-badge:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(19, 18, 16, 0.12);
+  transform: none;
+  box-shadow: none;
 }
 

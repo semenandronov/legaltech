@@ -35,6 +35,27 @@ deploy_prepare_vite_build_env() {
     return 1
   fi
   grep -E '^VITE_' "${env_file}" | sed 's/\r$//' > "${snip}" || true
+  local vm_ui="${root}/.env.vm-ui"
+  if [[ -f "${vm_ui}" ]]; then
+    echo "" >> "${snip}"
+    echo "# VM production UI surface (from .env.vm-ui)" >> "${snip}"
+    grep -E '^VITE_' "${vm_ui}" | sed 's/\r$//' >> "${snip}" || true
+    python3 - "${snip}" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+merged: dict[str, str] = {}
+prefix: list[str] = []
+for line in path.read_text(encoding="utf-8").splitlines():
+    stripped = line.strip()
+    if stripped.startswith("VITE_") and "=" in stripped:
+        merged[stripped.split("=", 1)[0]] = line
+    else:
+        prefix.append(line)
+path.write_text("\n".join(prefix + list(merged.values())).rstrip() + "\n", encoding="utf-8")
+PY
+    echo "==> Merged VM UI flags from .env.vm-ui"
+  fi
   # Production UI must use same-origin API (relative /api/...). Dev VITE_API_URL breaks login in browser.
   sed -i.bak '/^VITE_API_URL=/d' "${snip}" 2>/dev/null || sed -i '' '/^VITE_API_URL=/d' "${snip}"
   if [[ -n "${VM_PUBLIC_URL:-}" ]]; then

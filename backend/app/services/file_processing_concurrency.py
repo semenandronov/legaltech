@@ -20,6 +20,7 @@ _case_metadata_guard = threading.Lock()
 _file_slots: threading.Semaphore | None = None
 _passport_slots: threading.Semaphore | None = None
 _embedding_slots: threading.Semaphore | None = None
+_docling_slots: threading.Semaphore | None = None
 _semaphore_guard = threading.Lock()
 
 
@@ -44,8 +45,13 @@ def max_parallel_embeddings() -> int:
     return _clamp_parallel(raw, default=2, cap=8)
 
 
+def max_parallel_docling() -> int:
+    raw = int(getattr(config, "FILE_PROCESSING_MAX_PARALLEL_DOCLING", 1) or 1)
+    return _clamp_parallel(raw, default=1, cap=4)
+
+
 def _get_semaphore(attr: str, factory) -> threading.Semaphore:
-    global _file_slots, _passport_slots, _embedding_slots
+    global _file_slots, _passport_slots, _embedding_slots, _docling_slots
     with _semaphore_guard:
         current = globals().get(attr)
         if current is None:
@@ -67,6 +73,12 @@ def _passport_semaphore() -> threading.Semaphore:
 def _embedding_semaphore() -> threading.Semaphore:
     return _get_semaphore(
         "_embedding_slots", lambda: threading.Semaphore(max_parallel_embeddings())
+    )
+
+
+def _docling_semaphore() -> threading.Semaphore:
+    return _get_semaphore(
+        "_docling_slots", lambda: threading.Semaphore(max_parallel_docling())
     )
 
 
@@ -104,6 +116,17 @@ def embedding_index_slot() -> Iterator[None]:
 
 
 @contextmanager
+def docling_slot() -> Iterator[None]:
+    """Limits concurrent Docling convert() calls (layout/table on MPS/GPU)."""
+    sem = _docling_semaphore()
+    sem.acquire()
+    try:
+        yield
+    finally:
+        sem.release()
+
+
+@contextmanager
 def case_metadata_lock(case_id: str) -> Iterator[None]:
     """Serialize Case.case_metadata / entity_index merges for one case."""
     cid = str(case_id or "").strip()
@@ -121,10 +144,11 @@ def case_metadata_lock(case_id: str) -> Iterator[None]:
 
 def reset_runtime_limits_for_tests() -> None:
     """Drop lazily-created semaphores (unit tests only)."""
-    global _file_slots, _passport_slots, _embedding_slots
+    global _file_slots, _passport_slots, _embedding_slots, _docling_slots
     with _semaphore_guard:
         _file_slots = None
         _passport_slots = None
         _embedding_slots = None
+        _docling_slots = None
     with _case_metadata_guard:
         _case_metadata_locks.clear()

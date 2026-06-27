@@ -1,7 +1,7 @@
 /**
  * Playbooks Management Page
  */
-import { useState, useEffect, useRef, useLayoutEffect } from 'react'
+import { useState, useEffect, useRef, useLayoutEffect, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import {
   BookOpen,
@@ -17,8 +17,6 @@ import {
   Loader2,
   Save,
   ArrowLeft,
-  MessageSquare,
-  FileEdit,
   X,
   MoreVertical,
   Copy,
@@ -26,6 +24,8 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
+import { buildCaseNavItems } from '@/lib/caseNavItems'
+import { useAuth } from '@/contexts/AuthContext'
 import * as playbooksApi from '../services/playbooksApi'
 import type { Playbook, PlaybookRule, PlaybookCheck } from '../services/playbooksApi'
 
@@ -718,6 +718,7 @@ function PlaybookCard({
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function PlaybooksPage({ embedded = false }: { embedded?: boolean } = {}) {
   const { caseId } = useParams<{ caseId: string }>()
+  const { user } = useAuth()
 
   const [playbooks, setPlaybooks] = useState<Playbook[]>([])
   const [checks, setChecks] = useState<PlaybookCheck[]>([])
@@ -727,11 +728,10 @@ export default function PlaybooksPage({ embedded = false }: { embedded?: boolean
   const [editingPlaybook, setEditingPlaybook] = useState<Partial<Playbook> | null>(null)
   const [isNewPlaybook, setIsNewPlaybook] = useState(false)
 
-  const navItems = [
-    { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
-    { id: 'editor', label: 'Редактор', icon: FileEdit, path: `/cases/${caseId}/editor` },
-    { id: 'playbooks', label: 'Playbooks', icon: BookOpen, path: `/cases/${caseId}/playbooks` },
-  ]
+  const navItems = useMemo(
+    () => (caseId ? buildCaseNavItems(caseId, user?.email) : []),
+    [caseId, user?.email],
+  )
 
   useEffect(() => {
     if (!caseId) return

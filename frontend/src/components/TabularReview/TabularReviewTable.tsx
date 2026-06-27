@@ -6,9 +6,6 @@ import {
   ColumnFiltersState,
   SortingState,
   VisibilityState,
-  ColumnSizingState,
-  ColumnPinningState,
-  flexRender,
   getCoreRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
@@ -16,58 +13,28 @@ import {
   useReactTable,
 } from "@tanstack/react-table"
 import { useVirtualizer } from "@tanstack/react-virtual"
-import {
-  Box,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Paper,
-  Stack,
-  Typography,
-  IconButton,
-  Chip,
-  Tooltip,
-  CircularProgress,
-  Popover,
-  Divider,
-} from '@mui/material'
-import {
-  Description as FileTextIcon,
-  Close as CloseIcon,
-  Add as AddIcon,
-  PlayArrow as PlayArrowIcon,
-  ContentCopy as ContentCopyIcon,
-} from '@mui/icons-material'
-import { TabularRow, TabularColumn, TabularCell, CellDetails, SourceReference } from "@/services/tabularReviewApi"
-
-/** ISO YYYY-MM-DD → DD.MM.YYYY for date column display */
-function formatTabularDateDisplay(value: string): string {
-  const m = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/)
-  if (!m) return value
-  return `${m[3]}.${m[2]}.${m[1]}`
-}
+import { TabularRow, TabularColumn, TabularCell, CellDetails } from "@/services/tabularReviewApi"
 import { tabularReviewApi } from "@/services/tabularReviewApi"
 import {
   normalizeCellSourceReferences,
-  sourceReferenceButtonLabel,
-  truncateQuote,
   type TabularCellClickPayload,
 } from "@/utils/tabularCellViewerData"
-import { TagCell } from "./TagCell"
 import { CellHistoryPanel } from "./CellHistoryPanel"
 import { AdvancedFiltersPanel, AdvancedFilters } from "./AdvancedFiltersPanel"
 import { useKeyboardNavigation } from "@/hooks/useKeyboardNavigation"
 import { FilterPopover } from "./FilterPopover"
-import { ColumnHeaderMenu } from "./ColumnHeaderMenu"
-import { SortableColumnHeader } from "./SortableColumnHeader"
 import { applyColumnValueFilters } from "@/utils/tabularColumnFilters"
 import { compareTabularCellValuesForSort } from "@/utils/tabularDateUtils"
-
-// Базовая ширина колонок
-const DEFAULT_COLUMN_WIDTH = 380
+import {
+  buildMikeColumnMeta,
+  buildMikeTableColumns,
+  buildMikeRowsFromGrid,
+} from './mike/buildMikeTableViewModel'
+import { MikeTRTable } from './mike/MikeTRTable'
+import { estimateMikeRowHeight } from './mike/estimateMikeRowHeight'
+import { buildCellCitationList } from './mike/buildCellCitationList'
+import { TabularEditColumnMenu } from './TabularEditColumnMenu'
+import "./TabularReviewTable.css"
 
 interface TabularReviewTableProps {
   reviewId: string
@@ -81,17 +48,19 @@ interface TabularReviewTableProps {
     columns: TabularColumn[]
     rows: TabularRow[]
   }
+  documentSearch?: string
   onTableDataUpdate?: (updater: (prev: TabularReviewTableProps['tableData']) => TabularReviewTableProps['tableData']) => void
   onCellClick?: (fileId: string, columnId: string, cellData: TabularCellClickPayload) => void
-  onCellEdit?: (fileId: string, columnId: string, cell: TabularCell) => void
+  onCellSave?: (fileId: string, columnId: string, value: string) => Promise<void>
   onRemoveDocument?: (fileId: string) => void
   onRunColumn?: (columnId: string) => void
-  onColumnEdit?: (columnId: string, anchorEl?: HTMLElement) => void
   onColumnDelete?: (columnId: string) => void
+  onOpenEditColumn?: (columnId: string) => void
   onAddColumnClick?: () => void
-  showAddColumnPopover?: boolean
-  onCloseAddColumnPopover?: () => void
-  onSaveNewColumn?: (column: { column_label: string; column_type: string; prompt: string; column_config?: { options?: Array<{ label: string; color: string }>; allow_custom?: boolean } }) => Promise<void>
+  onAddDocumentsClick?: () => void
+  onOpenTemplatesClick?: () => void
+  selectedDocIds?: string[]
+  onSelectionChange?: (ids: string[]) => void
   filterPopoverOpen?: boolean
   filterAnchorEl?: HTMLElement | null
   onCloseFilterPopover?: () => void
@@ -101,15 +70,12 @@ interface TabularReviewTableProps {
   processingCellKeys?: Set<string>
 }
 
-export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableDataUpdate: _onTableDataUpdate, onCellClick, onCellEdit, onRemoveDocument, onRunColumn, onColumnEdit, onColumnDelete, onAddColumnClick, showAddColumnPopover: _showAddColumnPopover, onCloseAddColumnPopover: _onCloseAddColumnPopover, onSaveNewColumn: _onSaveNewColumn, filterPopoverOpen, filterAnchorEl, onCloseFilterPopover, runningColumnIds, processingCellKeys }: TabularReviewTableProps) => {
-  const addColumnButtonRef = React.useRef<HTMLElement | null>(null)
+export const TabularReviewTable = React.memo(({ reviewId, tableData, documentSearch = '', onTableDataUpdate: _onTableDataUpdate, onCellClick, onCellSave, onRemoveDocument: _onRemoveDocument, onRunColumn, onColumnDelete, onOpenEditColumn, onAddColumnClick, onAddDocumentsClick, onOpenTemplatesClick, selectedDocIds, onSelectionChange, filterPopoverOpen, filterAnchorEl, onCloseFilterPopover, runningColumnIds, processingCellKeys }: TabularReviewTableProps) => {
+  const addColumnButtonRef = React.useRef<HTMLButtonElement>(null)
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({})
-  const [columnSizing, setColumnSizing] = React.useState<ColumnSizingState>({})
-  const [columnPinning, setColumnPinning] = React.useState<ColumnPinningState>({ left: ['row_index', 'file_name'], right: [] })
   const [globalFilter, setGlobalFilter] = React.useState("")
-  const [_loadingCell, setLoadingCell] = React.useState(false)
 
   const [historyPanelOpen, setHistoryPanelOpen] = React.useState(false)
   const [historyCellInfo, setHistoryCellInfo] = React.useState<{
@@ -135,44 +101,85 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
     logicOperator: "AND",
   })
   const [filtersPanelOpen, setFiltersPanelOpen] = React.useState(false)
+  const [openPopoverCell, setOpenPopoverCell] = React.useState<{
+    fileId: string
+    columnId: string
+  } | null>(null)
+  const [editingCellKey, setEditingCellKey] = React.useState<string | null>(null)
   
   const cellDetailsCache = React.useRef<Map<string, CellDetails>>(new Map())
 
-  // Popover state for Harvey-style cell detail popup
-  const [cellPopoverAnchor, setCellPopoverAnchor] = React.useState<HTMLElement | null>(null)
-  const [cellPopoverData, setCellPopoverData] = React.useState<{
-    cellValue: string
-    reasoning?: string | null
-    sourceDocName?: string
-    sourceReferences: SourceReference[]
-    fileId: string
-    columnId: string
-    viewSourceBase: TabularCellClickPayload
-  } | null>(null)
+  const openCellSidePanel = React.useCallback(
+    async (fileId: string, columnId: string, sourceReferenceIndex = 0) => {
+      if (!onCellClick) return
+      const cacheKey = `${fileId}_${columnId}`
+      const row = tableData.rows.find((r) => r.file_id === fileId)
+      const cellValue = row?.cells?.[columnId]?.cell_value ?? ''
+      const column = tableData.columns.find((c) => c.id === columnId)
 
-  const closeCellPopover = React.useCallback(() => {
-    setCellPopoverAnchor(null)
-    setCellPopoverData(null)
-  }, [])
+      let details: CellDetails | null = null
+      if (cellDetailsCache.current.has(cacheKey)) {
+        details = cellDetailsCache.current.get(cacheKey)!
+      } else {
+        try {
+          details = await tabularReviewApi.getCellDetails(reviewId, fileId, columnId)
+          cellDetailsCache.current.set(cacheKey, details)
+        } catch (error) {
+          console.error('Error loading cell details:', error)
+        }
+      }
 
-  const handleViewSourceAt = React.useCallback(
-    (index: number) => {
-      if (!cellPopoverData || !onCellClick) return
-      const ref = cellPopoverData.sourceReferences[index]
-      closeCellPopover()
-      onCellClick(cellPopoverData.fileId, cellPopoverData.columnId, {
-        ...cellPopoverData.viewSourceBase,
-        sourceReferenceIndex: index,
-        sourceReferences: cellPopoverData.sourceReferences,
-        verbatimExtract: ref?.text ?? cellPopoverData.viewSourceBase.verbatimExtract,
-        sourcePage: ref?.page ?? cellPopoverData.viewSourceBase.sourcePage,
-        sourceSection: ref?.section ?? cellPopoverData.viewSourceBase.sourceSection,
-        highlightMode: ref?.text?.trim()
-          ? 'verbatim'
-          : cellPopoverData.viewSourceBase.highlightMode,
+      const citationList = buildCellCitationList(cellValue, details)
+      const refsFromCitations = citationList.map(
+        (item) =>
+          item.sourceRef ?? {
+            page: item.page ?? undefined,
+            text: item.quote,
+          },
+      )
+
+      const refs =
+        refsFromCitations.length > 0
+          ? refsFromCitations
+          : normalizeCellSourceReferences(
+              details ?? {
+                source_page: undefined,
+                source_references: undefined,
+                verbatim_extract: undefined,
+                source_section: undefined,
+              },
+              cellValue,
+            )
+
+      let highlightMode: 'verbatim' | 'page' | 'none' = 'none'
+      const activeRef = refs[sourceReferenceIndex] ?? refs[0]
+      if (activeRef?.text || details?.verbatim_extract) {
+        highlightMode = 'verbatim'
+      } else if (activeRef?.page ?? details?.source_page ?? details?.source_section) {
+        highlightMode = 'page'
+      }
+
+      onCellClick(fileId, columnId, {
+        verbatimExtract: activeRef?.text ?? details?.verbatim_extract,
+        sourcePage: activeRef?.page ?? details?.source_page,
+        sourceSection: activeRef?.section ?? details?.source_section,
+        columnType: details?.column_type ?? column?.column_type ?? 'text',
+        highlightMode,
+        sourceReferences: refs,
+        sourceReferenceIndex,
+        hideDetailPanel: true,
+        docId: details?.primary_source_doc_id || fileId,
+        charStart:
+          sourceReferenceIndex === 0
+            ? details?.primary_source_char_start || undefined
+            : undefined,
+        charEnd:
+          sourceReferenceIndex === 0
+            ? details?.primary_source_char_end || undefined
+            : undefined,
       })
     },
-    [cellPopoverData, closeCellPopover, onCellClick],
+    [onCellClick, reviewId, tableData.rows, tableData.columns],
   )
 
   // Debounced глобальный фильтр (оставлен для внутренней логики фильтрации)
@@ -268,6 +275,11 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
   const tableRows = React.useMemo(() => {
     let rows = tableData.rows
 
+    const searchQuery = documentSearch.trim().toLowerCase()
+    if (searchQuery) {
+      rows = rows.filter((row) => row.file_name.toLowerCase().includes(searchQuery))
+    }
+
     // Apply advanced filters
     rows = applyAdvancedFilters(rows, advancedFilters, tableData.columns)
 
@@ -295,39 +307,16 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
     })
     
     return transformedRows
-  }, [tableData, advancedFilters, applyAdvancedFilters])
+  }, [tableData, advancedFilters, applyAdvancedFilters, documentSearch])
 
-  // Build columns dynamically
-  const columns = React.useMemo<ColumnDef<any>[]>(() => {
+  const columns = React.useMemo<ColumnDef<Record<string, unknown>>[]>(() => {
     const sortDescFor = (columnId: string) =>
       sorting.find((entry) => entry.id === columnId)?.desc ?? false
 
-    // Row number column (first)
-    const rowIndexColumn: ColumnDef<any> = {
-      id: "row_index",
-      size: 48,
-      minSize: 40,
-      maxSize: 56,
-      enableResizing: false,
-      enableSorting: false,
-      enableHiding: false,
-      header: () => null,
-      cell: ({ row }) => (
-        <Typography component="span" sx={{ fontSize: '0.75rem', color: '#9CA3AF', userSelect: 'none' }}>
-          {row.index + 1}
-        </Typography>
-      ),
-    }
-
-    // File name column
-    const fileColumn: ColumnDef<any> = {
+    const fileColumn: ColumnDef<Record<string, unknown>> = {
       id: "file_name",
       accessorKey: "file_name",
-      size: DEFAULT_COLUMN_WIDTH,
-      minSize: DEFAULT_COLUMN_WIDTH,
-      maxSize: DEFAULT_COLUMN_WIDTH,
       enableSorting: true,
-      meta: { columnLabel: "Name" },
       sortingFn: (rowA, rowB, columnId) =>
         compareTabularCellValuesForSort(
           String(rowA.getValue(columnId) ?? ""),
@@ -336,392 +325,27 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
           "file_name",
           sortDescFor(columnId),
         ),
-      header: ({ column }) => (
-        <SortableColumnHeader
-          label="Документ"
-          sortDirection={column.getIsSorted()}
-          onToggleSort={() => column.toggleSorting()}
-        />
-      ),
-      cell: ({ row }) => (
-        <Stack
-          direction="row"
-          spacing={0.75}
-          alignItems="center"
-          sx={{
-            cursor: 'pointer',
-            overflow: 'hidden',
-            '&:hover .file-name-text': { color: '#2563EB' },
-          }}
-          onClick={async () => {
-            if (onCellClick) {
-              const fileId = row.original.file_id
-              const columnId = tableData.columns.length > 0 ? tableData.columns[0].id : ""
-              onCellClick(fileId, columnId, { highlightMode: 'none' })
-            }
-          }}
-        >
-          <FileTextIcon sx={{ fontSize: 15, color: '#9CA3AF', flexShrink: 0 }} />
-          <Typography
-            className="file-name-text"
-            variant="body2"
-            sx={{
-              fontSize: '0.8125rem',
-              color: '#374151',
-              flex: 1,
-              minWidth: 0,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-              transition: 'color 0.15s',
-            }}
-          >
-            {row.getValue("file_name")}
-          </Typography>
-          {onRemoveDocument && (
-              <IconButton
-                size="small"
-                onClick={(e) => {
-                  e.stopPropagation()
-                onRemoveDocument(row.original.file_id)
-                }}
-                sx={{ 
-                  p: 0.5,
-                  color: '#6B7280',
-                '&:hover': { color: '#DC2626', bgcolor: 'error.light' }
-                }}
-              >
-              <CloseIcon fontSize="small" />
-              </IconButton>
-          )}
-        </Stack>
-      ),
     }
 
-    // All columns from tableData.columns (all dynamic, no filtering)
-    const dynamicColumns: ColumnDef<any>[] = tableData.columns.map((col) => ({
+    const dynamicColumns: ColumnDef<Record<string, unknown>>[] = tableData.columns.map((col) => ({
       id: col.id,
       accessorKey: col.id,
-      size: DEFAULT_COLUMN_WIDTH,
-      minSize: DEFAULT_COLUMN_WIDTH,
-      maxSize: DEFAULT_COLUMN_WIDTH,
       enableSorting: true,
-      meta: {
-        columnLabel: col.column_label,
-      },
       sortingFn: (rowA, rowB, columnId) => {
-        const cellA: TabularCell | undefined = rowA.getValue(columnId)
-        const cellB: TabularCell | undefined = rowB.getValue(columnId)
-        const valueA = cellA?.cell_value || ""
-        const valueB = cellB?.cell_value || ""
+        const cellA = rowA.getValue(columnId) as TabularCell | undefined
+        const cellB = rowB.getValue(columnId) as TabularCell | undefined
         return compareTabularCellValuesForSort(
-          valueA,
-          valueB,
+          cellA?.cell_value || "",
+          cellB?.cell_value || "",
           col.column_type,
           col.column_label,
           sortDescFor(columnId),
         )
       },
-      header: ({ column: tableColumn }) => (
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, width: '100%' }}>
-          <SortableColumnHeader
-            label={col.column_label}
-            sortDirection={tableColumn.getIsSorted()}
-            onToggleSort={() => tableColumn.toggleSorting()}
-          />
-          {onRunColumn && col.column_type !== 'manual_input' && (
-            <Tooltip title="Запустить ИИ для заполнения колонки">
-              <IconButton
-                size="small"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  if (runningColumnIds?.has(col.id)) return
-                  onRunColumn(col.id)
-                }}
-                disabled={runningColumnIds?.has(col.id)}
-                aria-label="Запустить ИИ для заполнения колонки"
-                sx={{ p: 0.25 }}
-              >
-                {runningColumnIds?.has(col.id) ? (
-                  <CircularProgress size={18} color="inherit" />
-                ) : (
-                  <PlayArrowIcon sx={{ fontSize: 18 }} />
-                )}
-              </IconButton>
-            </Tooltip>
-          )}
-          {(onColumnEdit || onColumnDelete) && (
-            <ColumnHeaderMenu
-              columnId={col.id}
-              columnLabel={col.column_label}
-              isPinned={Boolean(col.is_pinned)}
-              disabled={runningColumnIds?.has(col.id)}
-              sortDirection={tableColumn.getIsSorted()}
-              onSortAsc={() => tableColumn.toggleSorting(false)}
-              onSortDesc={() => tableColumn.toggleSorting(true)}
-              onClearSort={() => tableColumn.clearSorting()}
-              onEdit={
-                onColumnEdit
-                  ? (anchorEl) => onColumnEdit(col.id, anchorEl)
-                  : undefined
-              }
-              onDelete={
-                onColumnDelete ? () => onColumnDelete(col.id) : undefined
-              }
-            />
-          )}
-        </Box>
-      ),
-      cell: ({ row }) => {
-        const rowFileId = row.original.file_id
-        const cellProcessingKey = `${col.id}:${rowFileId}`
-        if (processingCellKeys?.has(cellProcessingKey)) {
-          const widths = [55, 70, 45, 80, 60, 50, 75, 40, 65, 85]
-          const w = widths[row.index % widths.length]
-          return (
-            <Box sx={{ px: 1, py: 1 }}>
-              <Box sx={{
-                height: 13,
-                borderRadius: '4px',
-                bgcolor: '#E5E7EB',
-                width: `${w}%`,
-                '@keyframes shimmer': {
-                  '0%, 100%': { opacity: 1 },
-                  '50%': { opacity: 0.35 },
-                },
-                animation: 'shimmer 1.4s ease-in-out infinite',
-              }} />
-            </Box>
-          )
-        }
-
-        const cell: TabularCell = row.getValue(col.id)
-        let cellValue = cell?.cell_value || "-"
-
-        if (col.column_type === "yes_no" && typeof cellValue === "string") {
-          const yn = cellValue.trim()
-          if (yn === "Yes") cellValue = "Да"
-          else if (yn === "No") cellValue = "Нет"
-        }
-
-        if (col.column_type === "date" && typeof cellValue === "string") {
-          const trimmed = cellValue.trim()
-          if (trimmed && trimmed.toUpperCase() !== "N/A") {
-            cellValue = formatTabularDateDisplay(trimmed)
-          }
-        }
-
-        // IMPORTANT: UI should never try to parse JSON-in-string cell values.
-        // Cleanliness/normalization must happen on the backend (structured output + normalization).
-
-        // Normalize empty/placeholder values to "-" (not found)
-        if (typeof cellValue === "string") {
-          const v = cellValue.trim()
-          if (
-            !v ||
-            v.toUpperCase() === "N/A" ||
-            v === "—" || v === "-" || v === "–" ||
-            /^[_\s\-.]+$/.test(v) ||       // pure underscores/dashes
-            /_{2,}/.test(v)                // contains unfilled template blanks like «___» ____20__г.
-          ) {
-            cellValue = "-"
-          }
-        }
-
-        const cellStatus = cell?.status || "pending"
-        const isTagType = col.column_type === "tag"
-
-        return (
-          <Box
-            sx={{
-              cursor: cellValue !== "-" ? 'pointer' : 'default',
-              py: 0,
-              px: 0,
-              minHeight: 20,
-              display: 'flex',
-              alignItems: 'center',
-              overflow: 'hidden',
-              width: '100%',
-              transition: (theme) => theme.transitions.create(['background-color'], {
-                duration: theme.transitions.duration.shorter,
-              }),
-              '&:hover': cellValue !== "-" ? {
-                opacity: 0.85,
-              } : {},
-              position: 'relative',
-            }}
-            onDoubleClick={(e) => {
-              e.stopPropagation()
-              // Start editing cell
-              if (onCellEdit) {
-                onCellEdit(row.original.file_id, col.id, cell)
-              }
-            }}
-            onClick={async (e) => {
-                if (cellValue === "-") return
-                // Don't trigger on double-click (editing)
-                if (e.detail === 2) return
-
-              const anchor = e.currentTarget as HTMLElement
-              const cacheKey = `${row.original.file_id}_${col.id}`
-
-              const openPopover = (details: CellDetails) => {
-                let highlightMode: 'verbatim' | 'page' | 'none' = 'none'
-                if (details.verbatim_extract) {
-                  highlightMode = 'verbatim'
-                } else if (details.source_page || details.source_section) {
-                  highlightMode = 'page'
-                }
-                const refs = normalizeCellSourceReferences(details, cellValue)
-                const viewSourceBase: TabularCellClickPayload = {
-                  verbatimExtract: details.verbatim_extract,
-                  sourcePage: details.source_page,
-                  sourceSection: details.source_section,
-                  columnType: details.column_type,
-                  highlightMode,
-                  sourceReferences: refs,
-                  docId: details.primary_source_doc_id || row.original.file_id,
-                  charStart: details.primary_source_char_start || undefined,
-                  charEnd: details.primary_source_char_end || undefined,
-                }
-                setCellPopoverAnchor(anchor)
-                setCellPopoverData({
-                  cellValue,
-                  reasoning: details.reasoning,
-                  sourceDocName: row.original.file_name,
-                  sourceReferences: refs,
-                  fileId: row.original.file_id,
-                  columnId: col.id,
-                  viewSourceBase,
-                })
-              }
-
-              // Use cache if available
-              if (cellDetailsCache.current.has(cacheKey)) {
-                openPopover(cellDetailsCache.current.get(cacheKey)!)
-                return
-              }
-
-              // Load from API
-              setLoadingCell(true)
-              try {
-                const details = await tabularReviewApi.getCellDetails(
-                  reviewId,
-                  row.original.file_id,
-                  col.id
-                )
-                cellDetailsCache.current.set(cacheKey, details)
-                openPopover(details)
-              } catch (error) {
-                console.error("Error loading cell details:", error)
-              } finally {
-                setLoadingCell(false)
-              }
-            }}
-          >
-            {/* Status indicator (per-cell processing) */}
-            {cellStatus === "processing" && (
-              <Box
-                sx={{
-                  position: 'absolute',
-                  left: 4,
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  width: 4,
-                  height: 4,
-                  borderRadius: '50%',
-                  bgcolor: 'warning.main',
-                  animation: 'pulse 1.5s ease-in-out infinite',
-                  '@keyframes pulse': {
-                    '0%, 100%': { opacity: 1 },
-                    '50%': { opacity: 0.5 },
-                  },
-                }}
-              />
-            )}
-            
-            {/* Cell content */}
-            {isTagType ? (
-              <TagCell value={cellValue} column={col} />
-            ) : (
-              <Typography
-                variant="body2"
-                sx={{
-                  flex: 1,
-                  fontStyle: cellValue === "-" ? 'italic' : 'normal',
-                  color: cellValue === "-" ? '#9CA3AF' : '#1F2937',
-                  whiteSpace: 'normal',
-                  overflowWrap: 'anywhere',
-                  wordBreak: 'break-word',
-                  minWidth: 0,
-                }}
-              >
-                {cellValue === "-" ? "—" : cellValue}
-              </Typography>
-            )}
-            
-            {/* Status badge */}
-            {cellStatus === "reviewed" && (
-              <Chip
-                label="✓"
-                size="small"
-                sx={{
-                  ml: 1,
-                  height: 18,
-                  width: 18,
-                  minWidth: 18,
-                  bgcolor: 'success.main',
-                  color: 'white',
-                  fontSize: '0.7rem',
-                }}
-              />
-            )}
-          </Box>
-        )
-      },
     }))
 
-    // "+ Add column" column (last, header only)
-    const addColumnColumn: ColumnDef<any> = {
-      id: "add_column",
-      size: DEFAULT_COLUMN_WIDTH,
-      minSize: DEFAULT_COLUMN_WIDTH,
-      maxSize: DEFAULT_COLUMN_WIDTH,
-      enableResizing: false,
-      enableSorting: false,
-      enableHiding: false,
-      header: () => onAddColumnClick ? (
-        <Box
-          component="button"
-          type="button"
-          ref={(el) => { addColumnButtonRef.current = el as HTMLElement | null }}
-          onClick={(e) => {
-            e.stopPropagation()
-            onAddColumnClick?.()
-          }}
-          sx={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 0.5,
-            border: 'none',
-            background: 'none',
-            cursor: 'pointer',
-            fontSize: '0.875rem',
-            color: '#6B7280',
-            fontWeight: 500,
-            '&:hover': { color: '#1F2937' },
-          }}
-        >
-          <AddIcon sx={{ fontSize: 18 }} />
-          Add column
-        </Box>
-      ) : null,
-      cell: () => null,
-    }
-
-    const baseColumns = [rowIndexColumn, fileColumn, ...dynamicColumns]
-    return onAddColumnClick ? [...baseColumns, addColumnColumn] : baseColumns
-  }, [tableData.columns, reviewId, sorting, onCellClick, onRemoveDocument, onColumnEdit, onColumnDelete, onAddColumnClick, onRunColumn, runningColumnIds, processingCellKeys])
+    return [fileColumn, ...dynamicColumns]
+  }, [tableData.columns, sorting])
 
   const table = useReactTable({
     data: tableRows,
@@ -733,16 +357,8 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     onColumnVisibilityChange: setColumnVisibility,
-    onColumnSizingChange: setColumnSizing,
-    onColumnPinningChange: setColumnPinning,
     onGlobalFilterChange: setGlobalFilter,
     globalFilterFn: "includesString",
-    enableColumnResizing: true,
-    columnResizeMode: 'onChange',
-    enablePinning: true,
-    manualPagination: false,
-    manualSorting: false,
-    manualFiltering: false,
     defaultColumn: {
       enableHiding: false,
       enableColumnFilter: false,
@@ -754,12 +370,37 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
       sorting,
       columnFilters,
       columnVisibility,
-      columnSizing,
-      columnPinning,
       globalFilter,
     },
   })
-  
+
+  const sortedRows = table.getRowModel().rows
+
+  const gridRows = React.useMemo(
+    () =>
+      sortedRows.map((row) => ({
+        fileId: row.original.file_id as string,
+        fileName: row.original.file_name as string,
+        cells: Object.fromEntries(
+          tableData.columns.map((col) => [
+            col.id,
+            row.original[col.id] as TabularCell | undefined,
+          ]),
+        ),
+      })),
+    [sortedRows, tableData.columns],
+  )
+
+  const mikeRows = React.useMemo(
+    () => buildMikeRowsFromGrid(gridRows, tableData.columns, processingCellKeys),
+    [gridRows, tableData.columns, processingCellKeys],
+  )
+
+  const mikeColumnMeta = React.useMemo(
+    () => buildMikeColumnMeta(tableData.columns),
+    [tableData.columns],
+  )
+
   // Keyboard navigation
   useKeyboardNavigation({
     table,
@@ -775,8 +416,8 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
     },
     onRowDelete: (rowId) => {
       const row = table.getRowModel().rows.find((r) => r.id === rowId)
-      if (row && onRemoveDocument) {
-        onRemoveDocument(row.original.file_id)
+      if (row && _onRemoveDocument) {
+        _onRemoveDocument(row.original.file_id)
       }
     },
     onSearch: () => {
@@ -803,285 +444,118 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
     },
   })
   
-  // Виртуализация для больших таблиц (>100 строк)
-  const shouldVirtualize = table.getRowModel().rows.length > 100
-  const tableContainerRef = React.useRef<HTMLDivElement>(null)
-  
-  const virtualizer = useVirtualizer({
-    count: table.getRowModel().rows.length,
-    getScrollElement: () => tableContainerRef.current,
-    estimateSize: () => 50, // Примерная высота строки
-    overscan: 10,
-  })
-  
-  const virtualRows = virtualizer.getVirtualItems()
-  const totalSize = virtualizer.getTotalSize()
+  const shouldVirtualize = sortedRows.length > 100
+  const [scrollContainer, setScrollContainer] = React.useState<HTMLDivElement | null>(null)
 
+  const columnIds = React.useMemo(
+    () => tableData.columns.map((column) => column.id),
+    [tableData.columns],
+  )
+
+  const estimateRowHeight = React.useCallback(
+    (index: number) => estimateMikeRowHeight(mikeRows[index], columnIds),
+    [mikeRows, columnIds],
+  )
+
+  const virtualizer = useVirtualizer({
+    count: sortedRows.length,
+    getScrollElement: () => scrollContainer,
+    estimateSize: estimateRowHeight,
+    overscan: 8,
+    measureElement:
+      typeof window !== 'undefined'
+        ? (element) => element.getBoundingClientRect().height
+        : undefined,
+  })
+
+  React.useEffect(() => {
+    if (!shouldVirtualize) return
+    virtualizer.measure()
+  }, [mikeRows, shouldVirtualize, virtualizer, editingCellKey])
+
+  const virtualRows = virtualizer.getVirtualItems()
+  const virtualTopSpacer = virtualRows[0]?.start ?? 0
+  const virtualBottomSpacer =
+    sortedRows.length > 0
+      ? virtualizer.getTotalSize() - (virtualRows[virtualRows.length - 1]?.end ?? 0)
+      : 0
+
+  const getColumnApi = React.useCallback(
+    (columnId: string) => table.getColumn(columnId),
+    [table],
+  )
+
+  const mikeColumns = React.useMemo(
+    () =>
+      buildMikeTableColumns(tableData.columns, (column) => {
+        if (!onColumnDelete && !onOpenEditColumn) return null
+        const sortDirection = getColumnApi(column.id)?.getIsSorted() ?? false
+        const isRunning = runningColumnIds?.has(column.id)
+        return (
+          <TabularEditColumnMenu
+            column={column}
+            disabled={isRunning}
+            isRunning={isRunning}
+            sortDirection={sortDirection}
+            onSortAsc={() => getColumnApi(column.id)?.toggleSorting(false)}
+            onSortDesc={() => getColumnApi(column.id)?.toggleSorting(true)}
+            onClearSort={() => getColumnApi(column.id)?.clearSorting()}
+            onRun={
+              onRunColumn && column.column_type !== 'manual_input'
+                ? () => onRunColumn(column.id)
+                : undefined
+            }
+            onOpenEdit={onOpenEditColumn ? () => onOpenEditColumn(column.id) : undefined}
+            onDelete={() => onColumnDelete?.(column.id)}
+          />
+        )
+      }),
+    [
+      tableData.columns,
+      onOpenEditColumn,
+      onRunColumn,
+      onColumnDelete,
+      runningColumnIds,
+      getColumnApi,
+    ],
+  )
 
   return (
-    <Box sx={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <TableContainer 
-        component={Paper} 
-        variant="outlined"
-        ref={tableContainerRef}
-        sx={{
-          bgcolor: 'var(--bg-primary)',
-          boxShadow: 'none',
-          border: '1px solid var(--border, #E5E7EB)',
-          borderRadius: '8px',
-          overflowX: 'auto',
-          overflowY: 'auto',
-          width: '100%',
-          flex: 1,
-          minHeight: 0,
-          minWidth: 0,
-          '&::-webkit-scrollbar': {
-            height: '8px',
-            width: '8px',
-          },
-          '&::-webkit-scrollbar-track': {
-            background: '#F9FAFB',
-          },
-          '&::-webkit-scrollbar-thumb': {
-            background: '#D1D5DB',
-            borderRadius: '4px',
-          },
-          '&::-webkit-scrollbar-thumb:hover': {
-            background: '#9CA3AF',
-          },
+    <div className="ws-tabular-table-inner">
+      <MikeTRTable
+        reviewId={reviewId}
+        columns={mikeColumns}
+        rows={mikeRows}
+        columnMeta={mikeColumnMeta}
+        openPopoverCell={openPopoverCell}
+        onPopoverCellChange={setOpenPopoverCell}
+        editingCellKey={editingCellKey}
+        onEditingCellKeyChange={setEditingCellKey}
+        addColumnButtonRef={addColumnButtonRef}
+        onAddColumn={onAddColumnClick}
+        onAddDocuments={onAddDocumentsClick}
+        onOpenTemplates={onOpenTemplatesClick}
+        selectedDocIds={selectedDocIds}
+        onSelectionChange={onSelectionChange}
+        scrollRef={setScrollContainer}
+        virtualRows={shouldVirtualize ? virtualRows : undefined}
+        virtualTopSpacer={shouldVirtualize ? virtualTopSpacer : 0}
+        virtualBottomSpacer={shouldVirtualize ? virtualBottomSpacer : 0}
+        onViewInDocument={(fileId, columnId, citationIndex) => {
+          void openCellSidePanel(fileId, columnId, citationIndex)
         }}
-      >
-        <Table sx={{ borderCollapse: 'separate', borderSpacing: 0, tableLayout: 'fixed' }} style={{ width: table.getTotalSize() }}>
-          <TableHead>
-            {table.getHeaderGroups().map((headerGroup) => (
-              <TableRow
-                key={headerGroup.id}
-                sx={{
-                  '& th': {
-                    position: 'sticky',
-                    top: 0,
-                    zIndex: 10,
-                    bgcolor: 'var(--bg-secondary, #F9FAFB)',
-                    borderTop: 'none',
-                    borderBottom: '1px solid var(--border, #D1D5DB)',
-                    borderRight: '1px solid var(--border, #E5E7EB)',
-                    borderLeft: 'none',
-                    fontWeight: 600,
-                    fontSize: '0.75rem',
-                    letterSpacing: '0.04em',
-                    textTransform: 'uppercase',
-                    color: 'var(--text-secondary, #6B7280)',
-                    py: '7px',
-                    px: '14px',
-                  },
-                }}
-              >
-                {headerGroup.headers.map((header) => (
-                  <TableCell
-                    key={header.id}
-                    sx={{
-                      bgcolor: 'var(--bg-secondary, #F9FAFB)',
-                      width: header.getSize(),
-                      verticalAlign: 'middle',
-                    }}
-                    style={{
-                      // Use inline style for sticky positioning to override any cascade issues
-                      left: header.column.getIsPinned() === 'left' ? `${header.getStart('left')}px` : undefined,
-                      right: header.column.getIsPinned() === 'right' ? `${header.getStart('right')}px` : undefined,
-                      zIndex: header.column.getIsPinned() ? 20 : 10,
-                      boxShadow: header.column.getIsPinned() === 'left' ? '2px 0 6px -2px rgba(0,0,0,0.1)' : undefined,
-                    }}
-                  >
-                    {header.isPlaceholder
-                      ? null
-                      : flexRender(
-                          header.column.columnDef.header,
-                          header.getContext()
-                        )}
-                    <Box
-                      onMouseDown={header.getResizeHandler()}
-                      onTouchStart={header.getResizeHandler()}
-                      sx={{
-                        position: 'absolute',
-                        right: 0,
-                        top: 0,
-                        bottom: 0,
-                        width: '4px',
-                        cursor: 'col-resize',
-                        userSelect: 'none',
-                        touchAction: 'none',
-                        bgcolor: header.column.getIsResizing() ? '#2563EB' : 'transparent',
-                        '&:hover': { bgcolor: '#9CA3AF' },
-                        zIndex: 2,
-                      }}
-                    />
-                  </TableCell>
-                ))}
-              </TableRow>
-            ))}
-          </TableHead>
-          <TableBody>
-            {table.getRowModel().rows?.length ? (
-              shouldVirtualize ? (
-                <>
-                  <tr style={{ height: `${virtualRows[0]?.start ?? 0}px` }} />
-                  {virtualRows.map((virtualRow) => {
-                    const row = table.getRowModel().rows[virtualRow.index]
-                    return (
-                      <TableRow
-                        key={row.id}
-                        data-index={virtualRow.index}
-                        ref={(node) => {
-                          if (node) {
-                            virtualizer.measureElement(node)
-                          }
-                        }}
-                        sx={{
-                          bgcolor: 'var(--bg-primary)',
-                          '&:hover': { bgcolor: 'var(--bg-hover, rgba(0,0,0,0.02))' },
-                          '& td': {
-                            borderBottom: '1px solid var(--border, #E5E7EB)',
-                            borderRight: '1px solid var(--border, #E5E7EB)',
-                            borderLeft: 'none',
-                            py: '6px',
-                            px: '14px',
-                            fontSize: '0.875rem',
-                            color: 'var(--text-primary, #1F2937)',
-                          },
-                        }}
-                      >
-                        {row.getVisibleCells().map((cell) => {
-                          const isAddColumnCell = cell.column.id === 'add_column'
-
-                          return (
-                            <TableCell
-                              key={cell.id}
-                              sx={{
-                                width: cell.column.getSize(),
-                                maxWidth: cell.column.getSize(),
-                                overflow: isAddColumnCell ? 'visible' : 'hidden',
-                                bgcolor:
-                                  cell.column.getIsPinned() === 'left'
-                                    ? 'var(--bg-primary)'
-                                    : 'transparent',
-                                position: isAddColumnCell ? 'relative' : undefined,
-                              }}
-                              style={{
-                                position: cell.column.getIsPinned() ? 'sticky' : undefined,
-                                left:
-                                  cell.column.getIsPinned() === 'left'
-                                    ? `${cell.column.getStart('left')}px`
-                                    : undefined,
-                                right:
-                                  cell.column.getIsPinned() === 'right'
-                                    ? `${cell.column.getStart('right')}px`
-                                    : undefined,
-                                zIndex: cell.column.getIsPinned() ? 10 : undefined,
-                                backgroundColor:
-                                  cell.column.getIsPinned() === 'left'
-                                    ? 'var(--bg-primary, #ffffff)'
-                                    : undefined,
-                                boxShadow:
-                                  cell.column.getIsPinned() === 'left'
-                                    ? '2px 0 6px -2px rgba(0,0,0,0.1)'
-                                    : undefined,
-                              }}
-                            >
-                              {flexRender(
-                                cell.column.columnDef.cell,
-                                cell.getContext()
-                              )}
-                            </TableCell>
-                          )
-                        })}
-                      </TableRow>
-                    )
-                  })}
-                  <tr style={{ height: `${totalSize - (virtualRows[virtualRows.length - 1]?.end ?? 0)}px` }} />
-                </>
-              ) : (
-                table.getRowModel().rows.map((row) => (
-                  <TableRow
-                    key={row.id}
-                    sx={{
-                      bgcolor: 'var(--bg-primary)',
-                      '&:hover': { bgcolor: 'var(--bg-hover, rgba(0,0,0,0.02))' },
-                      '& td': {
-                        borderBottom: '1px solid var(--border, #E5E7EB)',
-                        borderRight: '1px solid var(--border, #E5E7EB)',
-                        borderLeft: 'none',
-                        py: '6px',
-                        px: '14px',
-                        fontSize: '0.875rem',
-                        color: 'var(--text-primary, #1F2937)',
-                      },
-                    }}
-                  >
-                    {row.getVisibleCells().map((cell) => {
-                      const isAddColumnCell = cell.column.id === 'add_column'
-
-                      return (
-                        <TableCell
-                          key={cell.id}
-                          sx={{
-                            width: cell.column.getSize(),
-                            maxWidth: cell.column.getSize(),
-                            overflow: isAddColumnCell ? 'visible' : 'hidden',
-                            bgcolor:
-                              cell.column.getIsPinned() === 'left'
-                                ? 'var(--bg-primary)'
-                                : 'transparent',
-                            position: isAddColumnCell ? 'relative' : undefined,
-                          }}
-                          style={{
-                            position: cell.column.getIsPinned() ? 'sticky' : undefined,
-                            left:
-                              cell.column.getIsPinned() === 'left'
-                                ? `${cell.column.getStart('left')}px`
-                                : undefined,
-                            right:
-                              cell.column.getIsPinned() === 'right'
-                                ? `${cell.column.getStart('right')}px`
-                                : undefined,
-                            zIndex: cell.column.getIsPinned() ? 10 : undefined,
-                            backgroundColor:
-                              cell.column.getIsPinned() === 'left'
-                                ? 'var(--bg-primary, #ffffff)'
-                                : undefined,
-                            boxShadow:
-                              cell.column.getIsPinned() === 'left'
-                                ? '2px 0 6px -2px rgba(0,0,0,0.1)'
-                                : undefined,
-                          }}
-                        >
-                          {flexRender(
-                            cell.column.columnDef.cell,
-                            cell.getContext()
-                          )}
-                        </TableCell>
-                      )
-                    })}
-                  </TableRow>
-                ))
-              )
-            ) : (
-              <TableRow>
-                <TableCell
-                  colSpan={columns.length}
-                  align="center"
-                  sx={{ height: 96, py: 4 }}
-                >
-                  <Typography sx={{ color: '#6B7280' }}>
-                    Нет результатов.
-                  </Typography>
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </TableContainer>
-
-      {/* Cell History Panel */}
+        onCellSave={onCellSave}
+        onDocumentClick={(fileId, firstColumnId) => {
+          onCellClick?.(fileId, firstColumnId, { highlightMode: 'none' })
+        }}
+        rowRef={
+          shouldVirtualize
+            ? (_rowIndex) => (node: HTMLDivElement | null) => {
+                if (node) virtualizer.measureElement(node)
+              }
+            : undefined
+        }
+      />
       <CellHistoryPanel
         reviewId={reviewId}
         fileId={historyCellInfo?.fileId || ""}
@@ -1120,162 +594,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, onTableData
         onFiltersChange={setAdvancedFilters}
         columns={tableData.columns}
       />
-
-      {/* Cell detail popover — Harvey-style */}
-      <Popover
-        open={Boolean(cellPopoverAnchor)}
-        anchorEl={cellPopoverAnchor}
-        onClose={() => { setCellPopoverAnchor(null); setCellPopoverData(null) }}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-        transformOrigin={{ vertical: 'top', horizontal: 'left' }}
-        slotProps={{ paper: { sx: { width: 340, borderRadius: '12px', boxShadow: '0 8px 32px rgba(0,0,0,0.15)', p: 2.5, display: 'flex', flexDirection: 'column', gap: 2 } } }}
-      >
-        {cellPopoverData && (
-          <>
-            {/* Summary */}
-            <Box>
-              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
-                <Typography sx={{ fontSize: '0.6875rem', fontWeight: 600, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
-                  Summary
-                </Typography>
-                <IconButton
-                  size="small"
-                  onClick={() => navigator.clipboard.writeText(cellPopoverData.cellValue)}
-                  sx={{ p: 0.5 }}
-                  title="Копировать"
-                >
-                  <ContentCopyIcon sx={{ fontSize: 13, color: '#9CA3AF' }} />
-                </IconButton>
-              </Box>
-              <Chip
-                label={cellPopoverData.cellValue}
-                size="small"
-                sx={{ bgcolor: '#F3F4F6', color: '#1F2937', fontWeight: 500, fontSize: '0.8125rem', height: 26, borderRadius: '6px' }}
-              />
-            </Box>
-
-            {/* Additional Context */}
-            {cellPopoverData.reasoning && (
-              <Box>
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.75 }}>
-                  <Typography sx={{ fontSize: '0.6875rem', fontWeight: 600, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
-                    Additional Context
-                  </Typography>
-                  <IconButton
-                    size="small"
-                    onClick={() => navigator.clipboard.writeText(cellPopoverData.reasoning!)}
-                    sx={{ p: 0.5 }}
-                    title="Копировать"
-                  >
-                    <ContentCopyIcon sx={{ fontSize: 13, color: '#9CA3AF' }} />
-                  </IconButton>
-                </Box>
-                <Typography sx={{ fontSize: '0.8125rem', color: '#374151', lineHeight: 1.55 }}>
-                  {cellPopoverData.reasoning}
-                </Typography>
-              </Box>
-            )}
-
-            {/* Source + кнопки «Источник N» */}
-            {cellPopoverData.sourceDocName && (
-              <Box>
-                <Typography sx={{ fontSize: '0.6875rem', fontWeight: 600, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.07em', mb: 0.75 }}>
-                  Source
-                </Typography>
-                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.75 }}>
-                  <FileTextIcon sx={{ fontSize: 14, color: '#6B7280', mt: '2px', flexShrink: 0 }} />
-                  <Typography sx={{ fontSize: '0.8125rem', color: '#374151', lineHeight: 1.4 }}>
-                    {cellPopoverData.sourceDocName}
-                  </Typography>
-                </Box>
-              </Box>
-            )}
-
-            {onCellClick && cellPopoverData.sourceReferences.length > 0 && (
-              <>
-                <Divider />
-                <Stack spacing={1}>
-                  {cellPopoverData.sourceReferences.map((ref, idx) => {
-                    const total = cellPopoverData.sourceReferences.length
-                    const label = sourceReferenceButtonLabel(ref, idx, total)
-                    return (
-                      <Box
-                        key={idx}
-                        component="button"
-                        type="button"
-                        onClick={() => handleViewSourceAt(idx)}
-                        sx={{
-                          width: '100%',
-                          py: 1,
-                          px: 1.25,
-                          border: '1px solid #E5E7EB',
-                          borderRadius: '8px',
-                          background: 'white',
-                          fontSize: '0.875rem',
-                          color: '#374151',
-                          fontWeight: 500,
-                          cursor: 'pointer',
-                          fontFamily: 'inherit',
-                          textAlign: 'left',
-                          '&:hover': { bgcolor: '#F9FAFB' },
-                        }}
-                      >
-                        {label}
-                        {ref.text?.trim() && total > 1 && (
-                          <Typography
-                            component="span"
-                            sx={{
-                              display: 'block',
-                              mt: 0.5,
-                              fontSize: '0.75rem',
-                              color: '#6B7280',
-                              fontWeight: 400,
-                              fontStyle: 'italic',
-                            }}
-                          >
-                            «{truncateQuote(ref.text)}»
-                          </Typography>
-                        )}
-                      </Box>
-                    )
-                  })}
-                </Stack>
-              </>
-            )}
-
-            {onCellClick && cellPopoverData.sourceReferences.length === 0 && (
-              <>
-                <Divider />
-                <Box
-                  component="button"
-                  type="button"
-                  onClick={() => {
-                    if (!cellPopoverData) return
-                    closeCellPopover()
-                    onCellClick(cellPopoverData.fileId, cellPopoverData.columnId, cellPopoverData.viewSourceBase)
-                  }}
-                  sx={{
-                    width: '100%',
-                    py: 1,
-                    border: '1px solid #E5E7EB',
-                    borderRadius: '8px',
-                    background: 'white',
-                    fontSize: '0.875rem',
-                    color: '#374151',
-                    fontWeight: 500,
-                    cursor: 'pointer',
-                    fontFamily: 'inherit',
-                    '&:hover': { bgcolor: '#F9FAFB' },
-                  }}
-                >
-                  View Source
-                </Box>
-              </>
-            )}
-          </>
-        )}
-      </Popover>
-    </Box>
+    </div>
   )
 })
 

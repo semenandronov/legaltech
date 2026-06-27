@@ -3,17 +3,13 @@ import { toast } from 'sonner'
 import { useLocation, useNavigate } from 'react-router-dom'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import {
-  FolderOpen, MessageSquare, FileText, X, Plus,
-  AlignJustify, SlidersHorizontal, Sparkles, Search, ChevronDown, Loader2, Download, Clock,
-  ChevronRight, Check, Mic, MicOff,   BookOpen, Trash2, Gavel,
+  FolderOpen, MessageSquare, FileText, X,
+  Loader2, Download, Clock,
 } from 'lucide-react'
 import {
   getApiUrl,
   getGlobalAssistantSession,
   saveSessionDraft,
-  getCasesList,
-  getCaseFiles,
-  CaseListItem,
   UploadedFile,
   SourceInfo,
   fetchLegalCorpusStatus,
@@ -29,11 +25,12 @@ import { DocumentEditor, DocumentEditorRef } from '../components/Editor/Document
 import MessageContent from '../components/Chat/MessageContent'
 import ThinkingBlock from '../components/Chat/ThinkingBlock'
 import DocumentPreviewSheet from '../components/Chat/DocumentPreviewSheet'
-import {
-  canSelectDraftMode,
-  canEnableLegalResearch,
-  canEnableCourtPractice,
-} from '../lib/chatInstrumentPolicy'
+import { HarveyInput } from '../components/Chat/HarveyInput'
+import { CaseDocumentPickerModal } from '../components/Chat/CaseDocumentPickerModal'
+import { GlobalAssistantPageHeader } from '../components/assistant/GlobalAssistantPageHeader'
+import { MikeAssistantDisclaimer, MikeAssistantGreeting } from '../components/assistant/MikeAssistantGreeting'
+import { MikeUserMessage } from '../components/assistant/MikeUserMessage'
+import { productFeatures } from '../lib/productFeatures'
 import { useChatInstrumentSettings } from '../hooks/useChatInstrumentSettings'
 
 function inlineFmt(text: string): string {
@@ -105,809 +102,6 @@ const navItems = [
   { id: 'assistant', label: 'Ассистент', icon: MessageSquare, path: '/assistant' },
   { id: 'history', label: 'История', icon: Clock, path: '/history' },
 ]
-
-const WORKFLOWS = [
-  {
-    id: 1,
-    title: 'Сравнение с правовым стандартом',
-    description: 'Загрузите документ и проверьте его на соответствие правовому стандарту или регламенту.',
-    outputType: 'Output',
-    outputLabel: 'Результат',
-    steps: 2,
-    prompt: 'Сравни этот документ с соответствующим правовым стандартом и выяви несоответствия:',
-  },
-  {
-    id: 2,
-    title: 'Анализ договора',
-    description: 'Загрузите договор и извлеките ключевые условия, обязательства, риски и рекомендации.',
-    outputType: 'Output',
-    outputLabel: 'Результат',
-    steps: 3,
-    prompt: 'Проанализируй этот договор и выдели ключевые условия, обязательства, риски и рекомендации:',
-  },
-  {
-    id: 3,
-    title: 'Составление юридического документа',
-    description: 'Опишите нужный документ и предоставьте контекст для составления с помощью AI.',
-    outputType: 'Draft',
-    outputLabel: 'Черновик',
-    steps: 2,
-    prompt: 'Составь юридический документ на основе следующего описания и контекста:',
-  },
-  {
-    id: 4,
-    title: 'Чек-лист Due Diligence',
-    description: 'Создайте комплексный чек-лист due diligence для вашего типа сделки и юрисдикции.',
-    outputType: 'Output',
-    outputLabel: 'Результат',
-    steps: 4,
-    prompt: 'Составь комплексный чек-лист due diligence для следующей сделки:',
-  },
-  {
-    id: 5,
-    title: 'Правовое заключение',
-    description: 'Исследуйте правовой вопрос и получите структурированное заключение со ссылками и анализом.',
-    outputType: 'Output',
-    outputLabel: 'Результат',
-    steps: 5,
-    prompt: 'Исследуй следующий правовой вопрос и подготовь структурированное заключение со ссылками:',
-  },
-  {
-    id: 6,
-    title: 'Краткое изложение документов',
-    description: 'Загрузите несколько документов и получите краткие резюме с ключевыми выводами.',
-    outputType: 'Output',
-    outputLabel: 'Результат',
-    steps: 2,
-    prompt: 'Сделай краткое изложение следующего документа и выдели ключевые моменты:',
-  },
-]
-
-const SOURCES = [
-  { label: 'Веб-поиск', color: '#22C55E' },
-  { label: 'Документы дела', color: '#3B82F6' },
-  { label: 'Загруженные файлы', color: '#F97316' },
-  { label: 'Шаблоны договоров', color: '#8B5CF6' },
-]
-
-const LEGAL_PROMPTS = [
-  {
-    category: 'Анализ документа',
-    prompts: [
-      'Проанализируй ключевые условия этого документа и выяви потенциальные риски',
-      'Извлеки все важные даты, сроки и дедлайны',
-      'Перечисли права и обязанности каждой из сторон',
-      'Найди неоднозначные или противоречивые формулировки в тексте',
-    ],
-  },
-  {
-    category: 'Составление',
-    prompts: [
-      'Составь проект договора об оказании юридических услуг',
-      'Напиши претензионное письмо в связи с нарушением условий договора',
-      'Составь соглашение о конфиденциальности (NDA)',
-    ],
-  },
-  {
-    category: 'Резюме',
-    prompts: [
-      'Сделай краткое резюме документа с ключевыми выводами',
-      'Определи ключевые стороны и их позиции',
-      'Выдели основные риски и рекомендации',
-    ],
-  },
-]
-
-// ─────────────────────────────────────────────────────────
-// Case Document Picker Modal
-// ─────────────────────────────────────────────────────────
-interface CaseDocumentPickerProps {
-  onClose: () => void
-  onConfirm: (files: UploadedFile[], caseName: string) => void
-  alreadySelectedIds: Set<string>
-}
-
-function CaseDocumentPickerModal({ onClose, onConfirm, alreadySelectedIds }: CaseDocumentPickerProps) {
-  const [step, setStep] = useState<'cases' | 'files'>('cases')
-  const [cases, setCases] = useState<CaseListItem[]>([])
-  const [loadingCases, setLoadingCases] = useState(true)
-  const [selectedCase, setSelectedCase] = useState<CaseListItem | null>(null)
-  const [files, setFiles] = useState<UploadedFile[]>([])
-  const [loadingFiles, setLoadingFiles] = useState(false)
-  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set(alreadySelectedIds))
-  const [searchQuery, setSearchQuery] = useState('')
-
-  useEffect(() => {
-    getCasesList(0, 100)
-      .then((res) => setCases(res.cases ?? []))
-      .catch(() => {})
-      .finally(() => setLoadingCases(false))
-  }, [])
-
-  const handleSelectCase = async (c: CaseListItem) => {
-    setSelectedCase(c)
-    setStep('files')
-    setLoadingFiles(true)
-    try {
-      const res = await getCaseFiles(c.id)
-      setFiles(res.files ?? [])
-    } catch {
-      setFiles([])
-    } finally {
-      setLoadingFiles(false)
-    }
-  }
-
-  const toggleFile = (id: string) => {
-    setCheckedIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
-  const handleConfirm = () => {
-    const selected = files.filter((f) => checkedIds.has(f.id))
-    onConfirm(selected, selectedCase?.title ?? '')
-    onClose()
-  }
-
-  const filteredCases = cases.filter((c) =>
-    (c.title ?? '').toLowerCase().includes(searchQuery.toLowerCase())
-  )
-  const filteredFiles = files.filter((f) =>
-    f.filename.toLowerCase().includes(searchQuery.toLowerCase())
-  )
-
-  const newlySelected = files.filter((f) => checkedIds.has(f.id) && !alreadySelectedIds.has(f.id))
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ backgroundColor: 'rgba(0,0,0,0.4)' }}
-      onClick={onClose}
-    >
-      <div
-        className="bg-white rounded-xl overflow-hidden flex flex-col"
-        style={{ width: '520px', maxHeight: '600px', boxShadow: '0 20px 60px rgba(0,0,0,0.18)' }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-          <div className="flex items-center gap-2 text-sm" style={{ color: '#6B7280' }}>
-            <button
-              onClick={step === 'files' ? () => { setStep('cases'); setSearchQuery('') } : onClose}
-              className="hover:text-gray-900 transition-colors font-medium"
-            >
-              {step === 'files' ? '← Назад' : 'Дела'}
-            </button>
-            {step === 'files' && selectedCase && (
-              <>
-                <ChevronRight className="w-3.5 h-3.5" />
-                <span className="font-medium" style={{ color: '#111827' }}>{selectedCase.title ?? 'Без названия'}</span>
-              </>
-            )}
-          </div>
-          <button onClick={onClose} className="p-1 rounded hover:bg-gray-100 transition-colors">
-            <X className="w-4 h-4" style={{ color: '#9CA3AF' }} />
-          </button>
-        </div>
-
-        {/* Search */}
-        <div className="px-4 py-2.5 border-b border-gray-100">
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg" style={{ backgroundColor: '#F9FAFB', border: '1px solid #E5E7EB' }}>
-            <Search className="w-3.5 h-3.5 flex-shrink-0" style={{ color: '#9CA3AF' }} />
-            <input
-              autoFocus
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={step === 'cases' ? 'Поиск по делам...' : 'Поиск по файлам...'}
-              className="flex-1 bg-transparent outline-none text-sm"
-              style={{ color: '#111827' }}
-            />
-          </div>
-        </div>
-
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto">
-          {step === 'cases' ? (
-            loadingCases ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="w-5 h-5 animate-spin" style={{ color: '#9CA3AF' }} />
-              </div>
-            ) : filteredCases.length === 0 ? (
-              <div className="flex items-center justify-center py-12 text-sm" style={{ color: '#9CA3AF' }}>
-                {searchQuery ? 'Ничего не найдено' : 'Нет дел'}
-              </div>
-            ) : (
-              filteredCases.map((c) => (
-                <button
-                  key={c.id}
-                  onClick={() => { setSearchQuery(''); handleSelectCase(c) }}
-                  className="w-full flex items-center justify-between px-5 py-3 border-b border-gray-50 hover:bg-gray-50 transition-colors text-left"
-                >
-                  <div className="flex items-center gap-3">
-                    <FolderOpen className="w-4 h-4 flex-shrink-0" style={{ color: '#6B7280' }} />
-                    <span className="text-sm font-medium" style={{ color: '#111827' }}>
-                      {c.title ?? 'Без названия'}
-                    </span>
-                  </div>
-                  <ChevronRight className="w-4 h-4 flex-shrink-0" style={{ color: '#D1D5DB' }} />
-                </button>
-              ))
-            )
-          ) : (
-            loadingFiles ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="w-5 h-5 animate-spin" style={{ color: '#9CA3AF' }} />
-              </div>
-            ) : filteredFiles.length === 0 ? (
-              <div className="flex items-center justify-center py-12 text-sm" style={{ color: '#9CA3AF' }}>
-                {searchQuery ? 'Ничего не найдено' : 'В деле нет файлов'}
-              </div>
-            ) : (
-              filteredFiles.map((f) => (
-                <button
-                  key={f.id}
-                  onClick={() => toggleFile(f.id)}
-                  className="w-full flex items-center gap-3 px-5 py-3 border-b border-gray-50 hover:bg-gray-50 transition-colors text-left"
-                >
-                  <div
-                    className="w-4 h-4 rounded flex items-center justify-center flex-shrink-0"
-                    style={{
-                      border: checkedIds.has(f.id) ? '1px solid #4F46E5' : '1px solid #D1D5DB',
-                      backgroundColor: checkedIds.has(f.id) ? '#4F46E5' : 'transparent',
-                    }}
-                  >
-                    {checkedIds.has(f.id) && <Check className="w-2.5 h-2.5" style={{ color: 'white' }} />}
-                  </div>
-                  <FileText className="w-4 h-4 flex-shrink-0" style={{ color: '#6B7280' }} />
-                  <span className="flex-1 text-sm truncate" style={{ color: '#111827' }}>{f.filename}</span>
-                  {f.size && (
-                    <span className="text-xs flex-shrink-0" style={{ color: '#9CA3AF' }}>
-                      {Math.round(f.size / 1024)}kb
-                    </span>
-                  )}
-                </button>
-              ))
-            )
-          )}
-        </div>
-
-        {/* Footer (files step only) */}
-        {step === 'files' && (
-          <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100" style={{ backgroundColor: '#FAFAFA' }}>
-            <span className="text-xs" style={{ color: '#9CA3AF' }}>
-              {newlySelected.length > 0 ? `Выбрано: ${newlySelected.length}` : 'Выберите файлы'}
-            </span>
-            <button
-              onClick={handleConfirm}
-              disabled={newlySelected.length === 0}
-              className="px-4 py-1.5 rounded-lg text-sm font-medium text-white transition-all disabled:opacity-40"
-              style={{ backgroundColor: '#111827' }}
-            >
-              Добавить
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ─────────────────────────────────────────────────────────
-// Harvey-style input card
-// ─────────────────────────────────────────────────────────
-interface HarveyInputProps {
-  value: string
-  onChange: (v: string) => void
-  onSubmit: () => void
-  fileContexts: FileContext[]
-  uploadingFiles: string[]
-  onAddFiles: (files: File[]) => void
-  onRemoveContext: (idx: number) => void
-  isStreaming: boolean
-  isDraftMode: boolean
-  onSetDraftMode: (draft: boolean) => void
-  selectedCaseFiles: UploadedFile[]
-  onRemoveCaseFile: (id: string) => void
-  onOpenCasePicker: () => void
-  placeholder?: string
-  useLegalCorpus: boolean
-  onUseLegalCorpusChange: (v: boolean) => void
-  useCourtPractice: boolean
-  onUseCourtPracticeChange: (v: boolean) => void
-  isLegalCorpusUploader: boolean
-  corpusFiles: LegalCorpusFileRow[]
-  corpusUploading: boolean
-  onCorpusFilesSelected: (files: File[]) => void
-  onDeleteCorpusFile: (corpusFileId: string) => void
-}
-
-function HarveyInput({
-  value, onChange, onSubmit,
-  fileContexts, uploadingFiles, onAddFiles, onRemoveContext,
-  isStreaming, isDraftMode, onSetDraftMode,
-  selectedCaseFiles, onRemoveCaseFile, onOpenCasePicker,
-  placeholder = 'Спросите что угодно...',
-  useLegalCorpus,
-  onUseLegalCorpusChange,
-  useCourtPractice,
-  onUseCourtPracticeChange,
-  isLegalCorpusUploader,
-  corpusFiles,
-  corpusUploading,
-  onCorpusFilesSelected,
-  onDeleteCorpusFile,
-}: HarveyInputProps) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const corpusFileInputRef = useRef<HTMLInputElement>(null)
-  const settingsRef = useRef<HTMLDivElement>(null)
-  const promptsRef = useRef<HTMLDivElement>(null)
-  const [settingsOpen, setSettingsOpen] = useState(false)
-  const [promptsOpen, setPromptsOpen] = useState(false)
-  const [isRecording, setIsRecording] = useState(false)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const recognitionRef = useRef<any>(null)
-
-  const toggleRecording = () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-    if (!SR) {
-      toast.error('Голосовой ввод не поддерживается в этом браузере. Используйте Chrome.')
-      return
-    }
-
-    if (isRecording) {
-      recognitionRef.current?.stop()
-      return
-    }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const recognition: any = new SR()
-    recognitionRef.current = recognition
-    recognition.lang = 'ru-RU'
-    recognition.continuous = false
-    recognition.interimResults = false
-
-    recognition.onstart = () => setIsRecording(true)
-    recognition.onend = () => setIsRecording(false)
-
-    recognition.onresult = (e: any) => {
-      const text = e.results[0][0].transcript
-      if (text) onChange((value ? value + ' ' : '') + text)
-    }
-
-    recognition.onerror = (e: any) => {
-      setIsRecording(false)
-      if (e.error !== 'aborted') {
-        toast.error(`Ошибка распознавания: ${e.error}`)
-      }
-    }
-
-    recognition.start()
-  }
-
-  useEffect(() => {
-    const el = textareaRef.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 200)}px`
-  }, [value])
-
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (settingsRef.current && !settingsRef.current.contains(e.target as Node)) {
-        setSettingsOpen(false)
-      }
-    }
-    if (settingsOpen) document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [settingsOpen])
-
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (promptsRef.current && !promptsRef.current.contains(e.target as Node)) {
-        setPromptsOpen(false)
-      }
-    }
-    if (promptsOpen) document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [promptsOpen])
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      if (value.trim() && !isStreaming) onSubmit()
-    }
-  }
-
-  const hasFiles = fileContexts.length > 0 || uploadingFiles.length > 0 || selectedCaseFiles.length > 0
-
-  return (
-    <div className="rounded-xl border border-gray-200 bg-white" style={{ boxShadow: '0 1px 6px rgba(0,0,0,0.06)' }}>
-      {/* Textarea */}
-      <div className="px-4 pt-4 pb-2">
-        <textarea
-          ref={textareaRef}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder={placeholder}
-          rows={3}
-          className="w-full resize-none outline-none bg-transparent"
-          style={{
-            minHeight: '80px',
-            fontSize: '15px',
-            lineHeight: '1.6',
-            color: '#111827',
-            fontFamily: 'inherit',
-          }}
-        />
-      </div>
-
-      {/* Attached files */}
-      {hasFiles && (
-        <div className="px-4 pb-2 flex flex-wrap gap-2">
-          {uploadingFiles.map((name) => (
-            <div
-              key={`uploading-${name}`}
-              className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs border border-blue-200 bg-blue-50"
-              style={{ color: '#2563EB' }}
-            >
-              <Loader2 className="w-3 h-3 animate-spin" />
-              <span className="max-w-[140px] truncate">{name}</span>
-            </div>
-          ))}
-          {fileContexts.map((fc, i) => (
-            <div
-              key={`ctx-${i}`}
-              className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs border border-gray-200 bg-gray-50"
-              style={{ color: '#374151' }}
-            >
-              <FileText className="w-3 h-3" style={{ color: '#22C55E' }} />
-              <span className="max-w-[140px] truncate">{fc.filename}</span>
-              <span className="text-gray-400 ml-0.5">{Math.round(fc.charCount / 1000)}k</span>
-              <button onClick={() => onRemoveContext(i)} className="ml-0.5 hover:text-red-500 transition-colors">
-                <X className="w-3 h-3" />
-              </button>
-            </div>
-          ))}
-          {selectedCaseFiles.map((f) => (
-            <div
-              key={`case-${f.id}`}
-              className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs border border-indigo-200 bg-indigo-50"
-              style={{ color: '#4338CA' }}
-            >
-              <FileText className="w-3 h-3" style={{ color: '#6366F1' }} />
-              <span className="max-w-[140px] truncate">{f.filename}</span>
-              <button onClick={() => onRemoveCaseFile(f.id)} className="ml-0.5 hover:text-red-500 transition-colors">
-                <X className="w-3 h-3" />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Toolbar */}
-      <div className="flex items-center px-3 py-2 border-t border-gray-100" style={{ gap: '2px' }}>
-        {/* Left tools (overflow-hidden to prevent pushing send button) */}
-        <div className="flex items-center min-w-0 overflow-hidden" style={{ gap: '2px' }}>
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm transition-colors hover:bg-gray-50 flex-shrink-0 whitespace-nowrap"
-            style={{ color: '#6B7280' }}
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Файлы
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept=".pdf,.docx,.txt,.csv,.xlsx,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,.gif"
-            className="hidden"
-            onChange={(e) => {
-              if (e.target.files) {
-                onAddFiles(Array.from(e.target.files))
-                e.target.value = ''
-              }
-            }}
-          />
-
-          <button
-            type="button"
-            onClick={onOpenCasePicker}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm transition-colors hover:bg-gray-50 flex-shrink-0 whitespace-nowrap"
-            style={{ color: selectedCaseFiles.length > 0 ? '#4338CA' : '#6B7280' }}
-          >
-            <FolderOpen className="w-3.5 h-3.5" />
-            Из дел
-            {selectedCaseFiles.length > 0 && (
-              <span
-                className="inline-flex items-center justify-center w-4 h-4 rounded-full text-xs font-medium"
-                style={{ backgroundColor: '#4F46E5', color: 'white', fontSize: '10px' }}
-              >
-                {selectedCaseFiles.length}
-              </span>
-            )}
-          </button>
-
-          <button
-            type="button"
-            disabled
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm opacity-40 cursor-not-allowed flex-shrink-0 whitespace-nowrap"
-            style={{ color: '#6B7280' }}
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            Улучшить
-          </button>
-        </div>
-
-        {/* Prompts dropdown — outside overflow-hidden so the popup is not clipped */}
-        <div ref={promptsRef} className="relative flex-shrink-0">
-          <button
-            type="button"
-            onClick={() => setPromptsOpen((o) => !o)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm transition-colors whitespace-nowrap"
-            style={{
-              color: '#6B7280',
-              backgroundColor: promptsOpen ? '#F3F4F6' : undefined,
-            }}
-          >
-            <AlignJustify className="w-3.5 h-3.5" />
-            Промпты
-          </button>
-
-          {promptsOpen && (
-            <div
-              className="absolute bottom-full mb-1.5 left-0 bg-white rounded-lg border border-gray-200 z-50 overflow-y-auto"
-              style={{ width: '300px', maxHeight: '220px', boxShadow: '0 4px 16px rgba(0,0,0,0.10)' }}
-            >
-              {LEGAL_PROMPTS.map((group) => (
-                <div key={group.category}>
-                  <div
-                    className="px-3 py-1 text-xs font-medium border-b border-gray-100"
-                    style={{ color: '#9CA3AF', backgroundColor: '#FAFAFA' }}
-                  >
-                    {group.category}
-                  </div>
-                  {group.prompts.map((prompt) => (
-                    <button
-                      key={prompt}
-                      type="button"
-                      onClick={() => {
-                        onChange(prompt)
-                        setPromptsOpen(false)
-                      }}
-                      className="w-full text-left px-3 py-1.5 text-sm hover:bg-gray-50 transition-colors border-b border-gray-50"
-                      style={{ color: '#374151' }}
-                    >
-                      {prompt}
-                    </button>
-                  ))}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Settings: справочник + Draft */}
-        <div ref={settingsRef} className="relative flex-shrink-0">
-          <button
-            type="button"
-            onClick={() => setSettingsOpen((o) => !o)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm transition-colors whitespace-nowrap"
-            style={{
-              color: isDraftMode || useLegalCorpus || useCourtPractice ? '#4F46E5' : '#6B7280',
-              backgroundColor: settingsOpen ? '#F3F4F6' : undefined,
-            }}
-          >
-            <SlidersHorizontal className="w-3.5 h-3.5" />
-            Настройки
-            {(isDraftMode || useLegalCorpus || useCourtPractice) && (
-              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 ml-0.5 flex-shrink-0" />
-            )}
-          </button>
-
-          {settingsOpen && (
-            <div
-              className="absolute bottom-full mb-1.5 left-0 bg-white rounded-lg border border-gray-200 overflow-hidden z-50"
-              style={{ minWidth: '240px', maxWidth: 'min(92vw, 320px)', boxShadow: '0 4px 16px rgba(0,0,0,0.10)' }}
-            >
-              {!isDraftMode && (
-              <>
-                <div className="px-2.5 py-1.5 text-xs font-medium border-b border-gray-100" style={{ color: '#9CA3AF' }}>
-                  Справочник
-                </div>
-                <button
-                  type="button"
-                  disabled={!canEnableLegalResearch(isDraftMode) || useCourtPractice}
-                  onClick={() => onUseLegalCorpusChange(!useLegalCorpus)}
-                  className="w-full flex items-center gap-2 px-2.5 py-2 text-sm text-left transition-colors hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                  style={{ color: useLegalCorpus ? '#0F766E' : '#374151' }}
-                >
-                  <BookOpen className="w-4 h-4 flex-shrink-0" style={{ color: useLegalCorpus ? '#0D9488' : '#9CA3AF' }} />
-                  <span className="flex-1 min-w-0">Справочник</span>
-                  <span
-                    className="w-2 h-2 rounded-full flex-shrink-0"
-                    style={{ backgroundColor: useLegalCorpus ? '#14B8A6' : '#D1D5DB' }}
-                  />
-                </button>
-                <button
-                  type="button"
-                  disabled={!canEnableCourtPractice(isDraftMode) || useLegalCorpus}
-                  onClick={() => onUseCourtPracticeChange(!useCourtPractice)}
-                  className="w-full flex items-center gap-2 px-2.5 py-2 text-sm text-left transition-colors hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                  style={{ color: useCourtPractice ? '#0F766E' : '#374151' }}
-                >
-                  <Gavel className="w-4 h-4 flex-shrink-0" style={{ color: useCourtPractice ? '#0D9488' : '#9CA3AF' }} />
-                  <span className="flex-1 min-w-0">Суд. практика</span>
-                  <span
-                    className="w-2 h-2 rounded-full flex-shrink-0"
-                    style={{ backgroundColor: useCourtPractice ? '#14B8A6' : '#D1D5DB' }}
-                  />
-                </button>
-              </>
-              )}
-
-              {isLegalCorpusUploader && (
-                <>
-                  <div
-                    className="px-2.5 py-1.5 text-xs font-medium border-t border-b border-gray-100"
-                    style={{ color: '#9CA3AF', backgroundColor: '#FAFAFA' }}
-                  >
-                    Загрузка справочника (админ)
-                  </div>
-                  <div className="max-h-36 overflow-y-auto px-2 py-1.5 border-b border-gray-50">
-                    {corpusFiles.length === 0 ? (
-                      <p className="text-xs px-1" style={{ color: '#9CA3AF' }}>Файлов пока нет</p>
-                    ) : (
-                      corpusFiles.map((row) => (
-                        <div
-                          key={row.corpus_file_id}
-                          className="flex items-center gap-1 py-1 text-xs"
-                          style={{ color: '#374151' }}
-                        >
-                          <span className="flex-1 min-w-0 truncate" title={row.source_filename}>
-                            {row.source_filename}
-                          </span>
-                          <span className="text-gray-400 flex-shrink-0">{row.chunk_count}</span>
-                          <button
-                            type="button"
-                            onClick={() => onDeleteCorpusFile(row.corpus_file_id)}
-                            disabled={corpusUploading}
-                            className="p-0.5 rounded hover:bg-red-50 text-gray-400 hover:text-red-600 disabled:opacity-40"
-                            aria-label={`Удалить ${row.source_filename} из справочника`}
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                  <div className="px-2 py-2 flex items-center gap-2">
-                    <input
-                      ref={corpusFileInputRef}
-                      type="file"
-                      multiple
-                      accept=".pdf,.docx,.txt,.csv,.xlsx,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,.gif"
-                      className="hidden"
-                      onChange={(e) => {
-                        const list = e.target.files
-                        if (list?.length) onCorpusFilesSelected(Array.from(list))
-                        e.target.value = ''
-                      }}
-                    />
-                    <button
-                      type="button"
-                      disabled={corpusUploading || isStreaming}
-                      onClick={() => corpusFileInputRef.current?.click()}
-                      className="text-xs px-2 py-1 rounded-md border border-gray-200 hover:bg-gray-50 disabled:opacity-40"
-                      style={{ color: '#374151' }}
-                    >
-                      {corpusUploading ? 'Индексация…' : 'Добавить файлы'}
-                    </button>
-                    {corpusUploading && <Loader2 className="w-4 h-4 animate-spin text-teal-600" />}
-                  </div>
-                </>
-              )}
-
-              <>
-                  <div className="px-2.5 py-1.5 text-xs font-medium border-b border-gray-100" style={{ color: '#9CA3AF' }}>
-                    Режим
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => { onSetDraftMode(false); setSettingsOpen(false) }}
-                    className="w-full flex items-center gap-2 px-2.5 py-2 text-sm transition-colors"
-                    style={{
-                      color: !isDraftMode ? '#111827' : '#6B7280',
-                      backgroundColor: !isDraftMode ? '#F9FAFB' : 'transparent',
-                      fontWeight: !isDraftMode ? 500 : 400,
-                    }}
-                  >
-                    <span
-                      className="w-2 h-2 rounded-full flex-shrink-0"
-                      style={{ backgroundColor: !isDraftMode ? '#111827' : '#D1D5DB' }}
-                    />
-                    Ask
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!canSelectDraftMode(useLegalCorpus, useCourtPractice)}
-                    onClick={() => {
-                      if (!canSelectDraftMode(useLegalCorpus, useCourtPractice)) return
-                      onSetDraftMode(true)
-                      setSettingsOpen(false)
-                    }}
-                    className="w-full flex items-center gap-2 px-2.5 py-2 text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                    title={useLegalCorpus || useCourtPractice ? 'Недоступно при включённых инструментах' : undefined}
-                    style={{
-                      color: isDraftMode ? '#4F46E5' : '#6B7280',
-                      backgroundColor: isDraftMode ? '#EEF2FF' : 'transparent',
-                      fontWeight: isDraftMode ? 500 : 400,
-                    }}
-                  >
-                    <span
-                      className="w-2 h-2 rounded-full flex-shrink-0"
-                      style={{ backgroundColor: isDraftMode ? '#4F46E5' : '#D1D5DB' }}
-                    />
-                    Draft
-                  </button>
-              </>
-            </div>
-          )}
-        </div>
-
-        {/* Spacer */}
-        <div className="flex-1" />
-
-        {/* Mic button */}
-        <div className="flex-shrink-0">
-          <button
-            type="button"
-            onClick={toggleRecording}
-            disabled={isStreaming}
-            className="flex items-center justify-center w-8 h-8 rounded-lg transition-all mr-1"
-            style={{
-              backgroundColor: isRecording ? '#FEE2E2' : 'transparent',
-              color: isRecording ? '#DC2626' : '#9CA3AF',
-            }}
-          >
-            {isRecording
-              ? <MicOff className="w-4 h-4" />
-              : <Mic className="w-4 h-4" />
-            }
-          </button>
-        </div>
-
-        {/* Send button — always visible */}
-        <div className="flex-shrink-0">
-          <button
-            type="button"
-            onClick={onSubmit}
-            disabled={!value.trim() || isStreaming}
-            className="flex items-center justify-center px-4 py-1.5 text-sm font-medium text-white rounded-lg transition-all disabled:opacity-40"
-            style={{ backgroundColor: '#111827', minWidth: '80px' }}
-          >
-            {isStreaming ? (
-              <div
-                className="w-4 h-4 border-2 rounded-full animate-spin"
-                style={{ borderColor: 'rgba(255,255,255,0.3)', borderTopColor: '#fff' }}
-              />
-            ) : (
-              'Отправить'
-            )}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 // ─────────────────────────────────────────────────────────
 // Main component
@@ -1304,11 +498,40 @@ const GlobalAssistantPage = () => {
     navigate('/assistant', { replace: true })
   }
 
-  const chatActive = messages.length > 0
+  const sessionParam = new URLSearchParams(location.search).get('session')
+  const chatActive = messages.length > 0 || !!sessionParam
+  const sidePanelOpen = productFeatures.draftMode && showDraftPanel && Boolean(draftDocument)
+
+  const harveyInputProps = {
+    appearance: 'mike' as const,
+    variant: 'global' as const,
+    value: question,
+    onChange: setQuestion,
+    onSubmit: handleSubmit,
+    fileContexts,
+    uploadingFiles,
+    onAddFiles: handleAddFiles,
+    onRemoveContext: handleRemoveContext,
+    isStreaming,
+    isDraftMode,
+    onSetDraftMode: handleSetDraftMode,
+    selectedCaseFiles,
+    onRemoveCaseFile: handleRemoveCaseFile,
+    onOpenCasePicker: () => setShowCasePicker(true),
+    useLegalCorpus,
+    onUseLegalCorpusChange: handleUseLegalCorpusChange,
+    useCourtPractice,
+    onUseCourtPracticeChange: handleUseCourtPracticeChange,
+    isLegalCorpusUploader: Boolean(legalCorpusStatus?.is_uploader),
+    corpusFiles: corpusFilesList,
+    corpusUploading,
+    onCorpusFilesSelected: handleCorpusFilesSelected,
+    onDeleteCorpusFile: handleDeleteCorpusFile,
+  }
 
   return (
-    <div className="h-screen flex overflow-hidden bg-white">
-      <UnifiedSidebar navItems={navItems} title="Legal AI" />
+    <div className="ws-shell ws-tabular-shell flex h-screen overflow-hidden">
+      <UnifiedSidebar navItems={navItems} title="Legal AI" showBackButton={false} variant="tabular" />
 
       {showCasePicker && (
         <CaseDocumentPickerModal
@@ -1318,187 +541,127 @@ const GlobalAssistantPage = () => {
         />
       )}
 
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {chatActive ? (
-          // ── Chat view (with optional split-view document panel) ──
-          <>
-            {/* Header */}
+      <main className="ws-tabular-page flex min-h-0 flex-1 flex-col overflow-hidden">
+        <GlobalAssistantPageHeader onNewChat={handleNewChat} />
+
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden border-t border-gray-200">
+          <div className="flex min-h-0 flex-1 overflow-hidden">
             <div
-              className="flex items-center justify-between px-6 py-3 border-b shrink-0"
-              style={{ borderBottomColor: '#E5E7EB' }}
+              className="relative flex min-w-0 flex-col overflow-hidden transition-all duration-300"
+              style={{ width: sidePanelOpen ? '45%' : '100%' }}
             >
-              <div className="flex items-center gap-3">
-                <span className="text-sm font-medium" style={{ color: '#6B7280' }}>
-                  Ассистент
-                </span>
-                {isDraftMode && (
-                  <span
-                    className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium"
-                    style={{ backgroundColor: '#EEF2FF', color: '#4F46E5', border: '1px solid #C7D2FE' }}
-                  >
-                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 inline-block" />
-                    Режим черновика
-                  </span>
-                )}
-              </div>
-              <button
-                onClick={handleNewChat}
-                className="flex items-center gap-1.5 text-sm font-medium transition-opacity hover:opacity-70"
-                style={{ color: '#6B7280' }}
-              >
-                <Plus className="w-4 h-4" />
-                Новый чат
-              </button>
-            </div>
+              {!chatActive ? (
+                <div className="flex h-full w-full flex-col px-6">
+                  <div className="flex flex-1 flex-col items-center justify-center">
+                    <div className="relative w-full max-w-4xl px-0 xl:px-8">
+                      <MikeAssistantGreeting />
+                      <HarveyInput {...harveyInputProps} />
+                      <MikeAssistantDisclaimer />
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="min-h-0 flex-1 overflow-y-auto">
+                    <div className="relative mx-auto flex min-h-full w-full max-w-4xl flex-col space-y-6 px-6 pb-32 pt-4 md:px-8 md:pt-6">
+                      {messages.map((msg, idx) => {
+                        const showAssistantTextBody = Boolean(msg.content && msg.content.trim())
+                        const internalDraftUi = productFeatures.draftMode && (isDraftMode || draftDocument)
+                        const assistantTextBody = (msg.content && msg.content.trim()) || ''
 
-            {/* Body: chat + optional document panel */}
-            <div className="flex-1 flex overflow-hidden">
-              {/* Chat column */}
-              <div className="flex flex-col overflow-hidden" style={{ width: showDraftPanel ? '45%' : '100%', transition: 'width 0.2s ease' }}>
-                <div className="flex-1 overflow-y-auto">
-                  <div style={{ maxWidth: '960px', margin: '0 auto' }} className="px-6 py-8 space-y-6">
-                    {messages.map((msg, idx) => {
-                      const showAssistantTextBody = Boolean(msg.content && msg.content.trim())
-                      const internalDraftUi = isDraftMode || draftDocument
-                      const assistantTextBody = (msg.content && msg.content.trim()) || ''
-
-                      return (
-                      <div key={idx} className={msg.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
-                        {msg.role === 'user' ? (
-                          <div className="max-w-[75%] flex flex-col items-end gap-1.5">
-                            {msg.attachedFiles && msg.attachedFiles.length > 0 && (
-                              <div className="flex flex-wrap gap-1 justify-end">
-                                {msg.attachedFiles.map((f) => (
-                                  <span
-                                    key={f.id}
-                                    className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border border-indigo-200 bg-indigo-50"
-                                    style={{ color: '#4338CA' }}
-                                  >
-                                    <FileText className="w-3 h-3" />
-                                    <span className="max-w-[160px] truncate">{f.filename}</span>
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                            <div
-                              className="px-4 py-3 rounded-2xl text-sm leading-relaxed"
-                              style={{ backgroundColor: '#111827', color: '#fff' }}
-                            >
-                              {msg.content}
-                            </div>
-                          </div>
-                        ) : (
-                          <div
-                            className="max-w-[90%] text-sm leading-relaxed"
-                            style={{ color: '#111827' }}
-                          >
-                            {((msg.reasoningSteps && msg.reasoningSteps.length > 0) ||
-                              (isStreaming && idx === messages.length - 1 && !msg.content)) && (
-                              <ThinkingBlock
-                                steps={msg.reasoningSteps || []}
-                                isStreaming={isStreaming && idx === messages.length - 1 && !msg.content}
-                                defaultOpen={true}
-                              />
-                            )}
-                            {showAssistantTextBody ? (
-                              <MessageContent
-                                content={assistantTextBody}
-                                sources={msg.sources || []}
-                                isStreaming={isStreaming && idx === messages.length - 1 && !isDraftMode}
-                                onCitationClick={(source) => {
-                                  if (source.source_type === 'external' || (source.url && source.url.startsWith('http'))) {
-                                    if (source.url) window.open(source.url, '_blank', 'noopener,noreferrer')
-                                    return
-                                  }
-                                  setCitationPreview(source)
-                                }}
+                        return (
+                          <div key={idx}>
+                            {msg.role === 'user' ? (
+                              <MikeUserMessage
+                                content={msg.content}
+                                files={msg.attachedFiles?.map((f) => ({ filename: f.filename }))}
                               />
                             ) : (
-                              isStreaming && idx === messages.length - 1 && !isDraftMode && (
-                                <div className="flex gap-1">
-                                  {[0, 1, 2].map((i) => (
-                                    <div
-                                      key={i}
-                                      className="w-1.5 h-1.5 rounded-full animate-bounce"
-                                      style={{ backgroundColor: '#9CA3AF', animationDelay: `${i * 150}ms` }}
-                                    />
-                                  ))}
-                                </div>
-                              )
-                            )}
-                            {/* Draft indicator */}
-                            {internalDraftUi && idx === messages.length - 1 && (
-                              isStreaming ? (
-                                <div className="flex flex-col gap-2">
-                                  <p className="text-sm" style={{ color: '#374151' }}>
-                                    Да, конечно — создаю документ...
-                                  </p>
-                                  <button
-                                    onClick={() => setShowDraftPanel(true)}
-                                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors self-start"
-                                    style={{ border: '1px solid #C7D2FE', backgroundColor: '#EEF2FF', color: '#4338CA' }}
-                                  >
-                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                    Генерация черновика...
-                                  </button>
-                                </div>
-                              ) : draftDocument ? (
-                                <div className="flex flex-col gap-2">
-                                  <p className="text-sm" style={{ color: '#374151' }}>
-                                    Готово! Документ{draftDocument.title ? ` «${draftDocument.title}»` : ''} создан. Вы можете открыть его в редакторе.
-                                  </p>
-                                  <button
-                                    onClick={() => setShowDraftPanel(true)}
-                                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors self-start"
-                                    style={{ border: '1px solid #C7D2FE', backgroundColor: '#EEF2FF', color: '#4338CA' }}
-                                  >
-                                    <FileText className="w-3.5 h-3.5" />
-                                    Открыть документ
-                                  </button>
-                                </div>
-                              ) : null
+                              <div className="min-w-0 max-w-full text-sm leading-relaxed text-gray-900">
+                                {((msg.reasoningSteps && msg.reasoningSteps.length > 0) ||
+                                  (isStreaming && idx === messages.length - 1 && !msg.content)) && (
+                                  <ThinkingBlock
+                                    steps={msg.reasoningSteps || []}
+                                    isStreaming={isStreaming && idx === messages.length - 1 && !msg.content}
+                                    defaultOpen
+                                  />
+                                )}
+                                {showAssistantTextBody ? (
+                                  <MessageContent
+                                    content={assistantTextBody}
+                                    sources={msg.sources || []}
+                                    isStreaming={isStreaming && idx === messages.length - 1 && !isDraftMode}
+                                    onCitationClick={(source) => {
+                                      if (source.source_type === 'external' || (source.url && source.url.startsWith('http'))) {
+                                        if (source.url) window.open(source.url, '_blank', 'noopener,noreferrer')
+                                        return
+                                      }
+                                      setCitationPreview(source)
+                                    }}
+                                  />
+                                ) : (
+                                  isStreaming && idx === messages.length - 1 && !isDraftMode && (
+                                    <div className="flex gap-1">
+                                      {[0, 1, 2].map((i) => (
+                                        <div
+                                          key={i}
+                                          className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-300"
+                                          style={{ animationDelay: `${i * 150}ms` }}
+                                        />
+                                      ))}
+                                    </div>
+                                  )
+                                )}
+                                {internalDraftUi && idx === messages.length - 1 && (
+                                  isStreaming ? (
+                                    <div className="mt-3 flex flex-col gap-2">
+                                      <p className="text-sm text-gray-700">Создаю документ...</p>
+                                      <button
+                                        type="button"
+                                        onClick={() => setShowDraftPanel(true)}
+                                        className="inline-flex items-center gap-2 self-start rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50"
+                                      >
+                                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                        Генерация черновика...
+                                      </button>
+                                    </div>
+                                  ) : draftDocument ? (
+                                    <div className="mt-3 flex flex-col gap-2">
+                                      <p className="text-sm text-gray-700">
+                                        Готово! Документ{draftDocument.title ? ` «${draftDocument.title}»` : ''} создан.
+                                      </p>
+                                      <button
+                                        type="button"
+                                        onClick={() => setShowDraftPanel(true)}
+                                        className="inline-flex items-center gap-2 self-start rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50"
+                                      >
+                                        <FileText className="h-3.5 w-3.5" />
+                                        Открыть документ
+                                      </button>
+                                    </div>
+                                  ) : null
+                                )}
+                              </div>
                             )}
                           </div>
-                        )}
-                      </div>
-                      )
-                    })}
-                    <div ref={messagesEndRef} />
+                        )
+                      })}
+                      <div ref={messagesEndRef} />
+                    </div>
                   </div>
-                </div>
 
-                <div className="shrink-0 px-6 py-4 border-t" style={{ borderTopColor: '#E5E7EB' }}>
-                  <div style={{ maxWidth: '960px', margin: '0 auto' }}>
-                    <HarveyInput
-                      value={question}
-                      onChange={setQuestion}
-                      onSubmit={handleSubmit}
-                      fileContexts={fileContexts}
-                      uploadingFiles={uploadingFiles}
-                      onAddFiles={handleAddFiles}
-                      onRemoveContext={handleRemoveContext}
-                      isStreaming={isStreaming}
-                      isDraftMode={isDraftMode}
-                      onSetDraftMode={handleSetDraftMode}
-                      selectedCaseFiles={selectedCaseFiles}
-                      onRemoveCaseFile={handleRemoveCaseFile}
-                      onOpenCasePicker={() => setShowCasePicker(true)}
-                      useLegalCorpus={useLegalCorpus}
-                      onUseLegalCorpusChange={handleUseLegalCorpusChange}
-                      useCourtPractice={useCourtPractice}
-                      onUseCourtPracticeChange={handleUseCourtPracticeChange}
-                      isLegalCorpusUploader={Boolean(legalCorpusStatus?.is_uploader)}
-                      corpusFiles={corpusFilesList}
-                      corpusUploading={corpusUploading}
-                      onCorpusFilesSelected={handleCorpusFilesSelected}
-                      onDeleteCorpusFile={handleDeleteCorpusFile}
-                    />
+                  <div className="absolute bottom-0 left-0 right-0 z-30 w-full">
+                    <div className="pointer-events-none absolute bottom-0 left-0 right-4 z-0 h-28 bg-gradient-to-t from-white/50 via-white/25 to-transparent backdrop-blur-[1px]" />
+                    <div className="relative z-20 mx-auto w-full max-w-4xl px-4 md:px-6">
+                      <HarveyInput {...harveyInputProps} />
+                      <MikeAssistantDisclaimer />
+                    </div>
                   </div>
-                </div>
-              </div>
+                </>
+              )}
+            </div>
 
-              {/* Citation preview — full doc viewer for case files, quote panel for uploads */}
-              {citationPreview && citationPreview.case_id ? (
+            {chatActive && citationPreview && citationPreview.case_id ? (
                 <DocumentPreviewSheet
                   isOpen={!!citationPreview}
                   onClose={() => setCitationPreview(null)}
@@ -1522,8 +685,8 @@ const GlobalAssistantPage = () => {
                 />
               ) : citationPreview && (
                 <div
-                  className="flex flex-col border-l overflow-hidden"
-                  style={{ width: '400px', minWidth: '320px', borderLeftColor: '#E5E7EB', backgroundColor: '#FAFAFA' }}
+                  className="ws-side-panel"
+                  style={{ width: '400px', minWidth: '320px' }}
                 >
                   <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderBottomColor: '#E5E7EB' }}>
                     <div className="flex items-center gap-2 min-w-0">
@@ -1541,10 +704,7 @@ const GlobalAssistantPage = () => {
                   </div>
                   <div className="flex-1 overflow-y-auto p-4">
                     {citationPreview.quote || citationPreview.text_preview ? (
-                      <div
-                        className="rounded-lg p-3 text-sm leading-relaxed whitespace-pre-wrap"
-                        style={{ backgroundColor: '#F3F4F6', color: '#374151', borderLeft: '3px solid #6366F1' }}
-                      >
+                      <div className="ws-quote-block">
                         {citationPreview.quote || citationPreview.text_preview}
                       </div>
                     ) : (
@@ -1555,10 +715,10 @@ const GlobalAssistantPage = () => {
               )}
 
               {/* Document panel */}
-              {showDraftPanel && draftDocument && (
+              {chatActive && productFeatures.draftMode && showDraftPanel && draftDocument && (
                 <div
-                  className="flex flex-col border-l overflow-hidden"
-                  style={{ width: '55%', borderLeftColor: '#E5E7EB', backgroundColor: '#FAFAFA' }}
+                  className="ws-side-panel"
+                  style={{ width: '55%' }}
                 >
                   <div
                     className="flex items-center gap-3 px-5 py-3 border-b bg-white shrink-0"
@@ -1623,207 +783,9 @@ const GlobalAssistantPage = () => {
                   </div>
                 </div>
               )}
-            </div>
-          </>
-        ) : (
-          // ── Harvey-style landing ─────────────────────────
-          <div className="flex-1 overflow-y-auto" style={{ backgroundColor: '#FAFAFA' }}>
-            <div className="max-w-[960px] mx-auto px-6 pt-12 pb-12">
-
-              {/* Client matter selector */}
-              <div className="mb-8 flex items-center gap-2 flex-wrap">
-                <button
-                  onClick={() => setShowCasePicker(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-sm transition-colors hover:bg-white"
-                  style={{
-                    borderColor: selectedCaseFiles.length > 0 ? '#C7D2FE' : '#E5E7EB',
-                    color: selectedCaseFiles.length > 0 ? '#4338CA' : '#6B7280',
-                    backgroundColor: selectedCaseFiles.length > 0 ? '#EEF2FF' : 'transparent',
-                  }}
-                >
-                  <FolderOpen className="w-3.5 h-3.5" />
-                  Выбрать документы из дел
-                  {selectedCaseFiles.length > 0 ? (
-                    <span
-                      className="inline-flex items-center justify-center w-4 h-4 rounded-full text-xs font-medium"
-                      style={{ backgroundColor: '#4F46E5', color: 'white', fontSize: '10px' }}
-                    >
-                      {selectedCaseFiles.length}
-                    </span>
-                  ) : (
-                    <ChevronDown className="w-3 h-3 ml-0.5" style={{ color: '#9CA3AF' }} />
-                  )}
-                </button>
-                {selectedCaseFiles.map((f) => (
-                  <div
-                    key={f.id}
-                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border border-indigo-200 bg-indigo-50"
-                    style={{ color: '#4338CA' }}
-                  >
-                    <FileText className="w-3 h-3" style={{ color: '#6366F1' }} />
-                    <span className="max-w-[120px] truncate">{f.filename}</span>
-                    <button
-                      onClick={() => handleRemoveCaseFile(f.id)}
-                      className="ml-0.5 hover:text-red-500 transition-colors"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-
-              {/* Title */}
-              <h1
-                className="text-center mb-8"
-                style={{
-                  fontSize: '52px',
-                  fontFamily: 'Georgia, "Times New Roman", serif',
-                  fontWeight: 400,
-                  color: '#111827',
-                  letterSpacing: '-0.5px',
-                  lineHeight: 1.15,
-                }}
-              >
-                Legal AI
-              </h1>
-
-              {/* Input card */}
-              <div className="mb-4">
-                {isDraftMode && (
-                  <div className="flex items-center gap-2 mb-2">
-                    <span
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium"
-                      style={{ backgroundColor: '#EEF2FF', color: '#4F46E5', border: '1px solid #C7D2FE' }}
-                    >
-                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 inline-block" />
-                      Режим черновика
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setIsDraftMode(false)}
-                      className="text-xs transition-colors hover:text-gray-700"
-                      style={{ color: '#9CA3AF' }}
-                    >
-                      ✕ Отключить
-                    </button>
-                  </div>
-                )}
-                <HarveyInput
-                  value={question}
-                  onChange={setQuestion}
-                  onSubmit={handleSubmit}
-                  fileContexts={fileContexts}
-                  uploadingFiles={uploadingFiles}
-                  onAddFiles={handleAddFiles}
-                  onRemoveContext={handleRemoveContext}
-                  isStreaming={isStreaming}
-                  isDraftMode={isDraftMode}
-                  onSetDraftMode={handleSetDraftMode}
-                  selectedCaseFiles={selectedCaseFiles}
-                  onRemoveCaseFile={handleRemoveCaseFile}
-                  onOpenCasePicker={() => setShowCasePicker(true)}
-                  useLegalCorpus={useLegalCorpus}
-                  onUseLegalCorpusChange={handleUseLegalCorpusChange}
-                  useCourtPractice={useCourtPractice}
-                  onUseCourtPracticeChange={handleUseCourtPracticeChange}
-                  isLegalCorpusUploader={Boolean(legalCorpusStatus?.is_uploader)}
-                  corpusFiles={corpusFilesList}
-                  corpusUploading={corpusUploading}
-                  onCorpusFilesSelected={handleCorpusFilesSelected}
-                  onDeleteCorpusFile={handleDeleteCorpusFile}
-                />
-              </div>
-
-              {/* Source pills */}
-              <div className="flex flex-wrap justify-center gap-2 mb-10">
-                {SOURCES.map((source) => (
-                  <button
-                    key={source.label}
-                    type="button"
-                    className="flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs transition-colors hover:bg-white"
-                    style={{ borderColor: '#E5E7EB', color: '#6B7280', backgroundColor: 'transparent' }}
-                  >
-                    <span
-                      className="w-2 h-2 rounded-full flex-shrink-0"
-                      style={{ backgroundColor: source.color }}
-                    />
-                    {source.label}
-                    <Plus className="w-3 h-3" style={{ color: '#9CA3AF' }} />
-                  </button>
-                ))}
-              </div>
-
-              {/* Recommended workflows */}
-              <div>
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-sm font-medium" style={{ color: '#111827' }}>
-                    Рекомендуемые сценарии
-                  </h3>
-                  <div className="flex items-center gap-3">
-                    <button
-                      type="button"
-                      className="flex items-center gap-1.5 text-sm transition-colors hover:text-gray-900"
-                      style={{ color: '#6B7280' }}
-                    >
-                      <Search className="w-3.5 h-3.5" />
-                      Поиск
-                    </button>
-                    <button
-                      type="button"
-                      className="text-sm transition-colors hover:text-gray-900"
-                      style={{ color: '#6B7280' }}
-                    >
-                      Все сценарии
-                    </button>
-                  </div>
-                </div>
-
-                <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-                  {WORKFLOWS.map((w) => (
-                    <button
-                      key={w.id}
-                      type="button"
-                      onClick={() => {
-                        setQuestion(w.prompt)
-                        setIsDraftMode(w.outputType === 'Draft')
-                      }}
-                      className="text-left p-4 rounded-xl border bg-white transition-all duration-150 hover:shadow-md hover:border-gray-300"
-                      style={{ borderColor: '#E5E7EB' }}
-                    >
-                      <h4 className="text-sm font-medium mb-2 leading-snug" style={{ color: '#111827' }}>
-                        {w.title}
-                      </h4>
-                      <p
-                        className="text-xs leading-relaxed mb-4"
-                        style={{
-                          color: '#6B7280',
-                          display: '-webkit-box',
-                          WebkitLineClamp: 2,
-                          WebkitBoxOrient: 'vertical' as const,
-                          overflow: 'hidden',
-                        }}
-                      >
-                        {w.description}
-                      </p>
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs" style={{ color: '#9CA3AF' }}>
-                          {w.outputLabel} · {w.steps} шагов
-                        </span>
-                        <div
-                          className="w-6 h-6 rounded flex items-center justify-center flex-shrink-0"
-                          style={{ backgroundColor: '#111827' }}
-                        >
-                          <span className="text-white font-bold" style={{ fontSize: '11px' }}>L</span>
-                        </div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
           </div>
-        )}
-      </div>
+        </div>
+      </main>
     </div>
   )
 }

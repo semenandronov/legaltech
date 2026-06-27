@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import List, Literal, Optional, Sequence, Tuple
 
 from app.config import config
+from app.services.legal_norm_cross_ref import normalize_article_number
 
 LegalRetrievalTopic = Literal[
     "article_lookup",
@@ -68,6 +69,7 @@ class LegalRetrievalPlan:
     search_queries: List[str]
     rationale: str
     user_articles: List[str] = field(default_factory=list)
+    user_clause_ref: str = ""
 
 
 def extract_all_article_numbers(query: str) -> List[str]:
@@ -225,6 +227,17 @@ def build_legal_retrieval_plan(
     )
 
 
+def doc_metadata_matches_article(doc: object, article: str) -> bool:
+    """Точное совпадение article_number в метаданных чанка (без regex по тексту)."""
+    if not article:
+        return False
+    meta = getattr(doc, "metadata", None) or {}
+    if not isinstance(meta, dict):
+        return False
+    art = normalize_article_number(str(meta.get("article_number") or ""))
+    return art == normalize_article_number(article)
+
+
 def doc_mentions_article(text: str, article: str) -> bool:
     if not article:
         return False
@@ -256,26 +269,37 @@ def plan_coverage(
     *,
     min_chars_per_article: int = 200,
 ) -> dict:
-    """Какие целевые статьи покрыты содержательными фрагментами."""
+    """Какие целевые статьи покрыты — по metadata.article_number, не по тексту."""
     covered: List[str] = []
     missing: List[str] = []
     repeal_only: List[str] = []
+    user_clause = normalize_article_number(plan.user_clause_ref or "")
 
     for art in plan.required_articles:
+        matching = [d for d in docs if doc_metadata_matches_article(d, art)]
+        if user_clause and art in (plan.user_articles or []):
+            matching = [
+                d
+                for d in matching
+                if normalize_article_number(str((getattr(d, "metadata", None) or {}).get("clause_ref") or ""))
+                == user_clause
+            ]
+
         substantive = False
         only_repeal = False
-        for d in docs:
+        for d in matching:
             text = getattr(d, "page_content", None) or ""
-            meta = getattr(d, "metadata", None) or {}
-            blob = text + " " + str(meta.get("section_title") or "")
-            if not doc_mentions_article(blob, art):
-                continue
             if is_repeal_only_snippet(text, article=art):
                 only_repeal = True
                 continue
             if len(text.strip()) >= min_chars_per_article:
                 substantive = True
                 break
+
+        if not substantive and matching and plan.topic == "article_lookup" and not user_clause:
+            total_chars = sum(len((getattr(d, "page_content", None) or "").strip()) for d in matching)
+            substantive = len(matching) >= 2 or total_chars >= max(min_chars_per_article * 2, 400)
+
         if substantive:
             covered.append(art)
         elif only_repeal:

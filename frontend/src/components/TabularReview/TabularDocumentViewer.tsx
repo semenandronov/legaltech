@@ -19,30 +19,21 @@ import {
 } from "@mui/material"
 import { SourceReference } from "@/services/tabularReviewApi"
 import { getFileHtml } from "@/services/fileHtmlApi"
+import {
+  CITATION_HIGHLIGHT_MARK_ID,
+  highlightQuoteInHtml,
+} from "@/utils/citationHighlight"
+import type { ChunkLabViewerCellData } from "@/utils/chunkLabViewerCellData"
 
-interface CellData {
+interface CellData extends Omit<ChunkLabViewerCellData, 'highlightMode' | 'verbatimExtract' | 'sourcePage'> {
   verbatimExtract?: string | null
-  /** Запасные фрагменты для PDF text layer (ассистент: quote / anchor после основного текста). */
-  verbatimAlternates?: string[] | null
-  cellValue?: string | null
   sourcePage?: number | null
-  /**
-   * Как интерпретировать sourcePage для PDF:
-   * - 'zero' — 0-based (исторически PyMuPDF / табличный review)
-   * - 'one' — 1-based (контракт чата / Docling, как в DocumentPreviewSheet)
-   */
-  sourcePageBasis?: 'zero' | 'one'
+  cellValue?: string | null
   sourceSection?: string | null
   columnType?: string
   highlightMode?: 'verbatim' | 'page' | 'none'
   sourceReferences?: SourceReference[]
-  highlightBBox?: { x0?: number; y0?: number; x1?: number; y1?: number }
-  highlightBBoxRegions?: Array<{ x0?: number; y0?: number; x1?: number; y1?: number }>
-  highlightPageBBox?: { width?: number; height?: number }
-  // Phase 4: Deep link fields
   docId?: string | null
-  charStart?: number | null
-  charEnd?: number | null
 }
 
 interface DocumentTab {
@@ -64,6 +55,8 @@ interface TabularDocumentViewerProps {
   fileApiBase?: string
   /** Превью цитаты в чате: компактная панель PDF без поиска и печати. */
   citationPreview?: boolean
+  /** Смена цитаты без смены fileId — пересчёт подсветки. */
+  highlightRevision?: string
 }
 
 export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
@@ -77,9 +70,10 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
   onDocumentChange,
   fileApiBase,
   citationPreview = false,
+  highlightRevision,
 }) => {
   const [documentText, setDocumentText] = useState<string>("")
-  const [documentHtml, setDocumentHtml] = useState<string | null>(null) // DOCX → HTML
+  const [rawDocumentHtml, setRawDocumentHtml] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [fileType, setFileType] = useState<string>(propFileType || "pdf")
@@ -130,7 +124,7 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
     try {
       setLoading(true)
       setError(null)
-      setDocumentHtml(null)
+      setRawDocumentHtml(null)
       setDocumentText("")
       setFileType(fileTypeToLoad || "pdf")
 
@@ -144,7 +138,7 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
         try {
           const htmlResponse = await getFileHtml(caseId, fileIdToLoad, false)
           if (htmlResponse.html) {
-            setDocumentHtml(htmlResponse.html)
+            setRawDocumentHtml(htmlResponse.html)
             return
           }
         } catch (htmlErr) {
@@ -175,106 +169,25 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
     }
   }
 
-  /**
-   * Insert <mark> highlight into HTML string using DOM text-node traversal.
-   * Finds the quote in the concatenated text of all leaf nodes and wraps matching segments.
-   */
-  const insertMarkInHtml = (html: string, quote: string): string => {
-    if (!quote || quote.length < 10) return html
-    const searchText = quote.replace(/\.{3}$/, '').trim()
-    if (searchText.length < 10) return html
-    try {
-      const container = window.document.createElement('div')
-      container.innerHTML = html
+  const highlightQuote = cellData?.verbatimExtract ?? null
 
-      const textNodes: Text[] = []
-      const walk = (node: Node): void => {
-        if (node.nodeType === Node.TEXT_NODE) {
-          textNodes.push(node as Text)
-        } else {
-          Array.from(node.childNodes).forEach(walk)
-        }
-      }
-      walk(container)
-
-      const nodeTexts = textNodes.map(n => n.textContent || '')
-      const fullText = nodeTexts.join('')
-      const fullTextLower = fullText.toLowerCase()
-
-      let pos = -1
-      let matchLength = 0
-      for (const len of [searchText.length, 200, 100, 60, 30]) {
-        if (len > searchText.length) continue
-        const candidate = searchText.substring(0, len).toLowerCase()
-        if (candidate.length < 10) continue
-        const idx = fullTextLower.indexOf(candidate)
-        if (idx !== -1) {
-          pos = idx
-          matchLength = candidate.length
-          break
-        }
-      }
-      if (pos === -1) return html
-
-      const endPos = pos + matchLength
-      let currentPos = 0
-      let firstMark = true
-
-      for (let i = 0; i < textNodes.length; i++) {
-        const nodeStart = currentPos
-        const nodeText = nodeTexts[i]
-        const nodeEnd = nodeStart + nodeText.length
-
-        if (nodeEnd > pos && nodeStart < endPos) {
-          const hlStart = Math.max(0, pos - nodeStart)
-          const hlEnd = Math.min(nodeText.length, endPos - nodeStart)
-
-          if (hlStart < hlEnd) {
-            const parent = textNodes[i].parentNode
-            if (parent) {
-              const before = nodeText.substring(0, hlStart)
-              const middle = nodeText.substring(hlStart, hlEnd)
-              const after = nodeText.substring(hlEnd)
-
-              const mark = window.document.createElement('mark')
-              mark.style.backgroundColor = '#fef08a'
-              mark.style.borderRadius = '2px'
-              mark.style.padding = '2px 0'
-              if (firstMark) {
-                mark.id = 'citation-highlight'
-                firstMark = false
-              }
-              mark.textContent = middle
-
-              const frag = window.document.createDocumentFragment()
-              if (before) frag.appendChild(window.document.createTextNode(before))
-              frag.appendChild(mark)
-              if (after) frag.appendChild(window.document.createTextNode(after))
-              parent.replaceChild(frag, textNodes[i])
-            }
-          }
-        }
-        currentPos = nodeEnd
-      }
-
-      return container.innerHTML
-    } catch {
-      return html
-    }
-  }
+  const documentHtml = React.useMemo(() => {
+    if (!rawDocumentHtml) return null
+    if (!highlightQuote) return rawDocumentHtml
+    return highlightQuoteInHtml(rawDocumentHtml, highlightQuote)
+  }, [rawDocumentHtml, highlightQuote, highlightRevision])
 
   // Auto-scroll to highlighted mark in DOCX after render
   useEffect(() => {
     if (!docxContainerRef.current || !documentHtml) return
-    // Small delay to let the DOM update
     const timer = setTimeout(() => {
-      const mark = docxContainerRef.current?.querySelector('#citation-highlight')
+      const mark = docxContainerRef.current?.querySelector(`#${CITATION_HIGHLIGHT_MARK_ID}`)
       if (mark) {
         mark.scrollIntoView({ behavior: 'smooth', block: 'center' })
       }
     }, 100)
     return () => clearTimeout(timer)
-  }, [documentHtml])
+  }, [documentHtml, highlightRevision])
 
   const handleDownload = async () => {
     if (!currentFileId) return
@@ -369,27 +282,12 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
   const pdfInitialAndHighlightPage =
     viewerPdfPageFromSourcePage ?? viewerPdfPageFromRef ?? undefined
 
-  // Collect all texts to highlight for non-PDF documents
-  // Include verbatim extract and all source references
-  const highlightTexts: string[] = []
-  
-  // Add verbatim extract if available (highest priority for highlighting)
-  if (cellData?.verbatimExtract) {
-    highlightTexts.push(cellData.verbatimExtract)
-  }
-  
-  // Add all source reference texts
-  if (cellData?.sourceReferences && cellData.sourceReferences.length > 0) {
-    cellData.sourceReferences.forEach(ref => {
-      if (ref.text && !highlightTexts.includes(ref.text)) {
-        highlightTexts.push(ref.text)
-      }
-    })
-  }
-  
-  // Determine if we should show highlighting for text documents
-  // Show highlighting if we have verbatim extract OR source references with text
-  const showHighlight = highlightTexts.length > 0 || (highlightMode !== "none" && (cellData?.verbatimExtract || cellData?.sourceReferences?.length))
+  const activeHighlightText = cellData?.verbatimExtract?.trim() || null
+  const highlightTexts = activeHighlightText ? [activeHighlightText] : []
+
+  const showHighlight =
+    highlightTexts.length > 0 ||
+    (highlightMode !== "none" && Boolean(activeHighlightText || cellData?.sourcePage != null))
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -495,19 +393,16 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
               fileApiBase={fileApiBase}
               initialPage={pdfInitialAndHighlightPage}
               highlightPage={pdfInitialAndHighlightPage}
-              highlightText={cellData?.verbatimExtract || cellData?.sourceReferences?.[0]?.text || cellData?.cellValue || undefined}
+              highlightFocusKey={highlightRevision}
+              highlightText={activeHighlightText || undefined}
               highlightTextCandidates={cellData?.verbatimAlternates ?? undefined}
               highlightBBox={cellData?.highlightBBox}
               highlightBBoxRegions={cellData?.highlightBBoxRegions}
               highlightPageBBox={cellData?.highlightPageBBox}
-              expandHighlightSearchAllPages={
-                !!(
-                  cellData?.verbatimExtract?.trim() ||
-                  cellData?.verbatimAlternates?.some((x) => String(x).trim().length >= 2) ||
-                  cellData?.sourceReferences?.[0]?.text?.trim() ||
-                  cellData?.cellValue?.trim()
-                )
-              }
+              expandHighlightSearchAllPages={Boolean(
+                activeHighlightText ||
+                  cellData?.verbatimAlternates?.some((x) => String(x).trim().length >= 2),
+              )}
               showDocumentSearch={!citationPreview}
               showPrint={!citationPreview}
               onError={(err) => {
@@ -517,15 +412,10 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
             )}
           </Box>
         ) : fileType === "docx" && documentHtml ? (
-          // DOCX rendered as HTML with optional quote highlighting
           <Box sx={{ p: 2 }}>
             <Box
               ref={docxContainerRef}
-              dangerouslySetInnerHTML={{
-                __html: cellData?.verbatimExtract
-                  ? insertMarkInHtml(documentHtml, cellData.verbatimExtract)
-                  : documentHtml,
-              }}
+              dangerouslySetInnerHTML={{ __html: documentHtml }}
               sx={{ fontSize: "0.875rem", fontFamily: "inherit", lineHeight: 1.6 }}
             />
           </Box>

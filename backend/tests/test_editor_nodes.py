@@ -113,42 +113,81 @@ class TestGenerateEditsNode:
     """Тесты для generate_edits_node"""
     
     def test_generate_edits_with_structured_output(self):
-        """Проверка использования structured outputs вместо regex"""
+        """План + по одной правке на цель."""
         state = {
-            "document_context": "Исходный текст",
-            "question": "Замени текст"
+            "document_context": '<p id="b1">Исходный текст</p><p id="b2">Второй</p>',
+            "question": "Замени текст",
         }
-        
+
         with patch('app.services.langchain_agents.graphs.nodes.editor_nodes.create_legal_llm') as mock_llm:
-            mock_structured = Mock()
-            mock_structured.invoke.return_value = Mock(
-                edits=[Mock(original_text="Исходный", new_text="Новый")],
-                reasoning="Замена"
+            mock_plan_llm = Mock()
+            mock_plan_llm.invoke.return_value = Mock(
+                model_dump=lambda: {
+                    "target_count": 1,
+                    "targets": [{"location": "документ", "change": "замена", "node_id": "b1"}],
+                }
             )
-            mock_llm.return_value.with_structured_output.return_value = mock_structured
-            
+            mock_edit_llm = Mock()
+            mock_edit_llm.invoke.return_value = Mock(
+                edit=Mock(original_text="Исходный", new_text="Новый", node_id="b1"),
+            )
+
+            mock_llm.return_value.with_structured_output.side_effect = [
+                mock_plan_llm,
+                mock_edit_llm,
+            ]
+
             result = generate_edits_node(state)
-            
-            # Проверяем что with_structured_output был вызван
-            mock_llm.return_value.with_structured_output.assert_called_once()
+
+            assert mock_llm.return_value.with_structured_output.call_count == 2
             assert "structured_edits" in result
+            assert "edit_scope" in result
+            assert len(result.get("structured_edits") or []) >= 1
 
 
 class TestValidateEditsNode:
     """Тесты для validate_edits_node"""
-    
-    def test_validate_edits_with_hard_limits(self):
-        """Проверка hard limits для валидации"""
+
+    def test_validate_edits_deterministic(self):
+        """Детерминированная валидация без LLM"""
+        html = '<p id="b1">текст для замены</p>'
         state = {
-            "structured_edits": [{"original_text": "текст", "new_text": "новый"}],
-            "document_context": "текст",
-            "edit_validation_iteration": 3  # Достигнут лимит
+            "structured_edits": [
+                {
+                    "node_id": "b1",
+                    "new_text": "новый",
+                }
+            ],
+            "document_context": html,
         }
-        
+
         result = validate_edits_node(state)
-        
-        # После лимита должен принудительно валидировать
+
         assert result.get("edits_valid") is True
+        edits = result.get("structured_edits") or []
+        assert len(edits) == 1
+        assert edits[0].get("found_in_document") is True
+
+
+class TestApplyEditsNode:
+    """Финализация edit-turn без серверной мутации HTML."""
+
+    def test_apply_edits_sets_short_response(self):
+        state = {
+            "structured_edits": [
+                {
+                    "id": "e1",
+                    "new_text": "новый текст",
+                    "found_in_document": True,
+                }
+            ],
+            "user_id": "u1",
+        }
+        result = apply_edits_node(state, config={})
+
+        assert "Предлагаю" in (result.get("response") or "")
+        assert result.get("edited_content") is None
+        assert result.get("messages")
 
 
 class TestParallelChecksNode:

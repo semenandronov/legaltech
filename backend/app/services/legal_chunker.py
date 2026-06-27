@@ -141,7 +141,7 @@ _CLAUSE_KIND_MAP: Dict[str, str] = {
 
 _CROSS_REF_PATTERNS: List[re.Pattern[str]] = [
     re.compile(r"\bст\.?\s*\d+(?:[.,]\d+)*", re.IGNORECASE),
-    re.compile(r"\bстат(?:ья|ьи|ьями)\s*\d+(?:[.,]\d+)*", re.IGNORECASE),
+    re.compile(r"\bстат(?:ья|ьи|ье|ью|ьей|ей|ьми|ями)\s*\d+(?:[.,]\d+)*", re.IGNORECASE),
     re.compile(r"\bп\.?\s*\d+(?:[.,]\d+)*", re.IGNORECASE),
     re.compile(r"\bпункт(?:а|ом|ы|ах)?\s*\d+(?:[.,]\d+)*", re.IGNORECASE),
     re.compile(r"\bч\.?\s*\d+(?:[.,]\d+)*", re.IGNORECASE),
@@ -370,19 +370,10 @@ def _file_ext(filename: str) -> str:
 
 
 def _build_docling_converter(ext: str, *, do_ocr: bool = True):
-    """Строит DocumentConverter с теми же настройками, что в editor PDF rendering."""
-    if ext == ".pdf":
-        try:
-            from app.services.document_converter_service import DocumentConverterService
-            return DocumentConverterService._build_docling_pdf_converter(do_ocr=do_ocr)
-        except Exception as exc:
-            logger.debug("[LegalChunkerV2] cannot reuse editor PDF converter: %s", exc)
-    try:
-        from docling.document_converter import DocumentConverter
-        return DocumentConverter()
-    except Exception as exc:
-        logger.warning("[LegalChunkerV2] DocumentConverter unavailable: %s", exc)
-        return None
+    """Возвращает process-wide кэшированный DocumentConverter (PDF + прочие форматы)."""
+    from app.services.document_converter_service import DocumentConverterService
+
+    return DocumentConverterService.get_cached_converter(ext, do_ocr=do_ocr)
 
 
 def _extract_page_sizes_from_doc(doc: Any) -> Dict[int, Dict[str, float]]:
@@ -436,22 +427,30 @@ def _docling_pre_segmentation(
         int(getattr(config, "DOCLING_MAX_FILE_SIZE_BYTES", 60 * 1024 * 1024) or 60 * 1024 * 1024),
     )
 
+    from app.services.file_processing_concurrency import docling_slot
+
     source = DocumentStream(name=filename or "input", stream=BytesIO(content_bytes))
     try:
-        result = converter.convert(source=source, max_num_pages=max_pages, max_file_size=max_size)
-    except TypeError:
-        result = converter.convert(source=source)
+        with docling_slot():
+            try:
+                result = converter.convert(
+                    source=source, max_num_pages=max_pages, max_file_size=max_size
+                )
+            except TypeError:
+                result = converter.convert(source=source)
+
+            doc = getattr(result, "document", None)
+            if doc is None:
+                return [], ""
+
+            page_sizes = _extract_page_sizes_from_doc(doc)
+            segments = list(_iter_docling_segments(doc, page_sizes=page_sizes))
     except Exception as exc:
         logger.warning("[LegalChunkerV2] Docling convert() failed for %s: %s", filename, exc)
         return [], ""
+    finally:
+        source.stream.close()
 
-    doc = getattr(result, "document", None)
-    if doc is None:
-        return [], ""
-
-    page_sizes = _extract_page_sizes_from_doc(doc)
-
-    segments = list(_iter_docling_segments(doc, page_sizes=page_sizes))
     if not segments:
         return [], ""
 
@@ -567,6 +566,11 @@ def _iter_docling_segments(
 
         if not text:
             continue
+
+        article_line = _first_line(text)
+        if _ARTICLE_HEADING_NUM_RE.match(article_line):
+            current_section_title = article_line
+            current_section_number = _article_number_from_heading(article_line)
 
         segment_text = text + "\n\n"
         char_start = offset
@@ -1431,42 +1435,50 @@ def _build_chunk_metadata(
 
 # --- Corpus norm (article/clause) chunking --------------------------------
 
-_ARTICLE_BOUNDARY_RE = re.compile(r"^\s*Статья\s+", re.IGNORECASE)
+# Только заголовок статьи («Статья 61. …»), не перекрёстные ссылки («статьями 61.2»).
+_ARTICLE_HEADING_NUM_RE = re.compile(
+    r"^\s*Статья\s+(?P<num>\d+(?:\.\d+)*)\s*(?:[.\u2014\-–]|$)",
+    re.IGNORECASE,
+)
 _CLAUSE_BODY_SPLIT_RE = re.compile(
     r"(?=\n\s*(?:\d+[\.)]\s|Пункт\s+\d+|п\.\s*\d+))",
     re.IGNORECASE | re.MULTILINE,
 )
 
 
+def _first_line(text: str) -> str:
+    return ((text or "").lstrip().split("\n", 1)[0]).strip()
+
+
+def _article_number_from_heading(text: str) -> str:
+    line = _first_line(text)
+    m = _ARTICLE_HEADING_NUM_RE.match(line)
+    if not m:
+        return ""
+    return (m.group("num") or "").strip().replace(",", ".")
+
+
 def _is_article_boundary_segment(seg: _Segment) -> bool:
-    if seg.is_heading:
-        title = (seg.section_title or seg.text[:80] or "").strip()
-        m = _SECTION_HEAD_RE.match(title)
-        if m and (m.group("kind") or "").strip().lower() == "статья":
-            return True
-        return bool(_ARTICLE_BOUNDARY_RE.match(title))
-    head = (seg.text or "").lstrip()[:96]
-    m = _SECTION_HEAD_RE.match(head)
-    if m and (m.group("kind") or "").strip().lower() == "статья":
+    line = _first_line(seg.text or "")
+    if line and _ARTICLE_HEADING_NUM_RE.match(line):
         return True
-    return bool(_ARTICLE_BOUNDARY_RE.match(head))
+    if seg.is_heading:
+        title = (seg.section_title or line).strip()
+        return bool(title and _ARTICLE_HEADING_NUM_RE.match(title))
+    return False
 
 
 def _article_number_from_segment_group(segments: Sequence[_Segment]) -> str:
     for seg in segments:
-        for src in [seg.section_title, (seg.text or "")[:160]]:
-            t = (src or "").strip()
-            if not t:
-                continue
-            m = _SECTION_HEAD_RE.match(t)
-            if m and (m.group("kind") or "").strip().lower() == "статья":
-                num = (m.group("num") or "").strip() or _extract_section_number(t)
-                if num:
-                    return num.replace(",", ".")
-    if segments:
-        num = (segments[0].section_number or "").strip()
+        if not _is_article_boundary_segment(seg):
+            continue
+        num = _article_number_from_heading(_first_line(seg.text or ""))
         if num:
-            return num.replace(",", ".")
+            return num
+        if seg.is_heading:
+            num = _article_number_from_heading(seg.section_title or "")
+            if num:
+                return num
     return ""
 
 
@@ -1548,6 +1560,7 @@ def _build_norm_documents_from_segments(
     filename: str,
 ) -> List[Document]:
     from app.services.legal_norm_cross_ref import make_full_path, make_norm_node_key, normalize_article_number
+    from app.services.legal_norm_structure import expand_article_to_clause_pieces
 
     max_article_chars = int(getattr(config, "LEGAL_CORPUS_NORM_MAX_ARTICLE_CHARS", 12000) or 12000)
     doc_id = str(base_metadata.get("doc_id") or base_metadata.get("file_id") or filename)
@@ -1566,9 +1579,10 @@ def _build_norm_documents_from_segments(
 
         first = group[0]
         last = group[-1]
-        section_segment = next((s for s in group if s.section_title), first)
-        section_title = section_segment.section_title or ""
-        parent_path = list(section_segment.parent_path or [])
+        boundary_seg = next((s for s in group if _is_article_boundary_segment(s)), first)
+        boundary_line = _first_line(boundary_seg.text or "") or (boundary_seg.section_title or "").strip()
+        section_title = boundary_line or boundary_seg.section_title or ""
+        parent_path = list(boundary_seg.parent_path or [])
         article_number = _article_number_from_segment_group(group)
         if not article_number:
             fallback_article_idx += 1
@@ -1587,7 +1601,8 @@ def _build_norm_documents_from_segments(
         page_end = last.page_no
         page_bbox = next((s.page_bbox for s in group if s.page_bbox), None)
 
-        pieces = _split_oversized_article(text, max_article_chars)
+        pieces_raw = expand_article_to_clause_pieces(text, max_chars=max_article_chars)
+        pieces = [(p.text, p.clause_ref) for p in pieces_raw]
         piece_offset = char_start
         for piece_text, clause_ref in pieces:
             if not piece_text.strip():

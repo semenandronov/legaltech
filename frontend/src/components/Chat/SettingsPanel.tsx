@@ -11,6 +11,7 @@ import {
   canEnableCourtPractice,
   canEnableLegalResearch,
 } from '../../lib/chatInstrumentPolicy'
+import { productFeatures } from '../../lib/productFeatures'
 
 interface SettingsPanelProps {
   webSearch: boolean
@@ -63,6 +64,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       value: legalResearch,
       onChange: handleLegalResearchChange,
       disabled: !canEnableLegalResearch(draftMode),
+      enabled: productFeatures.legalCorpus,
     },
     {
       id: 'courtPractice',
@@ -73,6 +75,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       value: courtPractice,
       onChange: handleCourtPracticeChange,
       disabled: !canEnableCourtPractice(draftMode),
+      enabled: productFeatures.courtPractice,
     },
     {
       id: 'draftMode',
@@ -83,14 +86,19 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       value: draftMode,
       onChange: handleDraftModeChange,
       disabled: false,
+      enabled: productFeatures.draftMode,
     },
-  ]
+  ].filter((setting) => setting.enabled)
 
   let settings = hideDraft
     ? allSettings.filter((s) => s.id !== 'draftMode')
     : allSettings
   if (draftMode) {
     settings = settings.filter((s) => s.id === 'draftMode')
+  }
+
+  if (settings.length === 0) {
+    return null
   }
 
   return (

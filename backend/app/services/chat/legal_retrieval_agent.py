@@ -19,6 +19,7 @@ from langchain_core.documents import Document
 from app.config import config
 from app.services.chat.legal_query_plan import (
     LegalRetrievalPlan,
+    doc_metadata_matches_article,
     is_repeal_only_snippet,
     plan_coverage,
     plan_is_sufficient,
@@ -104,6 +105,8 @@ def article_lookup_fast(
 
 
 def _doc_mentions_article(doc: Document, article: str) -> bool:
+    if doc_metadata_matches_article(doc, article):
+        return True
     if not article:
         return False
     import re
@@ -200,7 +203,11 @@ def _expand_with_norm_graph(
 ) -> List[Document]:
     if not docs or not bool(getattr(config, "LEGAL_NORM_GRAPH_EXPAND_ENABLED", True)):
         return docs
-    from app.services.legal_norm_graph import expand_norm_neighbors, fetch_documents_by_norm_keys
+    from app.services.legal_norm_graph import (
+        EDGE_TYPES_FORWARD,
+        expand_norm_neighbor_edges,
+        fetch_documents_by_norm_keys,
+    )
 
     keys: List[str] = []
     for d in docs:
@@ -210,17 +217,43 @@ def _expand_with_norm_graph(
     if not keys:
         return docs
 
-    neighbor_keys = expand_norm_neighbors(
+    neighbor_edges = expand_norm_neighbor_edges(
         keys[:6],
-        edge_types=("FORWARD_TO", "REFERENCES"),
         limit=limit,
         reference_date=reference_date,
     )
-    if not neighbor_keys:
+    if not neighbor_edges:
         return docs
 
-    extra = fetch_documents_by_norm_keys(neighbor_keys, reference_date=reference_date)
+    full_article_keys = {
+        nk
+        for nk, edge_type in neighbor_edges
+        if edge_type in EDGE_TYPES_FORWARD and "::clause::" not in nk
+    }
+    neighbor_keys = [nk for nk, _ in neighbor_edges]
+    extra = fetch_documents_by_norm_keys(
+        neighbor_keys,
+        reference_date=reference_date,
+        full_article_for_keys=full_article_keys,
+    )
     return _merge_documents(docs, extra) if extra else docs
+
+
+def _fetch_norm_tree_for_plan(
+    plan: LegalRetrievalPlan,
+    *,
+    reference_date: Optional[date],
+) -> Tuple[List[Document], bool]:
+    """Structured lookup по дереву норм (article_lookup)."""
+    from app.services.legal_norm_lookup import fetch_norm_documents_for_plan, should_prefer_norm_tree
+
+    if not should_prefer_norm_tree(plan):
+        return [], False
+    docs = fetch_norm_documents_for_plan(plan, reference_date=reference_date)
+    if not docs:
+        return [], False
+    sufficient = plan_is_sufficient(docs, plan)
+    return docs, sufficient
 
 
 def _fetch_required_articles_fast(
@@ -545,14 +578,35 @@ def run_legal_corpus_retrieval(
         "iterative_added": 0,
         "gap_fill_rounds": 0,
         "reference_date": ref_date.isoformat() if ref_date else None,
+        "user_clause_ref": plan.user_clause_ref or None,
     }
 
     docs: List[Document] = []
     used_fast = False
+    used_norm_tree = False
 
     if _agentic_plan_enabled():
-        # --- 1) Per-article fast path from plan ---
+        # --- 0) Norm tree (structured metadata lookup для article_lookup) ---
         if plan.required_articles and instrument_ids_final and time.monotonic() < deadline:
+            tree_docs, tree_sufficient = _fetch_norm_tree_for_plan(plan, reference_date=ref_date)
+            if tree_docs:
+                docs = tree_docs
+                used_norm_tree = True
+                meta["used_norm_tree"] = True
+                logger.info(
+                    "[LegalRetrievalAgent] norm_tree topic=%s articles=%s clause=%s n=%d sufficient=%s",
+                    plan.topic,
+                    plan.user_articles or plan.required_articles,
+                    plan.user_clause_ref or "*",
+                    len(docs),
+                    tree_sufficient,
+                )
+                if tree_sufficient:
+                    used_fast = True
+                    meta["used_fast_path"] = True
+
+        # --- 1) Per-article FTS fast path (fallback если дерево пусто / недостаточно) ---
+        if not used_norm_tree and plan.required_articles and instrument_ids_final and time.monotonic() < deadline:
             fast_docs, used_fast = _fetch_required_articles_fast(plan, q, k=ctx_k)
             docs = fast_docs
             if used_fast:
@@ -564,7 +618,7 @@ def run_legal_corpus_retrieval(
                     len(docs),
                 )
 
-        # --- 2) Hybrid по запросам плана (пропускаем, если fast path уже покрыл план) ---
+        # --- 2) Hybrid по запросам плана (пропускаем, если fast path / norm tree уже покрыл план) ---
         if not plan_is_sufficient(docs, plan) and time.monotonic() < deadline:
             hybrid_qs = _cap_search_queries_from_plan(plan, q)
             meta["hybrid_queries_used"] = len(hybrid_qs)

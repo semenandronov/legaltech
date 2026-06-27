@@ -1,8 +1,11 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { Download, ArrowLeft, MessageSquare, FileText, FileEdit, History, BookOpen, ChevronDown } from 'lucide-react'
+import { Download, ArrowLeft, FileText, History, ChevronDown, BookOpen } from 'lucide-react'
 import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
+import { buildCaseNavItems } from '@/lib/caseNavItems'
+import { productFeatures } from '@/lib/productFeatures'
+import { useAuth } from '@/contexts/AuthContext'
 import { DocumentEditor, DocumentEditorRef } from '../components/Editor/DocumentEditor'
 import { DocumentEditorContextChat } from '../components/Editor/DocumentEditorContextChat'
 import { VersionHistory } from '../components/Editor/VersionHistory'
@@ -27,6 +30,7 @@ interface DocumentData {
 const DocumentEditorPage = ({ embedded = false }: { embedded?: boolean }) => {
   const { caseId, documentId } = useParams<{ caseId: string; documentId?: string }>()
   const navigate = useNavigate()
+  const { user } = useAuth()
   const [searchParams] = useSearchParams()
   const returnTo = searchParams.get('returnTo')
   const [document, setDocument] = useState<DocumentData | null>(null)
@@ -421,11 +425,10 @@ const DocumentEditorPage = ({ embedded = false }: { embedded?: boolean }) => {
 
   // Load comments effect removed — CommentsPanel was removed
 
-  const navItems = caseId ? [
-    { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
-    { id: 'editor', label: 'Редактор', icon: FileEdit, path: `/cases/${caseId}/editor` },
-    { id: 'playbooks', label: 'Playbooks', icon: BookOpen, path: `/cases/${caseId}/playbooks` },
-  ] : []
+  const navItems = useMemo(
+    () => (caseId ? buildCaseNavItems(caseId, user?.email) : []),
+    [caseId, user?.email],
+  )
 
   // Show loading state
   if (loading || loadingDocuments) {
@@ -612,7 +615,7 @@ const DocumentEditorPage = ({ embedded = false }: { embedded?: boolean }) => {
         {documentId && (
           <div className="shrink-0 flex border-l border-border">
             {/* Панель результатов Playbook */}
-            {showPlaybookPanel && <div className="w-[420px] shrink-0 flex flex-col" style={{ backgroundColor: 'var(--color-bg-primary)' }}>
+            {productFeatures.playbooks && showPlaybookPanel && <div className="w-[420px] shrink-0 flex flex-col" style={{ backgroundColor: 'var(--color-bg-primary)' }}>
               <PlaybookResultsPanel
                 result={
                   playbookResult
@@ -666,7 +669,7 @@ const DocumentEditorPage = ({ embedded = false }: { embedded?: boolean }) => {
                 onInsertText={handleInsertText}
                 onReplaceText={handleReplaceTextInDocument}
                 onReplaceAllText={(orig, next) => editorRef.current?.replaceAllText(orig, next) ?? 0}
-                onRunPlaybook={handleOpenPlaybookModal}
+                onRunPlaybook={productFeatures.playbooks ? handleOpenPlaybookModal : undefined}
                 caseId={caseId}
                 pendingPlaybookResult={null}
                 onPlaybookResultConsumed={() => {}}
@@ -719,7 +722,7 @@ const DocumentEditorPage = ({ embedded = false }: { embedded?: boolean }) => {
       />
 
       {/* Playbook Modal */}
-      {showPlaybookModal && (
+      {productFeatures.playbooks && showPlaybookModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] overflow-hidden">
             <div className="flex items-center justify-between p-6 border-b" style={{ borderBottomColor: 'var(--color-border)' }}>

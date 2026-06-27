@@ -16,6 +16,8 @@ export type TabularCellClickPayload = {
   docId?: string | null
   charStart?: number | null
   charEnd?: number | null
+  /** Не показывать правую панель с ответом/обоснованием (уже в popover под ячейкой) */
+  hideDetailPanel?: boolean
 }
 
 export type TabularViewerCellData = {
@@ -127,6 +129,10 @@ export function buildTabularViewerCellData(params: {
     (verbatimExtract ? 'verbatim' : sourcePage != null ? 'page' : 'none')
 
   const bbox = bboxFromReference(active)
+  const refIndex = click.sourceReferenceIndex ?? 0
+  const usePrimaryCharSpan =
+    refIndex === 0 &&
+    (click.charStart != null || details?.primary_source_char_start != null)
 
   return {
     verbatimExtract,
@@ -141,9 +147,32 @@ export function buildTabularViewerCellData(params: {
     highlightBBoxRegions: bbox ? [bbox] : undefined,
     highlightPageBBox: active?.page_bbox ?? undefined,
     docId: click.docId ?? details?.primary_source_doc_id ?? fileId,
-    charStart: click.charStart ?? details?.primary_source_char_start ?? undefined,
-    charEnd: click.charEnd ?? details?.primary_source_char_end ?? undefined,
+    charStart: usePrimaryCharSpan
+      ? (click.charStart ?? details?.primary_source_char_start ?? undefined)
+      : undefined,
+    charEnd: usePrimaryCharSpan
+      ? (click.charEnd ?? details?.primary_source_char_end ?? undefined)
+      : undefined,
   }
+}
+
+/** Ключ смены подсветки без перезагрузки файла (tabular side panel). */
+export function tabularHighlightRevision(parts: {
+  fileId: string
+  columnId?: string
+  sourceReferenceIndex?: number
+  verbatimExtract?: string | null
+  sourcePage?: number | null
+}): string {
+  return [
+    parts.fileId,
+    parts.columnId,
+    parts.sourceReferenceIndex ?? 0,
+    parts.sourcePage,
+    parts.verbatimExtract?.slice(0, 80) ?? '',
+  ]
+    .map((value) => (value == null ? '' : String(value)))
+    .join(':')
 }
 
 export function sourceReferenceButtonLabel(

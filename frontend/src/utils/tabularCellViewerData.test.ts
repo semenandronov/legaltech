@@ -3,6 +3,7 @@ import {
   buildTabularViewerCellData,
   normalizeCellSourceReferences,
   sourceReferenceButtonLabel,
+  tabularHighlightRevision,
 } from './tabularCellViewerData'
 import type { CellDetails } from '@/services/tabularReviewApi'
 
@@ -67,6 +68,23 @@ describe('buildTabularViewerCellData', () => {
     expect(out.verbatimExtract).toBe('первый')
     expect(out.sourcePage).toBe(2)
   })
+
+  it('does not apply primary char span for non-zero reference index', () => {
+    const out = buildTabularViewerCellData({
+      details: {
+        ...details,
+        primary_source_char_start: 10,
+        primary_source_char_end: 50,
+      },
+      fileId: 'f1',
+      click: {
+        sourceReferences: details.source_references,
+        sourceReferenceIndex: 1,
+      },
+    })
+    expect(out.charStart).toBeUndefined()
+    expect(out.charEnd).toBeUndefined()
+  })
 })
 
 describe('sourceReferenceButtonLabel', () => {
@@ -76,5 +94,25 @@ describe('sourceReferenceButtonLabel', () => {
 
   it('numbers multiple refs', () => {
     expect(sourceReferenceButtonLabel({ text: 'x', page: 5 }, 1, 3)).toBe('Источник 2 · стр. 5')
+  })
+})
+
+describe('tabularHighlightRevision', () => {
+  it('changes when citation index or quote changes', () => {
+    const base = tabularHighlightRevision({
+      fileId: 'f1',
+      columnId: 'col1',
+      sourceReferenceIndex: 0,
+      verbatimExtract: 'цитата а',
+      sourcePage: 2,
+    })
+    const other = tabularHighlightRevision({
+      fileId: 'f1',
+      columnId: 'col1',
+      sourceReferenceIndex: 1,
+      verbatimExtract: 'цитата б',
+      sourcePage: 3,
+    })
+    expect(base).not.toBe(other)
   })
 })

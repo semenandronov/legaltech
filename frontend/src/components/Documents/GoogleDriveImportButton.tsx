@@ -26,7 +26,7 @@ export interface GoogleDriveImportButtonProps {
   onImportComplete?: (response: FilesResponse) => void
   onImportFailed?: () => void
   className?: string
-  variant?: 'primary' | 'secondary'
+  variant?: 'primary' | 'secondary' | 'pill'
   label?: string
   loadingLabel?: string
 }
@@ -122,19 +122,25 @@ export function GoogleDriveImportButton({
   const base =
     variant === 'primary'
       ? 'bg-blue-600 text-white hover:bg-blue-700'
-      : 'border border-gray-300 bg-white text-gray-800 hover:bg-gray-50'
+      : variant === 'pill'
+        ? 'rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 gap-1.5'
+        : 'border border-gray-300 bg-white text-gray-800 hover:bg-gray-50'
+
+  const iconClass = variant === 'pill' ? 'h-3.5 w-3.5' : 'w-4 h-4'
 
   return (
     <button
       type="button"
       onClick={handleClick}
       disabled={disabled || loading}
-      className={`inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 ${base} ${className}`}
+      className={`inline-flex items-center justify-center font-medium transition-colors disabled:opacity-50 ${
+        variant === 'pill' ? '' : 'gap-2 px-4 py-2 rounded-lg text-sm'
+      } ${base} ${className}`}
     >
       {loading ? (
-        <Loader2 className="w-4 h-4 animate-spin" />
+        <Loader2 className={`${iconClass} animate-spin`} />
       ) : (
-        <Cloud className="w-4 h-4" />
+        <Cloud className={iconClass} />
       )}
       {loading ? loadingLabel : label}
     </button>

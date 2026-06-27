@@ -1,8 +1,8 @@
+import { productFeatures } from '@/lib/productFeatures'
+
 /** Feature flag: deep agent runs (Legora-style orchestration). */
 export function agentRunsEnabled(): boolean {
-  const raw = import.meta.env.VITE_AGENT_RUNS_ENABLED
-  if (raw === undefined || raw === '') return false
-  return String(raw).toLowerCase() === 'true'
+  return productFeatures.agentRuns
 }
 
 export function canEnableDeepAgentMode(

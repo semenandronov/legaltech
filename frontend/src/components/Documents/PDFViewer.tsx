@@ -127,6 +127,8 @@ interface PDFViewerProps {
   expandHighlightSearchAllPages?: boolean
   /** Доп. строки для поиска в text layer (например quote после text_preview в ассистенте). */
   highlightTextCandidates?: string[]
+  /** Сброс подсветки при смене цитаты того же файла (tabular / assistant). */
+  highlightFocusKey?: string
   /** Превью цитаты в чате: без поля поиска и без печати. */
   showDocumentSearch?: boolean
   showPrint?: boolean
@@ -151,6 +153,7 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   fileApiBase,
   expandHighlightSearchAllPages = false,
   highlightTextCandidates,
+  highlightFocusKey,
   showDocumentSearch = true,
   showPrint = true,
 }) => {
@@ -189,6 +192,11 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   const pdfDocRef = useRef<{ getPage: (n: number) => Promise<any>; numPages: number } | null>(null)
   /** Avoid stale closures in deferred full-document scan timeouts. */
   const highlightMatchRef = useRef(false)
+
+  useEffect(() => {
+    highlightMatchRef.current = false
+    setHighlightItemIndices([])
+  }, [highlightFocusKey])
 
   useEffect(() => {
     loadPDF()

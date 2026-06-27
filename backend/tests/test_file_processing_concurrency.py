@@ -1,5 +1,6 @@
 """Concurrency limits for file ingestion."""
 from app.services.file_processing_concurrency import (
+    max_parallel_docling,
     max_parallel_embeddings,
     max_parallel_files,
     max_parallel_passport,
@@ -12,6 +13,7 @@ def test_max_parallel_defaults():
     assert max_parallel_files() == 4
     assert max_parallel_passport() == 3
     assert max_parallel_embeddings() == 2
+    assert max_parallel_docling() == 1
 
 
 def test_max_parallel_clamped(monkeypatch):

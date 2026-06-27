@@ -342,11 +342,6 @@
   }
 }
 
-/* Keyboard shortcut hints in tooltips */
-[title]:hover::after {
-  content: attr(title);
-}
-
 /* Focus indicator for the entire editor container */
 .document-canvas:focus-within {
   outline: none;

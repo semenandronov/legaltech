@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, Fragment, useCallback } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import {
-  MessageSquare, FolderOpen, FileText, FileEdit, Table, BookOpen,
+  MessageSquare, FolderOpen, FileText, Table,
   Search, Upload, Plus, ChevronRight, File, Loader2, Cloud,
   MoreHorizontal, Trash2, ArrowRight, Check, X, Pencil, AlertCircle,
 } from 'lucide-react'
@@ -27,14 +27,17 @@ import {
   writePostCreatePendingToSession,
   type PostCreatePendingRow,
 } from '../lib/postCreatePendingFiles'
-import { createDocumentFromFile } from '../services/documentEditorApi'
 import { tabularReviewApi } from '../services/tabularReviewApi'
 import { CaseTabularHubModal } from '../components/TabularReview/CaseTabularHubModal'
+import { CaseOverviewPageHeader } from '../components/CaseOverview/CaseOverviewPageHeader'
+import { MikeTableToolbar } from '../components/TabularReview/mike/MikeTableToolbar'
+import { TABLE_CHECKBOX_CLASS } from '../components/TabularReview/mike/mikeTablePrimitives'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import DocumentViewer from '../components/Documents/DocumentViewer'
 import { DocumentWithMetadata } from '../components/Documents/DocumentsList'
 import { GoogleDriveImportButton } from '../components/Documents/GoogleDriveImportButton'
-import { agentRunsEnabled } from '../lib/agentRunsPolicy'
+import { buildCaseNavItems } from '@/lib/caseNavItems'
+import { useAuth } from '@/contexts/AuthContext'
 
 interface DocumentFile {
   id: string
@@ -103,13 +106,6 @@ const mapCaseDocuments = (documents: any[]): DocumentFile[] =>
 
 const PRESETS = [
   {
-    id: 'workflows',
-    title: 'Workflows',
-    description: 'Многошаговые задачи: анализ, таблицы, черновики',
-    path: (id: string) => `/cases/${id}/workflows`,
-    requiresAgentRuns: true,
-  },
-  {
     id: 'chat',
     title: 'Ассистент',
     description: 'Задайте вопросы по документам дела',
@@ -123,10 +119,15 @@ const PRESETS = [
   },
 ] as const
 
+function isCaseAssistantChatSession(sessionId: string): boolean {
+  return !sessionId.startsWith('tabular:')
+}
+
 const CaseOverviewPage = () => {
   const { caseId } = useParams<{ caseId: string }>()
   const navigate = useNavigate()
   const location = useLocation()
+  const { user } = useAuth()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [postCreatePendingRows, setPostCreatePendingRows] = useState<PostCreatePendingRow[]>(
@@ -193,7 +194,6 @@ const CaseOverviewPage = () => {
 
   // Document viewer
   const [viewerDoc, setViewerDoc] = useState<DocumentWithMetadata | null>(null)
-  const [openInEditorLoading, setOpenInEditorLoading] = useState<string | null>(null)
 
   // Rename folder
   const [renameTarget, setRenameTarget] = useState<FolderItem | null>(null)
@@ -500,20 +500,6 @@ const CaseOverviewPage = () => {
     } catch { toast.error('Ошибка при удалении') }
   }
 
-  const handleOpenInEditor = async (file: DocumentFile) => {
-    if (!caseId) return
-    setOpenInEditorLoading(file.id)
-    setActiveMenu(null)
-    try {
-      const doc = await createDocumentFromFile(file.id, caseId, file.filename)
-      navigate(`/cases/${caseId}/editor/${doc.id}`)
-    } catch (err: any) {
-      toast.error(err.message || 'Не удалось открыть в редакторе')
-    } finally {
-      setOpenInEditorLoading(null)
-    }
-  }
-
   const handleRenameFolder = async () => {
     if (!caseId || !renameTarget || !renameName.trim()) return
     try {
@@ -545,11 +531,7 @@ const CaseOverviewPage = () => {
     }
   }
 
-  const navItems = [
-    { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
-    { id: 'editor', label: 'Редактор', icon: FileEdit, path: `/cases/${caseId}/editor` },
-    { id: 'playbooks', label: 'Playbooks', icon: BookOpen, path: `/cases/${caseId}/playbooks` },
-  ]
+  const navItems = caseId ? buildCaseNavItems(caseId, user?.email) : []
 
   // Root-level files only (no folder). When search is active, show all matching files regardless of folder.
   const filteredFiles = files.filter(f =>
@@ -577,93 +559,43 @@ const CaseOverviewPage = () => {
       f.filename.toLowerCase().includes(fileSearch.toLowerCase())
     )
 
+  const assistantSessions = sessions.filter((s) => isCaseAssistantChatSession(s.session_id))
+
   return (
-    <div
-      className="h-screen flex overflow-hidden"
-      style={{ backgroundColor: 'var(--color-bg-primary)' }}
-    >
-      <UnifiedSidebar navItems={navItems} title="Legal AI" />
+    <div className="ws-shell ws-tabular-shell flex h-screen overflow-hidden">
+      <UnifiedSidebar navItems={navItems} title="Legal AI" showBackButton={false} variant="tabular" />
 
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <div className="flex-1 overflow-auto">
-          <div className="px-8 pt-8 pb-12">
+      <div className="ws-tabular-page flex min-h-0 flex-1 flex-col overflow-hidden">
+        <CaseOverviewPageHeader
+          loading={loadingCase}
+          caseTitle={caseData?.title}
+          documentCountLabel={documentCountLabel}
+          onNavigateCases={() => navigate('/cases')}
+        />
 
-            {/* Breadcrumb */}
-            <div
-              className="flex items-center gap-1.5 text-sm mb-5"
-              style={{ color: 'var(--color-text-muted)' }}
-            >
-              <button
-                onClick={() => navigate('/cases')}
-                className="hover:underline transition-colors"
-                style={{ color: 'var(--color-text-muted)' }}
-              >
-                Дела
-              </button>
-              <span>/</span>
-            </div>
-
-            {/* Case header */}
-            {loadingCase ? (
-              <div className="mb-8">
-                <div
-                  className="h-7 w-64 rounded animate-pulse mb-2"
-                  style={{ backgroundColor: 'var(--color-bg-elevated)' }}
-                />
-                <div
-                  className="h-4 w-32 rounded animate-pulse"
-                  style={{ backgroundColor: 'var(--color-bg-elevated)' }}
-                />
-              </div>
-            ) : (
-              <div className="mb-8">
-                <h1
-                  className="text-2xl font-semibold tracking-tight mb-1"
-                  style={{ color: 'var(--color-text-primary)' }}
-                >
-                  {caseData?.title || 'Без названия'}
-                </h1>
-                <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-                  {documentCountLabel}
-                </p>
-              </div>
-            )}
-
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div className="flex-1 overflow-y-auto px-4 pb-8 md:px-10">
             {/* Create new section */}
-            <section className="mb-8">
-              <h2
-                className="text-sm font-medium mb-3"
-                style={{ color: 'var(--color-text-primary)' }}
-              >
-                Начать работу
-              </h2>
-              <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
-                {/* New query card — dashed */}
+            <section className="mb-8 mt-4">
+              <h2 className="mb-3 text-xs font-medium text-gray-500">Начать работу</h2>
+              <div className="grid grid-cols-3 gap-3">
                 <button
                   onClick={() => setShowQueryTypeModal(true)}
-                  className="rounded-lg border-2 border-dashed flex flex-col items-start p-4 gap-2 text-left transition-all duration-150 hover:border-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] group"
-                  style={{ borderColor: 'var(--color-border)', minHeight: '96px' }}
+                  className="group flex min-h-[88px] flex-col items-start gap-2 rounded-lg border border-dashed border-gray-300 bg-white/60 p-4 text-left transition-colors hover:border-gray-400 hover:bg-[#fafbfc]"
                 >
-                  <div
-                    className="w-7 h-7 rounded-md flex items-center justify-center border transition-colors duration-150 group-hover:border-[var(--color-text-secondary)]"
-                    style={{ borderColor: 'var(--color-border)' }}
-                  >
-                    <Plus className="w-4 h-4" style={{ color: 'var(--color-text-secondary)' }} />
+                  <div className="flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 transition-colors group-hover:border-gray-400">
+                    <Plus className="h-4 w-4 text-gray-500" />
                   </div>
                   <div>
-                    <p className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
-                      Новый запрос
-                    </p>
-                    <p className="text-xs mt-0.5 leading-snug" style={{ color: 'var(--color-text-muted)' }}>
+                    <p className="text-sm font-medium text-gray-900">Новый запрос</p>
+                    <p className="mt-0.5 text-xs leading-snug text-gray-400">
                       Выберите тип запроса и файлы
                     </p>
                   </div>
                 </button>
 
                 {/* Preset cards */}
-                {PRESETS.filter(
-                  (p) => !('requiresAgentRuns' in p && p.requiresAgentRuns) || agentRunsEnabled(),
-                ).map(preset => (
+                {PRESETS.map((preset) => (
                   <button
                     key={preset.id}
                     onClick={() => {
@@ -673,22 +605,13 @@ const CaseOverviewPage = () => {
                       }
                       navigate(preset.path(caseId!))
                     }}
-                    className="rounded-lg border flex flex-col items-start p-4 gap-2 text-left transition-all duration-150 hover:bg-[var(--color-bg-hover)]"
-                    style={{
-                      borderColor: 'var(--color-border)',
-                      backgroundColor: 'var(--color-bg-elevated)',
-                      minHeight: '96px',
-                    }}
+                    className="flex min-h-[88px] flex-col items-start gap-2 rounded-lg border border-gray-200 bg-white p-4 text-left transition-colors hover:border-gray-300 hover:bg-[#fafbfc]"
                   >
-                    <div className="flex items-center justify-between w-full">
-                      <p className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
-                        {preset.title}
-                      </p>
-                      <ChevronRight className="w-3.5 h-3.5" style={{ color: 'var(--color-text-muted)' }} />
+                    <div className="flex w-full items-center justify-between">
+                      <p className="text-sm font-medium text-gray-900">{preset.title}</p>
+                      <ChevronRight className="h-3.5 w-3.5 text-gray-400" />
                     </div>
-                    <p className="text-xs leading-snug" style={{ color: 'var(--color-text-muted)' }}>
-                      {preset.description}
-                    </p>
+                    <p className="text-xs leading-snug text-gray-400">{preset.description}</p>
                   </button>
                 ))}
               </div>
@@ -696,28 +619,21 @@ const CaseOverviewPage = () => {
 
             {/* Recent actions section */}
             <section className="mb-8">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
-                  Последние действия
-                </h2>
-                {(sessions.length + reviews.length) > 5 && (
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-xs font-medium text-gray-500">Последние действия</h2>
+                {(assistantSessions.length + reviews.length) > 5 && (
                   <button
                     onClick={() => setShowAllActions(true)}
-                    className="text-xs hover:underline"
-                    style={{ color: 'var(--color-text-muted)' }}
+                    className="text-xs text-gray-400 transition-colors hover:text-gray-600"
                   >
-                    Все действия ({sessions.length + reviews.length})
+                    Все действия ({assistantSessions.length + reviews.length})
                   </button>
                 )}
               </div>
               {(loadingSessions || loadingReviews) ? (
                 <div className="space-y-2">
                   {[...Array(3)].map((_, i) => (
-                    <div
-                      key={i}
-                      className="h-10 rounded-lg animate-pulse"
-                      style={{ backgroundColor: 'var(--color-bg-elevated)' }}
-                    />
+                    <div key={i} className="h-10 animate-pulse rounded-lg bg-gray-100" />
                   ))}
                 </div>
               ) : (() => {
@@ -725,7 +641,7 @@ const CaseOverviewPage = () => {
                   | { kind: 'chat'; session_id: string; first_message: string; last_message_at: string | null; message_count: number; date: number }
                   | { kind: 'review'; id: string; name: string; status: string; date: number }
 
-                const chatItems: ActionItem[] = sessions.map(s => ({
+                const chatItems: ActionItem[] = assistantSessions.map(s => ({
                   kind: 'chat' as const,
                   ...s,
                   date: s.last_message_at ? new Date(s.last_message_at).getTime() : 0,
@@ -741,14 +657,12 @@ const CaseOverviewPage = () => {
 
                 if (allItems.length === 0) {
                   return (
-                    <p className="text-sm py-4" style={{ color: 'var(--color-text-muted)' }}>
-                      Действий пока нет
-                    </p>
+                    <p className="py-4 text-sm text-gray-400">Действий пока нет</p>
                   )
                 }
 
                 return (
-                  <div className="rounded-lg border overflow-hidden" style={{ borderColor: 'var(--color-border)' }}>
+                  <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
                     {allItems.map((item, i) => (
                       <button
                         key={item.kind === 'chat' ? `chat-${item.session_id}` : `review-${item.id}`}
@@ -756,32 +670,31 @@ const CaseOverviewPage = () => {
                           if (item.kind === 'chat') navigate(`/cases/${caseId}/chat?session=${item.session_id}`)
                           else navigate(`/cases/${caseId}/tabular-review/${item.id}`)
                         }}
-                        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-[var(--color-bg-hover)] transition-colors"
-                        style={{
-                          borderBottom: i < allItems.length - 1 ? '1px solid var(--color-border)' : 'none',
-                        }}
+                        className={`flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-gray-50 ${
+                          i < allItems.length - 1 ? 'border-b border-gray-50' : ''
+                        }`}
                       >
-                        <div className="flex items-center gap-3 min-w-0">
+                        <div className="flex min-w-0 items-center gap-3">
                           {item.kind === 'chat' ? (
-                            <MessageSquare className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />
+                            <MessageSquare className="h-3.5 w-3.5 shrink-0 text-gray-400" />
                           ) : (
-                            <Table className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />
+                            <Table className="h-3.5 w-3.5 shrink-0 text-gray-400" />
                           )}
-                          <span className="text-sm truncate" style={{ color: 'var(--color-text-primary)' }}>
+                          <span className="truncate text-sm text-gray-800">
                             {item.kind === 'chat' ? (item.first_message || 'Сессия') : item.name}
                           </span>
                         </div>
-                        <div className="flex items-center gap-3 flex-shrink-0 ml-4">
+                        <div className="ml-4 flex shrink-0 items-center gap-3">
                           <span
-                            className="text-xs px-1.5 py-0.5 rounded"
-                            style={{
-                              color: item.kind === 'chat' ? 'var(--color-accent)' : 'rgba(16,185,129,0.9)',
-                              backgroundColor: item.kind === 'chat' ? 'var(--color-accent-subtle, rgba(99,102,241,0.08))' : 'rgba(16,185,129,0.08)',
-                            }}
+                            className={`rounded px-1.5 py-0.5 text-xs ${
+                              item.kind === 'chat'
+                                ? 'bg-indigo-50 text-indigo-600'
+                                : 'bg-emerald-50 text-emerald-600'
+                            }`}
                           >
                             {item.kind === 'chat' ? 'Ассистент' : 'Таблица'}
                           </span>
-                          <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                          <span className="text-xs text-gray-400">
                             {item.kind === 'chat' ? formatDate(item.last_message_at) : formatDate(item.date ? new Date(item.date).toISOString() : undefined)}
                           </span>
                         </div>
@@ -796,18 +709,9 @@ const CaseOverviewPage = () => {
             <section>
               {/* Upload / processing banner */}
               {postCreateUploading && (
-                <div
-                  className="flex items-center gap-2 px-4 py-2.5 mb-3 rounded-lg text-sm"
-                  style={{
-                    backgroundColor: 'var(--color-bg-elevated)',
-                    border: '1px solid var(--color-border)',
-                    color: 'var(--color-text-secondary)',
-                  }}
-                >
-                  <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />
-                  <span>
-                    {postCreateUploadStatus || 'Загрузка файлов в дело…'}
-                  </span>
+                <div className="mb-3 flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-600">
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-gray-400" />
+                  <span>{postCreateUploadStatus || 'Загрузка файлов в дело…'}</span>
                 </div>
               )}
               {(() => {
@@ -828,191 +732,156 @@ const CaseOverviewPage = () => {
                   ? `ещё ~${remaining} сек`
                   : `ещё ~${Math.ceil(remaining / 60)} мин`
                 return (
-                  <div
-                    className="flex items-center gap-2 px-4 py-2.5 mb-3 rounded-lg text-sm"
-                    style={{
-                      backgroundColor: 'var(--color-bg-elevated)',
-                      border: '1px solid var(--color-border)',
-                      color: 'var(--color-text-secondary)',
-                    }}
-                  >
-                    <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />
+                  <div className="mb-3 flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-600">
+                    <Loader2 className="h-4 w-4 shrink-0 animate-spin text-gray-400" />
                     <span>
                       Обработка файлов…{' '}
-                      <span style={{ color: 'var(--color-text-primary)', fontWeight: 500 }}>
+                      <span className="font-medium text-gray-900">
                         {ready} из {total} готово
                       </span>
-                      <span style={{ color: 'var(--color-text-muted)' }}>{' '}· {countdownStr}</span>
+                      <span className="text-gray-400"> · {countdownStr}</span>
                     </span>
-                    <span className="text-xs ml-auto" style={{ color: 'var(--color-text-muted)' }}>
+                    <span className="ml-auto text-xs text-gray-400">
                       Вы можете работать с готовыми файлами, остальные появятся автоматически
                     </span>
                   </div>
                 )
               })()}
 
-              <div className="flex items-center justify-between mb-3">
-                <h2
-                  className="text-sm font-medium"
-                  style={{ color: 'var(--color-text-primary)' }}
-                >
-                  Файлы проекта
-                </h2>
-                <div className="flex items-center gap-2">
-                  {/* Search */}
-                  <div
-                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm"
-                    style={{
-                      borderColor: 'var(--color-border)',
-                      backgroundColor: 'var(--color-bg-elevated)',
-                    }}
-                  >
-                    <Search className="w-3.5 h-3.5" style={{ color: 'var(--color-text-muted)' }} />
-                    <input
-                      type="text"
-                      value={fileSearch}
-                      onChange={e => setFileSearch(e.target.value)}
-                      placeholder="Поиск"
-                      className="bg-transparent outline-none w-36 text-xs"
-                      style={{ color: 'var(--color-text-primary)' }}
-                    />
+              <MikeTableToolbar
+                leading={
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-medium text-gray-700">Файлы</span>
+                    <div className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1">
+                      <Search className="h-3 w-3 shrink-0 text-gray-400" />
+                      <input
+                        type="text"
+                        value={fileSearch}
+                        onChange={(e) => setFileSearch(e.target.value)}
+                        placeholder="Поиск"
+                        className="w-28 bg-transparent text-xs text-gray-700 outline-none placeholder:text-gray-400"
+                      />
+                    </div>
                   </div>
-                  {/* Create folder */}
-                  {creatingFolder ? (
-                    <>
-                      <div className="flex items-center gap-1">
-                        <input
-                          ref={folderInputRef}
-                          type="text"
-                          value={newFolderName}
-                          onChange={e => setNewFolderName(e.target.value)}
-                          onKeyDown={e => {
-                            if (e.key === 'Enter') handleCreateFolder()
-                            if (e.key === 'Escape') { setCreatingFolder(false); setNewFolderName(''); setFolderError(null) }
-                          }}
-                          autoFocus
-                          placeholder="Название папки"
-                          className="px-2 py-1.5 rounded-lg border text-xs outline-none"
-                          style={{
-                            borderColor: folderError ? 'var(--color-error, #dc2626)' : 'var(--color-border)',
-                            backgroundColor: 'var(--color-bg-elevated)',
-                            color: 'var(--color-text-primary)',
-                            width: '140px',
-                          }}
-                        />
-                        <button
-                          onClick={handleCreateFolder}
-                          disabled={!newFolderName.trim()}
-                          className="px-2 py-1.5 rounded-lg text-xs font-medium transition-colors"
-                          style={{
-                            backgroundColor: 'var(--color-text-primary)',
-                            color: 'var(--color-bg-primary)',
-                            opacity: !newFolderName.trim() ? 0.4 : 1,
-                          }}
-                        >
-                          ОК
-                        </button>
-                        <button
-                          onClick={() => { setCreatingFolder(false); setNewFolderName(''); setFolderError(null) }}
-                          className="px-2 py-1.5 rounded-lg text-xs border transition-colors hover:bg-[var(--color-bg-hover)]"
-                          style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }}
-                        >
-                          Отмена
-                        </button>
-                      </div>
-                      {folderError && (
-                        <p className="text-xs" style={{ color: 'var(--color-error, #dc2626)' }}>
-                          {folderError}
-                        </p>
-                      )}
-                    </>
-                  ) : (
-                    <button
-                      onClick={() => setCreatingFolder(true)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors hover:bg-[var(--color-bg-hover)]"
-                      style={{
-                        borderColor: 'var(--color-border)',
-                        color: 'var(--color-text-primary)',
-                        backgroundColor: 'var(--color-bg-elevated)',
-                      }}
-                    >
-                      <FolderOpen className="w-3.5 h-3.5" />
-                      Создать папку
-                    </button>
-                  )}
-                  {/* Upload */}
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    multiple
-                    className="hidden"
-                    onChange={handleUpload}
-                  />
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={uploading}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors hover:bg-[var(--color-bg-hover)]"
-                    style={{
-                      borderColor: 'var(--color-border)',
-                      color: 'var(--color-text-primary)',
-                      backgroundColor: 'var(--color-bg-elevated)',
-                    }}
-                  >
-                    {uploading
-                      ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      : <Upload className="w-3.5 h-3.5" />
-                    }
-                    Загрузить файлы
-                  </button>
-                  {caseId && (
-                    <GoogleDriveImportButton
-                      caseId={caseId}
-                      disabled={uploading}
-                      onImportStarted={() => setUploading(true)}
-                      onImportComplete={(response) => {
-                        handleFilesAdded(response)
-                        getCase(caseId).then((d) => setCaseData(d))
-                        setUploading(false)
-                      }}
-                      onImportFailed={() => setUploading(false)}
+                }
+                actions={
+                  <div className="flex items-center gap-2">
+                    {creatingFolder ? (
+                      <>
+                        <div className="flex items-center gap-1">
+                          <input
+                            ref={folderInputRef}
+                            type="text"
+                            value={newFolderName}
+                            onChange={(e) => setNewFolderName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleCreateFolder()
+                              if (e.key === 'Escape') {
+                                setCreatingFolder(false)
+                                setNewFolderName('')
+                                setFolderError(null)
+                              }
+                            }}
+                            autoFocus
+                            placeholder="Название папки"
+                            className={`w-[140px] rounded-lg border px-2 py-1.5 text-xs outline-none ${
+                              folderError ? 'border-red-300' : 'border-gray-200'
+                            } bg-white text-gray-900`}
+                          />
+                          <button
+                            type="button"
+                            onClick={handleCreateFolder}
+                            disabled={!newFolderName.trim()}
+                            className="rounded-lg bg-gray-900 px-2 py-1.5 text-xs font-medium text-white transition-opacity disabled:opacity-40"
+                          >
+                            ОК
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCreatingFolder(false)
+                              setNewFolderName('')
+                              setFolderError(null)
+                            }}
+                            className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs text-gray-500 transition-colors hover:bg-gray-50"
+                          >
+                            Отмена
+                          </button>
+                        </div>
+                        {folderError && <p className="text-xs text-red-600">{folderError}</p>}
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setCreatingFolder(true)}
+                        className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50"
+                      >
+                        <FolderOpen className="h-3.5 w-3.5" />
+                        Создать папку
+                      </button>
+                    )}
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      className="hidden"
+                      onChange={handleUpload}
                     />
-                  )}
-                </div>
-              </div>
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploading}
+                      className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      {uploading ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Upload className="h-3.5 w-3.5" />
+                      )}
+                      Загрузить
+                    </button>
+                    {caseId && (
+                      <GoogleDriveImportButton
+                        caseId={caseId}
+                        variant="pill"
+                        label="Google Drive"
+                        disabled={uploading}
+                        onImportStarted={() => setUploading(true)}
+                        onImportComplete={(response) => {
+                          handleFilesAdded(response)
+                          getCase(caseId).then((d) => setCaseData(d))
+                          setUploading(false)
+                        }}
+                        onImportFailed={() => setUploading(false)}
+                      />
+                    )}
+                  </div>
+                }
+              />
 
               {loadingFiles && !hasVisibleFileSection ? (
-                <div className="space-y-2">
+                <div className="space-y-0 border-t border-gray-200">
                   {[...Array(4)].map((_, i) => (
-                    <div
-                      key={i}
-                      className="h-10 rounded-lg animate-pulse"
-                      style={{ backgroundColor: 'var(--color-bg-elevated)' }}
-                    />
+                    <div key={i} className="h-10 animate-pulse border-b border-gray-50 bg-gray-50/50" />
                   ))}
                 </div>
               ) : !hasVisibleFileSection ? (
-                <div
-                  className="rounded-lg border-2 border-dashed flex flex-col items-center justify-center py-12"
-                  style={{ borderColor: 'var(--color-border)' }}
-                >
-                  <p className="text-sm mb-3" style={{ color: 'var(--color-text-muted)' }}>
-                    Файлы не загружены
-                  </p>
+                <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-gray-300 bg-white/60 py-12">
+                  <p className="mb-3 text-sm text-gray-400">Файлы не загружены</p>
                   <button
+                    type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg border text-sm font-medium transition-colors hover:bg-[var(--color-bg-hover)]"
-                    style={{
-                      borderColor: 'var(--color-border)',
-                      color: 'var(--color-text-primary)',
-                      backgroundColor: 'var(--color-bg-elevated)',
-                    }}
+                    className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
                   >
-                    <Upload className="w-4 h-4" />
+                    <Upload className="h-4 w-4" />
                     Загрузить файлы
                   </button>
                   {caseId && (
                     <GoogleDriveImportButton
                       caseId={caseId}
+                      variant="pill"
+                      label="Google Drive"
+                      className="mt-3"
                       onImportStarted={() => setUploading(true)}
                       onImportComplete={(response) => {
                         handleFilesAdded(response)
@@ -1035,25 +904,16 @@ const CaseOverviewPage = () => {
                   else setSelectedIds(new Set(allCurrentIds))
                 }
                 return (
-                <div
-                  className="rounded-lg border overflow-hidden"
-                  style={{ borderColor: 'var(--color-border)' }}
-                >
-                  {/* Table header */}
+                <div className="overflow-hidden border-t border-gray-200 bg-white">
                   <div
-                    className="grid text-xs font-medium px-2 py-2 border-b items-center"
-                    style={{
-                      gridTemplateColumns: '28px 1fr 120px 100px 80px 32px',
-                      borderBottomColor: 'var(--color-border)',
-                      backgroundColor: 'var(--color-bg-elevated)',
-                      color: 'var(--color-text-muted)',
-                    }}
+                    className="grid h-8 items-center border-b border-gray-200 bg-[#fafbfc] px-2 text-xs font-medium text-gray-500"
+                    style={{ gridTemplateColumns: '28px 1fr 120px 100px 80px 32px' }}
                   >
                     <input
                       type="checkbox"
                       checked={allSelected}
                       onChange={toggleSelectAll}
-                      className="rounded cursor-pointer"
+                      className={TABLE_CHECKBOX_CLASS}
                     />
                     <span className="pl-2">Название</span>
                     <span>Тип документа</span>
@@ -1073,12 +933,10 @@ const CaseOverviewPage = () => {
                       <Fragment key={rowId}>
                         {/* Folder row */}
                         <div
-                          className="grid items-center px-2 py-2.5 transition-colors cursor-pointer"
-                          style={{
-                            gridTemplateColumns: '28px 1fr 120px 100px 80px 32px',
-                            borderBottom: '1px solid var(--color-border)',
-                            backgroundColor: isSelected ? 'var(--color-bg-hover)' : undefined,
-                          }}
+                          className={`grid cursor-pointer items-center px-2 py-2.5 transition-colors hover:bg-gray-50 ${
+                            isSelected ? 'bg-gray-50' : 'bg-white'
+                          }`}
+                          style={{ gridTemplateColumns: '28px 1fr 120px 100px 80px 32px' }}
                           onClick={() => toggleFolderExpand(folder.id)}
                         >
                           <input
@@ -1086,7 +944,7 @@ const CaseOverviewPage = () => {
                             checked={isSelected}
                             onChange={() => toggleSelect(rowId)}
                             onClick={e => e.stopPropagation()}
-                            className="rounded cursor-pointer"
+                            className={TABLE_CHECKBOX_CLASS}
                           />
                           <div className="flex items-center gap-2 min-w-0 pl-2">
                             <ChevronRight
@@ -1106,9 +964,9 @@ const CaseOverviewPage = () => {
                               </span>
                             )}
                           </div>
-                          <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>Папка</span>
-                          <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>—</span>
-                          <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>—</span>
+                          <span className="text-xs text-gray-500">Папка</span>
+                          <span className="text-xs text-gray-500">—</span>
+                          <span className="text-xs text-gray-500">—</span>
                           <div className="relative flex justify-center" onClick={e => e.stopPropagation()}>
                             <button
                               onClick={(e) => openMenu(rowId, e)}
@@ -1187,20 +1045,20 @@ const CaseOverviewPage = () => {
                                     checked={isFileSel}
                                     onChange={() => toggleSelect(file.id)}
                                     onClick={e => e.stopPropagation()}
-                                    className="rounded cursor-pointer"
+                                    className={TABLE_CHECKBOX_CLASS}
                                   />
                                   <div
                                     className="flex items-center gap-2 min-w-0 pl-8 cursor-pointer"
                                     onClick={() => setViewerDoc({ id: file.id, filename: file.filename, file_type: file.file_type || '', created_at: file.created_at || '', classification: file.classification })}
                                   >
                                     <File className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />
-                                    <span className="text-sm truncate hover:underline" style={{ color: 'var(--color-text-primary)' }}>
+                                    <span className="truncate text-sm text-gray-800 hover:underline">
                                       {file.filename}
                                     </span>
                                   </div>
-                                  <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{file.doc_type || file.file_type || '—'}</span>
-                                  <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{formatDate(file.created_at)}</span>
-                                  <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{formatSize(file.size)}</span>
+                                  <span className="text-xs text-gray-500">{file.doc_type || file.file_type || '—'}</span>
+                                  <span className="text-xs text-gray-500">{formatDate(file.created_at)}</span>
+                                  <span className="text-xs text-gray-500">{formatSize(file.size)}</span>
                                   <div className="relative flex justify-center" onClick={e => e.stopPropagation()}>
                                     <button
                                       onClick={(e) => openMenu(file.id, e)}
@@ -1230,15 +1088,6 @@ const CaseOverviewPage = () => {
                                         >
                                           <FileText className="w-3.5 h-3.5 flex-shrink-0" />
                                           Просмотр
-                                        </button>
-                                        <button
-                                          onClick={() => handleOpenInEditor(file)}
-                                          disabled={openInEditorLoading === file.id}
-                                          className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left transition-colors hover:bg-[var(--color-bg-hover)] disabled:opacity-50"
-                                          style={{ color: 'var(--color-text-primary)' }}
-                                        >
-                                          {openInEditorLoading === file.id ? <Loader2 className="w-3.5 h-3.5 flex-shrink-0 animate-spin" /> : <FileEdit className="w-3.5 h-3.5 flex-shrink-0" />}
-                                          Открыть в редакторе
                                         </button>
                                         <button
                                           onClick={() => openMoveModal([file.id])}
@@ -1338,11 +1187,11 @@ const CaseOverviewPage = () => {
                     return (
                       <div
                         key={file.id}
-                        className="grid items-center px-2 py-2.5 transition-colors"
+                        className={`grid h-10 items-center border-b border-gray-50 px-2 transition-colors hover:bg-gray-50 ${
+                          isSelected ? 'bg-gray-50' : 'bg-white'
+                        }`}
                         style={{
                           gridTemplateColumns: '28px 1fr 120px 100px 80px 32px',
-                          borderBottom: '1px solid var(--color-border)',
-                          backgroundColor: isSelected ? 'var(--color-bg-hover)' : undefined,
                           opacity: isProcessing ? 0.7 : 1,
                         }}
                       >
@@ -1351,7 +1200,7 @@ const CaseOverviewPage = () => {
                           checked={isSelected}
                           onChange={() => toggleSelect(file.id)}
                           onClick={e => e.stopPropagation()}
-                          className="rounded cursor-pointer"
+                          className={TABLE_CHECKBOX_CLASS}
                         />
                         <div
                           className="flex items-center gap-2.5 min-w-0 pl-2 cursor-pointer"
@@ -1366,7 +1215,7 @@ const CaseOverviewPage = () => {
                           ) : (
                             <File className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />
                           )}
-                          <span className="text-sm truncate hover:underline" style={{ color: 'var(--color-text-primary)' }}>
+                          <span className="truncate text-sm text-gray-800 hover:underline">
                             {file.filename}
                           </span>
                           {isCancelled && (
@@ -1378,13 +1227,13 @@ const CaseOverviewPage = () => {
                             </span>
                           )}
                         </div>
-                        <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                        <span className="text-xs text-gray-500">
                           {isProcessing ? '—' : (file.doc_type ? formatDocType(file.doc_type) : file.file_type || '—')}
                         </span>
-                        <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                        <span className="text-xs text-gray-500">
                           {formatDate(file.created_at)}
                         </span>
-                        <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                        <span className="text-xs text-gray-500">
                           {formatSize(file.size)}
                         </span>
                         <div className="relative flex justify-center" onClick={e => e.stopPropagation()}>
@@ -1416,15 +1265,6 @@ const CaseOverviewPage = () => {
                               >
                                 <FileText className="w-3.5 h-3.5 flex-shrink-0" />
                                 Просмотр
-                              </button>
-                              <button
-                                onClick={() => handleOpenInEditor(file)}
-                                disabled={openInEditorLoading === file.id}
-                                className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left transition-colors hover:bg-[var(--color-bg-hover)] disabled:opacity-50"
-                                style={{ color: 'var(--color-text-primary)' }}
-                              >
-                                {openInEditorLoading === file.id ? <Loader2 className="w-3.5 h-3.5 flex-shrink-0 animate-spin" /> : <FileEdit className="w-3.5 h-3.5 flex-shrink-0" />}
-                                Открыть в редакторе
                               </button>
                               <button
                                 onClick={() => openMoveModal([file.id])}
@@ -1465,49 +1305,41 @@ const CaseOverviewPage = () => {
             </section>
 
           </div>
-        </div>
 
         {/* Selection action bar */}
         {selectedIds.size > 0 && (
-          <div
-            className="shrink-0 border-t flex items-center gap-3 px-8 py-3"
-            style={{
-              borderTopColor: 'var(--color-border)',
-              backgroundColor: 'var(--color-bg-elevated)',
-            }}
-          >
-            <span className="text-sm font-medium" style={{ color: 'var(--color-text-secondary)' }}>
-              Выбрано: {selectedIds.size}
-            </span>
+          <div className="flex shrink-0 items-center gap-3 border-t border-gray-200 bg-white px-4 py-3 md:px-10">
+            <span className="text-sm font-medium text-gray-600">Выбрано: {selectedIds.size}</span>
             <button
+              type="button"
               onClick={() => {
-                const fileIds = [...selectedIds].filter(id => !id.startsWith('folder-'))
+                const fileIds = [...selectedIds].filter((id) => !id.startsWith('folder-'))
                 if (fileIds.length > 0) openMoveModal(fileIds)
               }}
-              disabled={[...selectedIds].every(id => id.startsWith('folder-'))}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors hover:bg-[var(--color-bg-hover)] disabled:opacity-40"
-              style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-primary)' }}
+              disabled={[...selectedIds].every((id) => id.startsWith('folder-'))}
+              className="flex items-center gap-1.5 rounded-full border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-40"
             >
-              <ArrowRight className="w-3.5 h-3.5" />
+              <ArrowRight className="h-3.5 w-3.5" />
               Переместить
             </button>
             <button
+              type="button"
               onClick={handleDeleteSelected}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors"
-              style={{ borderColor: 'var(--color-error, #dc2626)', color: 'var(--color-error, #dc2626)' }}
+              className="flex items-center gap-1.5 rounded-full border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-50"
             >
-              <Trash2 className="w-3.5 h-3.5" />
+              <Trash2 className="h-3.5 w-3.5" />
               Удалить
             </button>
             <button
+              type="button"
               onClick={() => setSelectedIds(new Set())}
-              className="ml-auto p-1 transition-colors hover:opacity-70"
-              style={{ color: 'var(--color-text-muted)' }}
+              className="ml-auto p-1 text-gray-400 transition-colors hover:text-gray-600"
             >
-              <X className="w-4 h-4" />
+              <X className="h-4 w-4" />
             </button>
           </div>
         )}
+        </div>
       </div>
 
       {/* Rename folder modal */}
@@ -1752,7 +1584,7 @@ const CaseOverviewPage = () => {
                   color: 'var(--color-text-muted)',
                 }}
               >
-                <input type="checkbox" checked={allPicked} onChange={toggleAll} className="rounded cursor-pointer" />
+                <input type="checkbox" checked={allPicked} onChange={toggleAll} className={TABLE_CHECKBOX_CLASS} />
                 <span>Название</span>
                 <span>Тип документа</span>
                 <span>Размер</span>
@@ -1787,7 +1619,7 @@ const CaseOverviewPage = () => {
                             return next
                           })
                         }}
-                        className="rounded cursor-pointer"
+                        className={TABLE_CHECKBOX_CLASS}
                       />
                       <div className="flex items-center gap-2 min-w-0 pr-4">
                         <FileText className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />
@@ -1888,7 +1720,7 @@ const CaseOverviewPage = () => {
                 | { kind: 'chat'; session_id: string; first_message: string; last_message_at: string | null; message_count: number; date: number }
                 | { kind: 'review'; id: string; name: string; status: string; date: number }
 
-              const chatItems: ActionItem[] = sessions.map(s => ({
+              const chatItems: ActionItem[] = assistantSessions.map(s => ({
                 kind: 'chat' as const, ...s,
                 date: s.last_message_at ? new Date(s.last_message_at).getTime() : 0,
               }))

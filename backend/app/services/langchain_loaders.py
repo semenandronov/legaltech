@@ -172,42 +172,16 @@ class DocumentLoaderService:
                     if yandex_rate_limited:
                         logger.warning("PDF %s: %s", filename, yandex_ocr_quota_or_temporary_message(yv_err))
 
-            # Fallback: local OCR (Tesseract или Docling+EasyOCR только если явно задано в env)
+            # Local OCR fallback (Tesseract). Сканы не гоняем через Docling в лоадере:
+            # Yandex/Tesseract текст передаётся в LegalChunkerV2, который пропускает _docling_pre_segmentation.
             scan_engine = str(getattr(config, "PDF_SCAN_OCR_ENGINE", "tesseract") or "tesseract").strip().lower()
             if scan_engine in ("docling_easyocr", "docling", "easyocr"):
-                try:
-                    from app.services.document_converter_service import DocumentConverterService
-
-                    md_text = DocumentConverterService.extract_pdf_text_via_docling(content, filename)
-                    if md_text.strip():
-                        pre_docs = [
-                            Document(
-                                page_content=md_text,
-                                metadata={
-                                    "source_file": filename,
-                                    "source_page": 1,
-                                    "docling_scan_preflight": True,
-                                },
-                            )
-                        ]
-                        if DocumentLoaderService._pdf_text_quality_ok(pre_docs):
-                            logger.info(
-                                "PDF %s: Docling preflight OCR (%s), %s символов (второй проход Docling — в чанкере)",
-                                filename,
-                                scan_engine,
-                                len(md_text),
-                            )
-                            return pre_docs
-                    logger.warning(
-                        "PDF %s: Docling preflight вернул мало текста, переключаемся на Tesseract.",
-                        filename,
-                    )
-                except Exception as doc_exc:
-                    logger.warning(
-                        "PDF %s: Docling preflight OCR не удался (%s), переключаемся на Tesseract.",
-                        filename,
-                        doc_exc,
-                    )
+                logger.warning(
+                    "PDF %s: PDF_SCAN_OCR_ENGINE=%s игнорируется в ingest; "
+                    "для сканов — Yandex OCR, локальный fallback — Tesseract (без Docling в лоадере).",
+                    filename,
+                    scan_engine,
+                )
 
             ocr_docs = DocumentLoaderService._ocr_pdf(content, filename)
             if ocr_docs:
@@ -367,6 +341,30 @@ class DocumentLoaderService:
                 f"Убедитесь, что файл является корректным DOCX файлом."
             )
     
+    @staticmethod
+    def load_html(content: bytes, filename: str) -> List[Document]:
+        """Load HTML (в т.ч. экспорт КонсультантПлюс) — текст для fallback, структура через Docling."""
+        try:
+            from app.services.consultant_html_preprocess import html_to_plain_text
+
+            text = html_to_plain_text(content.decode("utf-8", errors="replace"))
+            if not text.strip():
+                raise ValueError("Пустой HTML после очистки")
+            return [
+                Document(
+                    page_content=text,
+                    metadata={
+                        "source_file": filename,
+                        "extraction_source": "html",
+                    },
+                )
+            ]
+        except ValueError:
+            raise
+        except Exception as e:
+            logger.error("Error loading HTML %s: %s", filename, e, exc_info=True)
+            raise ValueError(f"Ошибка при загрузке HTML {filename}: {str(e)[:200]}")
+
     @staticmethod
     def load_txt(content: bytes, filename: str) -> List[Document]:
         """
@@ -616,8 +614,12 @@ class DocumentLoaderService:
             return DocumentLoaderService.load_pdf(content, filename)
         elif ext in ['.docx', '.doc']:
             return DocumentLoaderService.load_docx(content, filename)
+        elif ext in ['.html', '.htm']:
+            return DocumentLoaderService.load_html(content, filename)
         elif ext == '.txt':
             return DocumentLoaderService.load_txt(content, filename)
+        elif ext in ('.html', '.htm'):
+            return DocumentLoaderService.load_html(content, filename)
         elif ext in ['.xlsx', '.xls']:
             return DocumentLoaderService.load_xlsx(content, filename)
         elif ext == '.csv':

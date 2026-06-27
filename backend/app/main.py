@@ -350,11 +350,12 @@ async def _prewarm_case_assistant_runtime():
 
         prewarm_report = await asyncio.to_thread(prewarm_chat_runtime)
         logger.info(
-            "Case assistant runtime pre-warmed: dp=%s rag=%s classifier=%s legal_llm=%s elapsed_ms=%s",
+            "Case assistant runtime pre-warmed: dp=%s rag=%s classifier=%s legal_llm=%s docling=%s elapsed_ms=%s",
             bool(prewarm_report.get("document_processor_ready")),
             bool(prewarm_report.get("rag_service_ready")),
             bool(prewarm_report.get("classifier_ready")),
             bool(prewarm_report.get("legal_llm_ready")),
+            bool(prewarm_report.get("docling_ready")),
             int(prewarm_report.get("elapsed_ms") or 0),
         )
     except Exception as exc:

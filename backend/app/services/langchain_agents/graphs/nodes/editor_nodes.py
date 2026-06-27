@@ -52,18 +52,48 @@ def _append_editor_turn_message(state: ChatGraphState, content: str) -> List[Any
 
 # ============== Pydantic Models for Structured Outputs ==============
 
-EDIT_GENERATION_SYSTEM_PROMPT = """Ты — юридический редактор. Тебе передан HTML юридического документа.
-Каждый значимый блок (абзац, заголовок, пункт списка, ячейка таблицы) имеет атрибут id="UUID" на открывающем теге.
+EDIT_PLAN_SYSTEM_PROMPT = """Ты — юридический редактор. Составь только ПЛАН правок (схема EditScopePlanSchema).
 
-Твоя задача — вернуть JSON со списком правок (схема EditsResponse).
+Каждый блок документа имеет id="UUID" в OUTLINE.
 
-Для КАЖДОЙ правки:
-1. Если переписываешь блок ЦЕЛИКОМ — укажи node_id (скопируй UUID из OUTLINE БЕЗ ИЗМЕНЕНИЯ СИМВОЛОВ) и new_text.
-   Поле original_text ОБЯЗАТЕЛЬНО: точная копия текущего текста блока (plain text, как в OUTLINE), для fallback на клиенте.
-2. Если меняешь фразу ВНУТРИ блока — укажи original_text (точный фрагмент из HTML) и new_text; node_id не указывай.
-3. Категорически запрещено выдумывать id, которых нет в OUTLINE или HTML.
-4. Не меняй id, не добавляй новые теги с id — только текстовые правки.
-5. Учитывай историю диалога: местоимения («его», «это») и отсылки к прошлым ответам ассистента — подставляй факты из истории (ИНН, адреса, суммы)."""
+Правила плана:
+- target_count = число ОТДЕЛЬНЫХ мест для изменения.
+- Каждая цель в targets: location (где), change (что менять), node_id (если известен из OUTLINE).
+- Одна конкретная фраза в одном месте → target_count = 1.
+- Несколько разделов, «везде», «приведи в соответствие» → target_count = N.
+- Если в истории диалога ассистент назвал N несоответствий или перечислил N проблем → target_count = N (не меньше).
+- Если передан блок ОБЯЗАТЕЛЬНЫЕ ЦЕЛИ — включи каждую как отдельную цель, не уменьшай число.
+- Выделение пользователя — подсказка, не ограничение при широком запросе или истории."""
+
+EDIT_SINGLE_TARGET_SYSTEM_PROMPT = """Ты — юридический редактор. Сгенерируй РОВНО ОДНУ правку для указанной цели.
+
+HTML документа и OUTLINE переданы. Верни SingleEditResponse с одним edit:
+- Переписываешь блок целиком → node_id + original_text (из OUTLINE/HTML) + new_text.
+- Меняешь фразу внутри блока → original_text (точная подстрока) + new_text, без node_id.
+- Не выдумывай id. Только текстовые правки."""
+
+EDIT_GENERATION_SYSTEM_PROMPT = EDIT_PLAN_SYSTEM_PROMPT
+
+
+class EditTargetPlanSchema(BaseModel):
+    """Одна цель правки в плане."""
+    location: str = Field(..., description="Где в документе (раздел, пункт, смысл блока)")
+    change: str = Field(..., description="Что именно изменить в этом месте")
+    node_id: Optional[str] = Field(
+        None,
+        description="node_id из OUTLINE, если цель привязана к конкретному блоку",
+    )
+
+
+class EditScopePlanSchema(BaseModel):
+    """План масштаба правки: сколько мест затронуто."""
+    target_count: int = Field(..., ge=1, description="Число отдельных мест для изменения")
+    targets: List[EditTargetPlanSchema] = Field(
+        ...,
+        min_length=1,
+        description="Список целей; длина должна соответствовать target_count",
+    )
+
 
 class StructuredEditSchema(BaseModel):
     """Схема для одного структурированного изменения"""
@@ -81,9 +111,16 @@ class StructuredEditSchema(BaseModel):
 
 
 class EditsResponse(BaseModel):
-    """Ответ с структурированными правками"""
-    edits: List[StructuredEditSchema] = Field(..., description="Список правок")
-    reasoning: str = Field(..., description="Обоснование правок")
+    """Legacy combined response (tests / fallbacks)."""
+    scope: EditScopePlanSchema = Field(..., description="План: сколько мест и какие цели")
+    edits: List[StructuredEditSchema] = Field(..., description="Список правок — по одной на каждую цель")
+    reasoning: str = Field(..., description="Краткое обоснование плана и правок")
+
+
+class SingleEditResponse(BaseModel):
+    """Одна правка для одной цели из плана."""
+    edit: StructuredEditSchema = Field(..., description="Правка для цели")
+    reasoning: str = Field(default="", description="Краткое обоснование")
 
 
 class DocumentAnalysisSchema(BaseModel):
@@ -223,6 +260,157 @@ def _enrich_block_edit(
         "context_after": "",
         "found_in_document": found_id,
     }
+
+
+def _scope_plan_to_dict(scope: Any) -> Dict[str, Any]:
+    """Serialize scope from Pydantic model or dict."""
+    if scope is None:
+        return {"target_count": 0, "targets": []}
+    if hasattr(scope, "model_dump"):
+        return scope.model_dump()
+    if isinstance(scope, dict):
+        return scope
+    return {"target_count": 0, "targets": []}
+
+
+def _expand_llm_edits_to_raw(
+    edits_list: List[Any],
+    document_context: str,
+) -> List[Dict[str, Any]]:
+    """Turn LLM edit proposals into client-ready structured_edits (with occurrence expansion)."""
+    raw_edits: List[Dict[str, Any]] = []
+
+    for edit in edits_list:
+        original_text = edit.original_text if hasattr(edit, "original_text") else edit.get("original_text", "")
+        node_id = edit.node_id if hasattr(edit, "node_id") else edit.get("node_id")
+        new_text = edit.new_text if hasattr(edit, "new_text") else edit.get("new_text", "")
+
+        if not original_text and not node_id:
+            continue
+
+        if node_id:
+            enriched = _enrich_block_edit(
+                node_id=node_id,
+                original_text=original_text,
+                new_text=new_text,
+                document_context=document_context,
+            )
+            if not enriched["found_in_document"]:
+                logger.warning("[GenerateEdits] node_id not found: %s", node_id)
+            raw_edits.append(enriched)
+            continue
+
+        occurrences: List[int] = []
+        search_from = 0
+        while original_text:
+            idx = document_context.find(original_text, search_from)
+            if idx == -1:
+                break
+            occurrences.append(idx)
+            search_from = idx + len(original_text)
+
+        if not occurrences:
+            raw_edits.append({
+                "id": f"edit-{uuid.uuid4().hex[:8]}",
+                "original_text": original_text,
+                "node_id": node_id,
+                "new_text": new_text,
+                "context_before": "",
+                "context_after": "",
+                "found_in_document": False,
+            })
+            logger.warning(
+                "[GenerateEdits] Edit text not found: '%s…'",
+                (original_text or "")[:100],
+            )
+        else:
+            for pos in occurrences:
+                ctx_before = document_context[max(0, pos - 50):pos]
+                ctx_after = document_context[
+                    pos + len(original_text):pos + len(original_text) + 50
+                ]
+                raw_edits.append({
+                    "id": f"edit-{uuid.uuid4().hex[:8]}",
+                    "original_text": original_text,
+                    "node_id": node_id,
+                    "new_text": new_text,
+                    "context_before": ctx_before,
+                    "context_after": ctx_after,
+                    "found_in_document": True,
+                })
+            logger.info(
+                "[GenerateEdits] '%s…' → '%s…' (%d вхождений)",
+                original_text[:50],
+                new_text[:50],
+                len(occurrences),
+            )
+
+    return raw_edits
+
+
+def _build_edits_user_prompt(
+    *,
+    question: str,
+    memory_block: str,
+    outline_json: str,
+    doc_text: str,
+    selected_text: str,
+    correction_hint: str = "",
+    pending_targets_block: str = "",
+) -> str:
+    selection_block = ""
+    if selected_text:
+        selection_block = (
+            "\nВЫДЕЛЕНИЕ ПОЛЬЗОВАТЕЛЯ (подсказка фокуса; не ограничивай план, если запрос или история шире):\n"
+            f"{selected_text}\n"
+        )
+    correction_block = f"\n{correction_hint}\n" if correction_hint else ""
+    pending_block = f"\n{pending_targets_block}\n" if pending_targets_block else ""
+
+    return f"""ЗАПРОС ПОЛЬЗОВАТЕЛЯ:
+{question}
+{memory_block}{selection_block}{pending_block}{correction_block}
+OUTLINE (блоки с node_id — единственный источник допустимых id):
+{outline_json}
+
+ДОКУМЕНТ (HTML, атрибут id на блоках):
+{doc_text}
+
+Напоминание:
+- Верни только scope (план целей): target_count и targets.
+- Одинаковая фраза в нескольких местах — отдельная цель на каждое вхождение.
+- Если в запросе «вставь его/это» — возьми значение из истории диалога."""
+
+
+def _build_single_target_user_prompt(
+    *,
+    question: str,
+    memory_block: str,
+    outline_json: str,
+    doc_text: str,
+    target: Dict[str, Any],
+    target_index: int,
+    target_total: int,
+) -> str:
+    location = (target.get("location") or "").strip()
+    change = (target.get("change") or "").strip()
+    node_id = target.get("node_id")
+    node_hint = f"\nnode_id из плана: {node_id}" if node_id else ""
+
+    return f"""ЗАПРОС ПОЛЬЗОВАТЕЛЯ (общий контекст):
+{question}
+{memory_block}
+ЦЕЛЬ {target_index} из {target_total}:
+- Где: {location}
+- Что изменить: {change}{node_hint}
+
+OUTLINE:
+{outline_json}
+
+ДОКУМЕНТ (HTML):
+{doc_text}
+
+Верни ровно одну правку (edit) для этой цели."""
 
 
 def extract_context(document: str, text: str, context_size: int = 50) -> tuple[str, str]:
@@ -557,6 +745,7 @@ def editor_enrich_case_context_node(
     Prefetch case RAG for editor subgraph (ask / edit / draft in document editor).
     Использует тот же pipeline, что и внутренний ассистент: router → hybrid → rerank.
     """
+    from app.services.langchain_agents.graphs.editor_edit_pipeline import editor_needs_case_context
     from app.services.observability.editor_langfuse_tracing import editor_node_trace
 
     with editor_node_trace(state, "editor_enrich_context") as tr:
@@ -566,6 +755,22 @@ def editor_enrich_case_context_node(
             out: Dict[str, Any] = {}
             if tr:
                 tr.set_output(out)
+            return out
+
+        attached = state.get("attached_file_ids") or []
+        if not editor_needs_case_context(
+            question,
+            editor_mode_hint=state.get("editor_mode_hint"),
+            attached_file_ids=attached,
+            selected_text=state.get("selected_text"),
+        ):
+            logger.info(
+                "[EditorEnrich] case_id=%s skip RAG — local edit without case-material signals",
+                case_id,
+            )
+            out = {"context_pipeline_meta": {"pipeline": "editor_skip", "scope_mode": "local_edit"}}
+            if tr:
+                tr.set_output({"skipped_rag": True, "reason": "local_edit"})
             return out
 
         rag = rag_service
@@ -723,62 +928,77 @@ def generate_editor_snippet_node(
             return out
 
 
-def _generate_selection_edit(
-    state: ChatGraphState,
-    selected_text: str,
+def _plan_edit_scope(
+    *,
+    llm,
     question: str,
-    document_context: str,
-) -> ChatGraphState:
-    """Fast path: user selected text — return one structured edit with exact original_text."""
-    llm = create_legal_llm(use_rate_limiting=False)
-    memory_section = _editor_memory_section(state)
-    system_prompt = (
-        "Ты — AI-ассистент для точечного редактирования юридических текстов.\n\n"
-        "Пользователь выделил конкретный фрагмент и хочет применить к нему инструкцию.\n\n"
-        "Учитывай историю диалога: «его/это» — подставляй данные из прошлых ответов ассистента.\n\n"
-        "Ответь строго в формате (две строки):\n\n"
-        "ОБЪЯСНЕНИЕ: <одно предложение — что именно ты изменяешь>\n"
-        "ЗАМЕНА: <улучшенный вариант выделенного текста>\n\n"
-        "После слова ЗАМЕНА: — только новый текст, без кавычек."
+    memory_block: str,
+    outline_json: str,
+    doc_text: str,
+    selected_text: str,
+    pending_targets_block: str,
+    correction_hint: str,
+) -> Dict[str, Any]:
+    """LLM plan step — scope only."""
+    structured_llm = llm.with_structured_output(EditScopePlanSchema)
+    user_prompt = _build_edits_user_prompt(
+        question=question,
+        memory_block=memory_block,
+        outline_json=outline_json,
+        doc_text=doc_text,
+        selected_text=selected_text,
+        correction_hint=correction_hint,
+        pending_targets_block=pending_targets_block,
     )
-    memory_block = f"\n\n{memory_section}\n" if memory_section else ""
-    user_prompt = (
-        f"ИНСТРУКЦИЯ: {question}{memory_block}\n\n"
-        f"ВЫДЕЛЕННЫЙ ТЕКСТ (работай только с ним):\n{selected_text}\n"
+    try:
+        plan = structured_llm.invoke([
+            SystemMessage(content=EDIT_PLAN_SYSTEM_PROMPT),
+            HumanMessage(content=user_prompt),
+        ])
+        if hasattr(plan, "model_dump"):
+            data = plan.model_dump()
+            return {"target_count": data.get("target_count", 0), "targets": data.get("targets") or []}
+        return _scope_plan_to_dict(plan)
+    except (AttributeError, Exception) as e:
+        logger.warning("[GenerateEdits] Plan structured output failed: %s", e)
+        return {"target_count": 0, "targets": []}
+
+
+def _execute_edit_for_target(
+    *,
+    llm,
+    question: str,
+    memory_block: str,
+    outline_json: str,
+    doc_text: str,
+    target: Dict[str, Any],
+    target_index: int,
+    target_total: int,
+) -> Optional[Any]:
+    """LLM execute step — one edit per plan target."""
+    structured_llm = llm.with_structured_output(SingleEditResponse)
+    user_prompt = _build_single_target_user_prompt(
+        question=question,
+        memory_block=memory_block,
+        outline_json=outline_json,
+        doc_text=doc_text,
+        target=target,
+        target_index=target_index,
+        target_total=target_total,
     )
-    response = llm.invoke([HumanMessage(content=system_prompt + "\n\n" + user_prompt)])
-    answer = response.content if hasattr(response, "content") else str(response)
-
-    import re as _re
-    explanation_match = _re.search(r"ОБЪЯСНЕНИЕ:\s*(.+?)(?=\nЗАМЕНА:|$)", answer, _re.DOTALL)
-    replacement_match = _re.search(r"ЗАМЕНА:\s*([\s\S]+)", answer)
-    explanation = explanation_match.group(1).strip() if explanation_match else ""
-    new_text = replacement_match.group(1).strip() if replacement_match else None
-
-    if not new_text:
-        clean = _re.sub(r"```[\s\S]*?```", "", answer, flags=_re.DOTALL).strip()
-        return {"response": clean or "Не удалось подготовить правку.", "structured_edits": []}
-
-    edit = {
-        "id": f"edit-{uuid.uuid4().hex[:8]}",
-        "original_text": selected_text,
-        "new_text": new_text,
-        "context_before": "",
-        "context_after": "",
-        "found_in_document": True,
-    }
-    resp_text = explanation or "Правка подготовлена."
-    out: Dict[str, Any] = {
-        "response": resp_text,
-        "structured_edits": [edit],
-    }
-    msgs = _append_editor_turn_message(
-        state,
-        f"{resp_text} Замена: {new_text[:500]}",
-    )
-    if msgs:
-        out["messages"] = msgs
-    return out
+    try:
+        return structured_llm.invoke([
+            SystemMessage(content=EDIT_SINGLE_TARGET_SYSTEM_PROMPT),
+            HumanMessage(content=user_prompt),
+        ])
+    except (AttributeError, Exception) as e:
+        logger.warning(
+            "[GenerateEdits] Single edit failed target %d/%d: %s",
+            target_index,
+            target_total,
+            e,
+        )
+        return None
 
 
 def generate_edits_node(
@@ -787,166 +1007,202 @@ def generate_edits_node(
     db: Session = None
 ) -> ChatGraphState:
     """
-    Генерирует structured_edits на основе запроса пользователя.
-    
-    Использует:
-    - Structured outputs вместо regex парсинга
-    - Проверку наличия текста в документе
-    
-    Паттерны из курсов:
-    - Structured outputs (Ambient Agents): вместо regex парсинга
-    
-    Сохраняет в state.structured_edits.
+    Генерирует structured_edits: план → по одной правке на цель → fail-closed.
     """
     question = state.get("question", "")
     document_context = state.get("document_context", "")
     selected_text = (state.get("selected_text") or "").strip()
-    editor_mode_hint = state.get("editor_mode_hint")
-
-    from app.services.observability.editor_langfuse_tracing import editor_node_trace
-
-    if selected_text and editor_mode_hint == "edit":
-        with editor_node_trace(state, "generate_selection_edit") as tr:
-            out = _generate_selection_edit(state, selected_text, question, document_context)
-            if tr:
-                tr.set_output(out)
-            return out
 
     if not document_context:
         logger.warning("[GenerateEdits] No document_context in state")
         return {"structured_edits": []}
 
-    logger.info(f"[GenerateEdits] Generating edits for: {question[:100]}...")
+    logger.info("[GenerateEdits] Generating edits for: %s...", question[:100])
+
+    from app.services.langchain_agents.graphs.editor_edit_handoff import (
+        format_minimum_targets_hint,
+        format_pending_targets_block,
+        merge_pending_into_scope,
+        resolve_minimum_target_count,
+        scope_meets_minimum,
+    )
+    from app.services.langchain_agents.graphs.editor_edit_pipeline import (
+        MAX_EDIT_PLAN_ATTEMPTS,
+        MAX_EDIT_TARGETS_PER_TURN,
+        build_generate_edits_document_section,
+        check_edit_plan_completeness,
+        format_incomplete_edit_failure_message,
+        format_edit_turn_response,
+        requires_broad_document_context,
+    )
+    from app.services.observability.editor_langfuse_tracing import editor_node_trace
 
     new_state = dict(state)
 
     with editor_node_trace(state, "generate_edits") as tr:
         try:
-            # Контекст приходит с фронта (context windowing); не суммаризируем — иначе теряются id.
-            doc_text = document_context
-
-            llm = create_legal_llm(use_rate_limiting=False)
-
             outline = build_document_outline(document_context)
-            outline_json = json.dumps(outline, ensure_ascii=False, indent=2) if outline else "[]"
             memory_section = _editor_memory_section(state)
             memory_block = f"\n{memory_section}\n" if memory_section else ""
+            has_history = "ИСТОРИЯ ДИАЛОГА" in memory_section
+            broad_context = requires_broad_document_context(
+                question,
+                has_dialogue_history=has_history,
+            )
 
-            edits_user_prompt = f"""ЗАПРОС ПОЛЬЗОВАТЕЛЯ:
-{question}
-{memory_block}
-OUTLINE (блоки с node_id — единственный источник допустимых id):
-{outline_json}
+            doc_text = build_generate_edits_document_section(
+                document_context,
+                question,
+                outline=outline,
+                broad_context=broad_context,
+                extra_search_text=memory_section if broad_context else "",
+            )
 
-ДОКУМЕНТ (HTML, атрибут id на блоках):
-{doc_text}
+            llm = create_legal_llm(use_rate_limiting=False)
+            outline_json = json.dumps(outline, ensure_ascii=False, indent=2) if outline else "[]"
 
-Дополнительно:
-- Замена целого блока: node_id + original_text (копия из OUTLINE) + new_text.
-- Замена фразы внутри блока: original_text + new_text, без node_id.
-- Несколько одинаковых мест — отдельная правка на каждое.
-- Если в запросе «вставь его/это» — возьми значение из истории диалога (например ИНН из ответа ассистента)."""
+            pending_targets = list(state.get("pending_edit_targets") or [])
+            minimum_targets = resolve_minimum_target_count(state, question)
+            pending_block = format_pending_targets_block(pending_targets)
 
-            try:
-                structured_llm = llm.with_structured_output(EditsResponse)
-                edits_response = structured_llm.invoke([
-                    SystemMessage(content=EDIT_GENERATION_SYSTEM_PROMPT),
-                    HumanMessage(content=edits_user_prompt),
-                ])
-            except (AttributeError, Exception) as e:
-                logger.warning(f"[GenerateEdits] Structured output failed: {e}, using fallback")
-                response = llm.invoke([
-                    SystemMessage(content=EDIT_GENERATION_SYSTEM_PROMPT),
-                    HumanMessage(content=edits_user_prompt),
-                ])
-                response_text = response.content if hasattr(response, 'content') else str(response)
-                edits_response = EditsResponse(edits=[], reasoning=response_text[:200])
+            edit_scope: Dict[str, Any] = {"target_count": 0, "targets": []}
+            correction_hint = ""
+            if minimum_targets:
+                correction_hint = format_minimum_targets_hint(minimum_targets)
 
-            raw_edits = []
-            edits_list = edits_response.edits if hasattr(edits_response, 'edits') else []
+            for attempt in range(1, MAX_EDIT_PLAN_ATTEMPTS + 1):
+                planned = _plan_edit_scope(
+                    llm=llm,
+                    question=question,
+                    memory_block=memory_block,
+                    outline_json=outline_json,
+                    doc_text=doc_text,
+                    selected_text=selected_text,
+                    pending_targets_block=pending_block,
+                    correction_hint=correction_hint,
+                )
+                edit_scope = planned
 
-            for edit in edits_list:
-                original_text = edit.original_text if hasattr(edit, 'original_text') else edit.get('original_text', '')
-                node_id = edit.node_id if hasattr(edit, 'node_id') else edit.get('node_id')
-                new_text = edit.new_text if hasattr(edit, 'new_text') else edit.get('new_text', '')
-
-                if not original_text and not node_id:
-                    continue
-
-                if node_id:
-                    enriched = _enrich_block_edit(
-                        node_id=node_id,
-                        original_text=original_text,
-                        new_text=new_text,
-                        document_context=document_context,
+                if pending_targets and not scope_meets_minimum(planned, len(pending_targets)):
+                    edit_scope = merge_pending_into_scope(planned, pending_targets)
+                    logger.info(
+                        "[GenerateEdits] Adopted pending_edit_targets as scope (%d targets)",
+                        len(edit_scope.get("targets") or []),
                     )
-                    if not enriched["found_in_document"]:
-                        logger.warning("[GenerateEdits] node_id not found: %s", node_id)
-                    raw_edits.append(enriched)
-                    continue
 
-                occurrences = []
-                search_from = 0
-                while original_text:
-                    idx = document_context.find(original_text, search_from)
-                    if idx == -1:
-                        break
-                    occurrences.append(idx)
-                    search_from = idx + len(original_text)
+                targets = edit_scope.get("targets") or []
+                if targets and scope_meets_minimum(edit_scope, minimum_targets):
+                    break
 
-                if not occurrences:
-                    raw_edits.append({
-                        "id": f"edit-{uuid.uuid4().hex[:8]}",
-                        "original_text": original_text,
-                        "node_id": node_id,
-                        "new_text": new_text,
-                        "context_before": "",
-                        "context_after": "",
-                        "found_in_document": False,
-                    })
-                    logger.warning(f"[GenerateEdits] Edit text not found: '{(original_text or '')[:100]}…'")
+                if attempt >= MAX_EDIT_PLAN_ATTEMPTS:
+                    if pending_targets:
+                        edit_scope = merge_pending_into_scope(edit_scope, pending_targets)
+                    break
+
+                hint_parts = []
+                if minimum_targets:
+                    hint_parts.append(format_minimum_targets_hint(minimum_targets))
+                if not targets:
+                    hint_parts.append("План пуст — добавь scope.targets.")
                 else:
-                    for pos in occurrences:
-                        ctx_before = document_context[max(0, pos - 50):pos]
-                        ctx_after = document_context[pos + len(original_text):pos + len(original_text) + 50]
-                        raw_edits.append({
-                            "id": f"edit-{uuid.uuid4().hex[:8]}",
-                            "original_text": original_text,
-                            "node_id": node_id,
-                            "new_text": new_text,
-                            "context_before": ctx_before,
-                            "context_after": ctx_after,
-                            "found_in_document": True,
-                        })
-                    logger.info(f"[GenerateEdits] '{original_text[:50]}…' → '{new_text[:50]}…' ({len(occurrences)} вхождений)")
+                    hint_parts.append(
+                        f"В плане {len(targets)} целей, требуется минимум {minimum_targets or 1}."
+                    )
+                correction_hint = "\n".join(hint_parts)
+
+            scope_targets = [
+                t for t in (edit_scope.get("targets") or []) if isinstance(t, dict)
+            ][:MAX_EDIT_TARGETS_PER_TURN]
+            if not scope_targets:
+                failure = format_incomplete_edit_failure_message(
+                    check_edit_plan_completeness(edit_scope, []),
+                    minimum_targets=minimum_targets,
+                )
+                new_state["structured_edits"] = []
+                new_state["edit_scope"] = edit_scope
+                new_state["response"] = failure
+                turn_msgs = _append_editor_turn_message(state, failure)
+                if turn_msgs:
+                    new_state["messages"] = turn_msgs
+                if tr:
+                    tr.set_output(new_state)
+                return new_state
+
+            edit_scope["targets"] = scope_targets
+            edit_scope["target_count"] = len(scope_targets)
+
+            raw_edits: List[Dict[str, Any]] = []
+            for idx, target in enumerate(scope_targets, start=1):
+                single = _execute_edit_for_target(
+                    llm=llm,
+                    question=question,
+                    memory_block=memory_block,
+                    outline_json=outline_json,
+                    doc_text=doc_text,
+                    target=target,
+                    target_index=idx,
+                    target_total=len(scope_targets),
+                )
+                if single is None:
+                    continue
+                edit_obj = single.edit if hasattr(single, "edit") else None
+                if edit_obj is None:
+                    continue
+                raw_edits.extend(
+                    _expand_llm_edits_to_raw([edit_obj], document_context)
+                )
+
+            completeness = check_edit_plan_completeness(edit_scope, raw_edits)
+            logger.info(
+                "[GenerateEdits] scope_targets=%d edits=%d complete=%s min=%s",
+                completeness.expected_targets,
+                completeness.actual_edits,
+                completeness.is_complete,
+                minimum_targets,
+            )
+
+            if not completeness.is_complete:
+                failure = format_incomplete_edit_failure_message(
+                    completeness,
+                    minimum_targets=minimum_targets,
+                )
+                new_state["structured_edits"] = []
+                new_state["edit_scope"] = edit_scope
+                new_state["response"] = failure
+                turn_msgs = _append_editor_turn_message(state, failure)
+                if turn_msgs:
+                    new_state["messages"] = turn_msgs
+                if tr:
+                    tr.set_output(new_state)
+                return new_state
 
             new_state["structured_edits"] = raw_edits
-            logger.info(f"[GenerateEdits] Generated {len(raw_edits)} edits (from {len(edits_list)} LLM edits)")
-            summary = f"Подготовлено правок: {len(raw_edits)}."
-            if raw_edits:
-                preview = (raw_edits[0].get("new_text") or "")[:200]
-                if preview:
-                    summary += f" Пример замены: {preview}"
+            new_state["edit_scope"] = edit_scope
+            new_state["pending_edit_targets"] = None
+            logger.info(
+                "[GenerateEdits] Generated %d edits (scope targets=%d)",
+                len(raw_edits),
+                len(scope_targets),
+            )
+
+            summary = format_edit_turn_response(raw_edits)
             turn_msgs = _append_editor_turn_message(state, summary)
             if turn_msgs:
                 new_state["messages"] = turn_msgs
+            new_state["response"] = summary
             if tr:
                 tr.set_output(new_state)
             return new_state
         except Exception as e:
-            logger.error(f"[GenerateEdits] Error: {e}", exc_info=True)
-            new_state["errors"] = (new_state.get("errors") or []) + [f"Generate edits error: {str(e)}"]
+            logger.error("[GenerateEdits] Error: %s", e, exc_info=True)
+            new_state["errors"] = (new_state.get("errors") or []) + [
+                f"Generate edits error: {str(e)}"
+            ]
             new_state["structured_edits"] = []
             if tr:
                 tr.set_output(new_state)
             return new_state
 
-
-class ValidationResultSchema(BaseModel):
-    """Схема для результата валидации"""
-    is_valid: bool = Field(..., description="Валидны ли правки")
-    errors: List[str] = Field(default_factory=list, description="Список ошибок")
-    warnings: List[str] = Field(default_factory=list, description="Список предупреждений")
 
 
 def validate_edits_node(
@@ -955,19 +1211,14 @@ def validate_edits_node(
     db: Session = None
 ) -> ChatGraphState:
     """
-    Валидирует structured_edits перед применением.
-    
-    Использует:
-    - Hard limits: максимум 3 итерации валидации
-    - Think tool: рефлексия перед валидацией
-    - Structured outputs: для гарантированного формата
-    
-    Паттерны из курсов:
-    - Hard limits (Deep Research): ограничение итераций
-    - Think tool (Deep Research): рефлексия перед валидацией
-    
-    Устанавливает state.edits_valid (bool).
+    Детерминированная валидация structured_edits перед показом в UI.
+
+    Без LLM: проверяем node_id / original_text в HTML, обогащаем found_in_document.
+    Граф не возвращается к generate_edits. Неполный план → fail-closed (пустой список правок).
     """
+    from app.services.langchain_agents.graphs.editor_edit_pipeline import (
+        validate_structured_edits_deterministic,
+    )
     from app.services.observability.editor_langfuse_tracing import editor_node_trace
 
     with editor_node_trace(state, "validate_edits") as tr:
@@ -975,112 +1226,36 @@ def validate_edits_node(
         document_context = state.get("document_context", "")
 
         if not structured_edits:
-            logger.warning("[ValidateEdits] No structured_edits to validate")
-            out = {"edits_valid": True}
+            logger.info("[ValidateEdits] No structured_edits to validate")
+            out = {"edits_valid": True, "structured_edits": []}
             if tr:
                 tr.set_output(out)
             return out
 
-        MAX_VALIDATION_ITERATIONS = 3
-        iteration = state.get("edit_validation_iteration", 0)
-
-        if iteration >= MAX_VALIDATION_ITERATIONS:
-            logger.warning(
-                "[ValidateEdits] Max iterations (%s) reached, forcing valid",
-                MAX_VALIDATION_ITERATIONS,
-            )
-            out = {"edits_valid": True}
-            if tr:
-                tr.set_output(out)
-            return out
-
-        logger.info(
-            "[ValidateEdits] Validating %s edits (iteration %s/%s)",
-            len(structured_edits),
-            iteration + 1,
-            MAX_VALIDATION_ITERATIONS,
+        result = validate_structured_edits_deterministic(
+            structured_edits,
+            document_context,
+            node_id_in_document=_node_id_in_document,
+            extract_block_text_by_node_id=_extract_block_text_by_node_id,
+            edit_scope=state.get("edit_scope"),
         )
 
-        new_state = dict(state)
+        logger.info(
+            "[ValidateEdits] Deterministic validation: valid=%s edits=%s warnings=%s",
+            result.is_valid,
+            len(result.enriched_edits),
+            len(result.warnings),
+        )
 
-        for edit in structured_edits:
-            if not isinstance(edit, dict):
-                continue
-            node_id = edit.get("node_id")
-            original_text = edit.get("original_text") or ""
-            if node_id:
-                if not (edit.get("original_text") or "").strip():
-                    edit["original_text"] = _extract_block_text_by_node_id(
-                        document_context, node_id
-                    )
-                edit["found_in_document"] = _node_id_in_document(node_id, document_context)
-            elif original_text and "found_in_document" not in edit:
-                edit["found_in_document"] = original_text in document_context
-
-        try:
-            if iteration > 0:
-                reflection = (
-                    f"Валидация {iteration + 1}. Предыдущая валидация нашла ошибки. "
-                    "Нужно проверить более тщательно."
-                )
-                think_tool(reflection, state)
-
-            if len(document_context) > 5000:
-                summary = summarize_document(document_context, max_length=5000)
-                doc_text = (
-                    f"SUMMARY:\n{summary}\n\nFULL_DOCUMENT_LENGTH: {len(document_context)} chars\n\n"
-                    f"FULL_DOCUMENT:\n{document_context}"
-                )
-            else:
-                doc_text = document_context
-
-            llm = create_legal_llm(use_rate_limiting=False)
-            validation_prompt = f"""Проверь следующие структурированные правки для документа на корректность.
-
-ДОКУМЕНТ:
-{doc_text}
-
-ПРАВКИ:
-{json.dumps(structured_edits, ensure_ascii=False, indent=2)}
-
-Проверь:
-1. Для правок с node_id — id должен существовать в HTML документа (атрибут id=...)
-2. Для правок с original_text — фрагмент должен быть в документе
-3. Логичность замены (new_text соответствует запросу)
-4. Отсутствие конфликтов между правками
-
-Ответь в формате JSON согласно схеме ValidationResultSchema."""
-
-            try:
-                structured_llm = llm.with_structured_output(ValidationResultSchema)
-                validation_result = structured_llm.invoke([HumanMessage(content=validation_prompt)])
-            except (AttributeError, Exception) as e:
-                logger.warning(f"[ValidateEdits] Structured output failed: {e}, using fallback")
-                all_found = all(edit.get("found_in_document", False) for edit in structured_edits)
-                validation_result = ValidationResultSchema(
-                    is_valid=all_found,
-                    errors=[] if all_found else ["Некоторые правки не найдены в документе"],
-                    warnings=[],
-                )
-
-            is_valid = validation_result.is_valid if hasattr(validation_result, "is_valid") else True
-            errors = validation_result.errors if hasattr(validation_result, "errors") else []
-
-            new_state["edits_valid"] = is_valid
-            new_state["edit_errors"] = errors
-            new_state["edit_validation_iteration"] = iteration + 1
-
-            logger.info(f"[ValidateEdits] Validation result: valid={is_valid}, errors={len(errors)}")
-
-        except Exception as e:
-            logger.error(f"[ValidateEdits] Error: {e}", exc_info=True)
-            new_state["errors"] = (new_state.get("errors") or []) + [f"Validation error: {str(e)}"]
-            new_state["edits_valid"] = True
-            new_state["edit_errors"] = []
-
+        out = {
+            "structured_edits": result.enriched_edits if result.is_valid else [],
+            "edits_valid": result.is_valid,
+            "edit_errors": result.errors,
+            "edit_warnings": result.warnings,
+        }
         if tr:
-            tr.set_output(new_state)
-        return new_state
+            tr.set_output(out)
+        return out
 
 
 def apply_edits_node(
@@ -1089,89 +1264,93 @@ def apply_edits_node(
     db: Session = None
 ) -> ChatGraphState:
     """
-    Применяет валидированные structured_edits к документу.
-    
-    Обновляет Memory/Store с preferences редактора.
-    
-    Паттерны из курсов:
-    - Memory/Store (Ambient Agents): сохранение preferences редактора
-    
-    Примечание: Command объекты используются для interrupts/resume,
-    не для state updates в узлах. Здесь просто возвращаем обновлённое состояние.
+    Финализация edit-turn: короткий ответ в чат, без мутации HTML на сервере.
+
+    Правки применяет клиент (TipTap) по structured_edits / node_id.
     """
+    from app.config import config as app_config
+    from app.services.langchain_agents.graphs.editor_edit_pipeline import format_edit_turn_response
     from app.services.observability.editor_langfuse_tracing import editor_node_trace
 
     with editor_node_trace(state, "apply_edits") as tr:
-        structured_edits = state.get("structured_edits", [])
-        document_context = state.get("document_context", "")
-        user_id = state.get("user_id", "")
+        import re as _re_apply
+
+        work_state = dict(state)
+        question = (work_state.get("question") or "").lower()
+
+        if work_state.get("waiting_for_edits_approval") and _re_apply.search(
+            r"\b(одобр|подтвержда|согласен)\b",
+            question,
+        ):
+            work_state["edits_approved"] = True
+            work_state["waiting_for_edits_approval"] = False
+
+        structured_edits = work_state.get("structured_edits", [])
+        user_id = work_state.get("user_id", "")
 
         if not structured_edits:
-            logger.warning("[ApplyEdits] No structured_edits to apply")
+            logger.info("[ApplyEdits] No structured_edits — nothing to finalize")
+            prior = (work_state.get("response") or "").strip()
+            response = prior if prior else format_edit_turn_response([])
+            out = {
+                "response": response,
+                "messages": [AIMessage(content=response)],
+            }
             if tr:
-                tr.set_output({"skipped": True})
-            return state
+                tr.set_output(out)
+            return out
 
-        max_auto_apply = 10
-        edits_approved = bool(state.get("edits_approved", False))
+        max_auto_apply = max(
+            1,
+            int(getattr(app_config, "EDITOR_MASS_EDIT_APPROVAL_THRESHOLD", 10) or 10),
+        )
+        edits_approved = bool(work_state.get("edits_approved", False))
         if len(structured_edits) > max_auto_apply and not edits_approved:
-            new_state = dict(state)
-            new_state["waiting_for_edits_approval"] = True
-            new_state["response"] = (
-                f"Я подготовил {len(structured_edits)} правок — это много, поэтому перед применением нужно подтверждение.\n\n"
-                "Напишите «одобряю правки», чтобы применить, или «отмена», чтобы отменить."
+            response = format_edit_turn_response(
+                structured_edits,
+                waiting_for_approval=True,
+                approval_count=len(structured_edits),
             )
+            new_state = dict(work_state)
+            new_state["waiting_for_edits_approval"] = True
+            new_state["response"] = response
+            new_state["messages"] = [AIMessage(content=response)]
             if tr:
                 tr.set_output(new_state)
             return new_state
 
-        logger.info(f"[ApplyEdits] Applying {len(structured_edits)} edits")
+        response = format_edit_turn_response(structured_edits)
+        prior = (work_state.get("response") or "").strip()
+        if prior and len(structured_edits) == 1 and "Предлагаю" not in prior:
+            response = prior
 
-        new_state = dict(state)
+        new_state = dict(work_state)
+        new_state["waiting_for_edits_approval"] = False
+        new_state["response"] = response
+        new_state["messages"] = [AIMessage(content=response)]
 
-        try:
-            edited_content = document_context
-            changes_applied = 0
+        store = config.get("store") if config else None
+        if store and user_id:
+            try:
+                from datetime import datetime
 
-            for edit in structured_edits:
-                if edit.get("found_in_document", False):
-                    original_text = edit.get("original_text", "")
-                    new_text = edit.get("new_text", "")
+                preferences = {
+                    "last_edit_type": "structured_edit_proposal",
+                    "edits_count": len(structured_edits),
+                    "found_in_document_count": sum(
+                        1 for e in structured_edits if e.get("found_in_document")
+                    ),
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
+                if hasattr(store, "put"):
+                    store.put(("editor_preferences", user_id), "preferences", preferences)
+            except Exception as store_e:
+                logger.debug("[ApplyEdits] Store preferences skipped: %s", store_e)
 
-                    if original_text in edited_content:
-                        edited_content = edited_content.replace(original_text, new_text, 1)
-                        changes_applied += 1
-                        logger.debug(
-                            f"[ApplyEdits] Applied edit: '{original_text[:50]}…' → '{new_text[:50]}…'"
-                        )
-
-            store = config.get("store") if config else None
-            if store and user_id:
-                try:
-                    from datetime import datetime
-                    preferences = {
-                        "last_edit_type": "structured_edit",
-                        "edits_count": len(structured_edits),
-                        "changes_applied": changes_applied,
-                        "timestamp": datetime.utcnow().isoformat(),
-                    }
-
-                    if hasattr(store, "put"):
-                        store.put(("editor_preferences", user_id), "preferences", preferences)
-                        logger.debug(f"[ApplyEdits] Updated editor preferences in Store for user {user_id}")
-                except Exception as store_e:
-                    logger.debug(f"[ApplyEdits] Could not update preferences in Store: {store_e}")
-
-            new_state["edited_content"] = edited_content
-            new_state["changes_applied"] = changes_applied
-
-            logger.info(f"[ApplyEdits] Applied {changes_applied} edits, new length: {len(edited_content)}")
-
-        except Exception as e:
-            logger.error(f"[ApplyEdits] Error: {e}", exc_info=True)
-            new_state["errors"] = (new_state.get("errors") or []) + [f"Apply edits error: {str(e)}"]
-            new_state["edited_content"] = document_context
-
+        logger.info(
+            "[ApplyEdits] Finalized %s edit proposal(s) for client apply",
+            len(structured_edits),
+        )
         if tr:
             tr.set_output(new_state)
         return new_state

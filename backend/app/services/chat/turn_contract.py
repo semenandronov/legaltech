@@ -18,6 +18,15 @@ EDITOR_PATCH_EMIT_NODES = frozenset(
     }
 )
 
+# Nodes that emit the final assistant message for editor chat (without generate_response LLM).
+EDITOR_FINAL_RESPONSE_NODES = frozenset(
+    {
+        "generate_response",
+        "apply_edits",
+        "generate_editor_snippet",
+    }
+)
+
 
 def normalize_editor_intent(editor_mode_hint: Optional[str]) -> EditorTurnIntent:
     raw = (editor_mode_hint or "ask").strip().lower()

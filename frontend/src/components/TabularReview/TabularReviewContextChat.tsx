@@ -1,15 +1,16 @@
 "use client"
 
 import React, { useState, useCallback, useEffect, useRef } from "react"
-import { UserMessage, AssistantMessage } from "@/components/ai-elements/message"
+import { AssistantMessage } from "@/components/ai-elements/message"
 import { tabularReviewApi } from "@/services/tabularReviewApi"
 import { toast } from "sonner"
 import { Loader } from "@/components/ai-elements/loader"
-import { ArrowRight, MessageSquare, Sparkles } from "lucide-react"
+import { ArrowRight, ChevronLeft, MessageSquare, Square } from "lucide-react"
 
 interface TabularReviewContextChatProps {
   reviewId: string
   reviewName: string
+  onClose?: () => void
 }
 
 interface Message {
@@ -30,6 +31,7 @@ const SUGGESTED_PROMPTS = [
 export const TabularReviewContextChat: React.FC<TabularReviewContextChatProps> = ({
   reviewId,
   reviewName,
+  onClose,
 }) => {
   const [messages, setMessages] = useState<Message[]>([])
   const [inputValue, setInputValue] = useState("")
@@ -167,47 +169,69 @@ export const TabularReviewContextChat: React.FC<TabularReviewContextChatProps> =
     [reviewId, isLoading],
   )
 
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = "auto"
+    el.style.height = `${Math.min(el.scrollHeight, 192)}px`
+    el.style.overflowY = el.scrollHeight > 192 ? "auto" : "hidden"
+  }, [inputValue])
+
+  const handleCancel = useCallback(() => {
+    abortRef.current?.abort()
+    setIsLoading(false)
+    setMessages((prev) =>
+      prev.map((m) => (m.isStreaming ? { ...m, isStreaming: false } : m)),
+    )
+  }, [])
+
+  const handleInputAction = useCallback(() => {
+    if (isLoading) {
+      handleCancel()
+      return
+    }
+    void handleSend(inputValue)
+  }, [handleCancel, handleSend, inputValue, isLoading])
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
-      void handleSend(inputValue)
+      handleInputAction()
     }
   }
 
-  const promptChipClass =
-    "text-xs px-3 py-1.5 rounded-full border transition-colors disabled:opacity-50 text-left"
+  const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInputValue(e.target.value)
+    const el = e.target
+    el.style.height = "auto"
+    el.style.height = `${Math.min(el.scrollHeight, 192)}px`
+    el.style.overflowY = el.scrollHeight > 192 ? "auto" : "hidden"
+  }
 
   return (
-    <div
-      className="flex flex-col h-full min-h-0"
-      style={{ backgroundColor: "var(--color-bg-elevated)" }}
-    >
-      {/* Header */}
-      <div
-        className="px-4 pt-4 pb-3 border-b shrink-0"
-        style={{ borderColor: "var(--color-border)", minHeight: "54px" }}
-      >
-        <div className="flex items-center justify-between gap-2">
-          <span
-            className="text-xs font-semibold uppercase tracking-wider shrink-0"
-            style={{ color: "var(--color-text-muted)" }}
-          >
-            Чат по таблице
-          </span>
-          <span
-            className="text-xs truncate max-w-[160px] text-right"
-            style={{ color: "var(--color-text-muted)" }}
-            title={reviewName}
-          >
+    <div className="flex flex-col h-full min-h-0">
+      <div className="ws-tabular-chat-header">
+        <div className="flex items-center gap-1 min-w-0">
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="ws-tabular-chat-header-btn"
+              title="Закрыть ассистента"
+              aria-label="Закрыть ассистента"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </button>
+          )}
+          <span className="ws-tabular-chat-title truncate">
             {reviewName}
           </span>
         </div>
       </div>
 
-      {/* Messages */}
       <div
         ref={scrollContainerRef}
-        className={`flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 py-3 ${
+        className={`flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 pt-4 ${
           hasMessages ? "space-y-4" : "flex flex-col"
         }`}
       >
@@ -216,66 +240,43 @@ export const TabularReviewContextChat: React.FC<TabularReviewContextChatProps> =
             <Loader />
           </div>
         ) : !hasMessages ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-4 px-2 py-6 text-center">
-            <div
-              className="w-10 h-10 rounded-xl flex items-center justify-center"
-              style={{ backgroundColor: "var(--color-bg-primary)" }}
-            >
-              <MessageSquare className="w-5 h-5" style={{ color: "var(--color-text-muted)" }} />
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 py-8 text-center">
+            <div className="ws-tabular-chat-empty-icon" aria-hidden>
+              <MessageSquare className="w-6 h-6 text-gray-300" />
             </div>
-            <div>
-              <p className="text-sm font-medium" style={{ color: "var(--color-text-primary)" }}>
-                Вопросы по данным таблицы
-              </p>
-              <p className="text-xs mt-1 leading-relaxed" style={{ color: "var(--color-text-muted)" }}>
-                Ответы строятся только по заполненным ячейкам — без доступа к полным текстам документов.
-              </p>
-            </div>
-            <div className="w-full space-y-2">
-              <p
-                className="text-xs font-semibold uppercase tracking-wider text-left"
-                style={{ color: "var(--color-text-muted)" }}
-              >
-                Подсказки
-              </p>
-              <div className="flex flex-col gap-1.5">
-                {SUGGESTED_PROMPTS.map((prompt) => (
-                  <button
-                    key={prompt}
-                    type="button"
-                    disabled={isLoading}
-                    onClick={() => void handleSend(prompt)}
-                    className="w-full text-left px-3 py-2 rounded-lg text-xs transition-colors border"
-                    style={{
-                      borderColor: "var(--color-border)",
-                      color: "var(--color-text-secondary)",
-                      backgroundColor: "var(--color-bg-primary)",
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.backgroundColor = "var(--color-bg-hover)"
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.backgroundColor = "var(--color-bg-primary)"
-                    }}
-                  >
-                    {prompt}
-                  </button>
-                ))}
-              </div>
+            <p className="text-gray-400 font-serif text-sm leading-relaxed max-w-[240px]">
+              Задайте вопрос по данным этой таблицы
+            </p>
+            <div className="w-full max-w-[280px] space-y-1.5 mt-2">
+              {SUGGESTED_PROMPTS.map((prompt) => (
+                <button
+                  key={prompt}
+                  type="button"
+                  disabled={isLoading}
+                  onClick={() => void handleSend(prompt)}
+                  className="ws-tabular-chat-suggestion-btn"
+                >
+                  {prompt}
+                </button>
+              ))}
             </div>
           </div>
         ) : (
           <>
             {messages.map((message) => {
               if (message.role === "user") {
-                return <UserMessage key={message.id} content={message.content} />
+                return (
+                  <div key={message.id} className="flex justify-end">
+                    <div className="ws-tabular-chat-user-bubble">{message.content}</div>
+                  </div>
+                )
               }
               if (message.isStreaming && !message.content.trim()) {
                 return (
                   <div
                     key={message.id}
-                    className="flex items-center gap-2 text-sm py-1"
-                    style={{ color: "var(--color-text-muted)" }}
+                    className="flex items-center gap-2 text-xs py-1"
+                    style={{ color: 'var(--color-text-muted)' }}
                   >
                     <Loader />
                     <span>Формирую ответ…</span>
@@ -283,7 +284,7 @@ export const TabularReviewContextChat: React.FC<TabularReviewContextChatProps> =
                 )
               }
               return (
-                <div key={message.id} className="tabular-chat-assistant-msg min-w-0 overflow-x-auto">
+                <div key={message.id} className="tabular-chat-assistant-msg min-w-0 overflow-x-auto text-sm">
                   <AssistantMessage
                     content={message.content}
                     preferLegacyCitations
@@ -298,7 +299,7 @@ export const TabularReviewContextChat: React.FC<TabularReviewContextChatProps> =
               )
             })}
             {isLoading && !isStreaming && (
-              <div className="flex items-center gap-2 text-sm" style={{ color: "var(--color-text-muted)" }}>
+              <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--color-text-muted)' }}>
                 <Loader />
                 <span>Анализирую таблицу…</span>
               </div>
@@ -307,68 +308,31 @@ export const TabularReviewContextChat: React.FC<TabularReviewContextChatProps> =
         )}
       </div>
 
-      {/* Input */}
-      <div className="shrink-0 border-t px-3 pt-3 pb-3" style={{ borderColor: "var(--color-border)" }}>
-        {hasMessages && (
-          <div className="flex flex-wrap gap-1.5 mb-2">
-            {SUGGESTED_PROMPTS.map((prompt) => (
-              <button
-                key={prompt}
-                type="button"
-                disabled={isLoading || loadingHistory}
-                onClick={() => void handleSend(prompt)}
-                className={promptChipClass}
-                style={{
-                  borderColor: "var(--color-border)",
-                  color: "var(--color-text-secondary)",
-                  backgroundColor: "var(--color-bg-primary)",
-                }}
-              >
-                {prompt}
-              </button>
-            ))}
-          </div>
-        )}
-
-        <div
-          className="rounded-2xl border overflow-hidden transition-shadow focus-within:shadow-sm"
-          style={{
-            borderColor: "var(--color-border)",
-            backgroundColor: "var(--color-bg-primary)",
-          }}
-        >
+      <div className="shrink-0 px-3 pb-3 pt-2">
+        <div className="ws-tabular-chat-input-glass">
           <textarea
             ref={textareaRef}
             value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
+            onChange={handleTextareaChange}
             onKeyDown={handleKeyDown}
             placeholder="Спросите о данных в таблице…"
-            disabled={isLoading || loadingHistory}
-            rows={hasMessages ? 2 : 3}
-            className="w-full px-4 pt-3 pb-2 text-sm resize-none outline-none bg-transparent placeholder:opacity-70"
-            style={{ color: "var(--color-text-primary)" }}
+            disabled={loadingHistory}
+            rows={1}
+            className="w-full resize-none border-0 bg-transparent px-3 pt-2 pb-1 text-sm leading-6 outline-none placeholder:text-gray-400 max-h-48 overflow-hidden"
           />
-          <div className="flex items-center justify-between px-3 pb-2.5">
-            <div className="flex items-center gap-1.5 text-xs" style={{ color: "var(--color-text-muted)" }}>
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>Только ячейки таблицы</span>
-            </div>
+          <div className="flex items-center justify-end px-2 pb-1.5">
             <button
               type="button"
-              onClick={() => void handleSend(inputValue)}
-              disabled={isLoading || loadingHistory || !inputValue.trim()}
-              className="w-8 h-8 flex items-center justify-center rounded-xl transition-all disabled:opacity-30"
-              style={{
-                backgroundColor:
-                  inputValue.trim() && !isLoading ? "var(--color-text-primary)" : "var(--color-border)",
-                color:
-                  inputValue.trim() && !isLoading
-                    ? "var(--color-bg-primary)"
-                    : "var(--color-text-muted)",
-              }}
-              aria-label="Отправить"
+              onClick={handleInputAction}
+              disabled={loadingHistory || (!isLoading && !inputValue.trim())}
+              className="ws-tabular-chat-send"
+              aria-label={isLoading ? "Остановить" : "Отправить"}
             >
-              <ArrowRight className="w-4 h-4" />
+              {isLoading ? (
+                <Square className="h-3.5 w-3.5" fill="currentColor" strokeWidth={0} />
+              ) : (
+                <ArrowRight className="h-3.5 w-3.5" />
+              )}
             </button>
           </div>
         </div>

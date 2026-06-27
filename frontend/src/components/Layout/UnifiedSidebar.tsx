@@ -1,9 +1,20 @@
 import { useNavigate, useLocation } from 'react-router-dom'
-import { LucideIcon, FolderOpen, ChevronLeft, ChevronRight, Scale, FileText, Gavel } from 'lucide-react'
+import {
+  FolderOpen,
+  PanelLeft,
+  Scale,
+  FileText,
+  Gavel,
+  ChevronsUpDown,
+  LogOut,
+  type LucideIcon,
+} from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { fetchLegalCorpusStatus } from '../../services/api'
 import { useAuth } from '../../contexts/AuthContext'
 import { canAccessInternalDevTools } from '../../utils/internalDevToolsAccess'
+import { productFeatures } from '@/lib/productFeatures'
+import { cn } from '@/lib/utils'
 import './UnifiedSidebar.css'
 
 interface NavItem {
@@ -18,34 +29,89 @@ interface UnifiedSidebarProps {
   title?: string
   showBackButton?: boolean
   forceCollapsed?: boolean
+  variant?: 'default' | 'tabular'
 }
 
 const SIDEBAR_STATE_KEY = 'unified-sidebar-collapsed'
 const LEGAL_CORPUS_UPLOADER_CACHE_KEY = 'legal-corpus-is-uploader'
-const UnifiedSidebar = ({ navItems, title = 'Legal AI', showBackButton = true, forceCollapsed = false }: UnifiedSidebarProps) => {
+
+const UnifiedSidebar = ({
+  navItems,
+  title = 'Legal AI',
+  showBackButton = true,
+  forceCollapsed = false,
+  variant: _variant = 'default',
+}: UnifiedSidebarProps) => {
   const navigate = useNavigate()
   const location = useLocation()
-  const { user } = useAuth()
+  const { user, logout } = useAuth()
   const showInternalSidebarLinks = canAccessInternalDevTools(user?.email)
+  const [showLegalCorpusItem, setShowLegalCorpusItem] = useState(() => {
+    return localStorage.getItem(LEGAL_CORPUS_UPLOADER_CACHE_KEY) === '1'
+  })
+  const showLegalCorpusNav =
+    productFeatures.legalCorpusPages && showInternalSidebarLinks && showLegalCorpusItem
+  const showCourtPracticeNav = productFeatures.courtPracticePages
+  const showDraftTemplatesNav = productFeatures.draftTemplates && showInternalSidebarLinks
   const [userCollapsed, setUserCollapsed] = useState(() => {
     const saved = localStorage.getItem(SIDEBAR_STATE_KEY)
     return saved === 'true'
   })
-  const [showLegalCorpusItem, setShowLegalCorpusItem] = useState(() => {
-    return localStorage.getItem(LEGAL_CORPUS_UPLOADER_CACHE_KEY) === '1'
-  })
+  const [shouldAnimate, setShouldAnimate] = useState(false)
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false)
+
   const isCollapsed = forceCollapsed || userCollapsed
+  const isOpen = !isCollapsed
 
   const isActive = (path: string) => {
     return location.pathname === path || location.pathname.startsWith(path + '/')
   }
 
-  const shouldShowBackButton = showBackButton && location.pathname.includes('/cases/') && location.pathname !== '/cases'
-  const renderedNavItems = navItems
+  const shouldShowBackButton =
+    showBackButton && location.pathname.includes('/cases/') && location.pathname !== '/cases'
+
+  type SidebarLink = { id: string; label: string; icon: LucideIcon; path: string }
+
+  const extraLinks: SidebarLink[] = []
+  if (showLegalCorpusNav && !navItems.some((item) => item.path === '/legal-corpus')) {
+    extraLinks.push({ id: 'legal-corpus', label: 'Справочник', icon: Scale, path: '/legal-corpus' })
+  }
+  if (showCourtPracticeNav && !navItems.some((item) => item.path === '/court-practice')) {
+    extraLinks.push({ id: 'court-practice', label: 'Суд. практика', icon: Gavel, path: '/court-practice' })
+  }
+  if (showDraftTemplatesNav && !navItems.some((item) => item.path === '/admin/draft-templates')) {
+    extraLinks.push({
+      id: 'draft-templates',
+      label: 'Шаблоны Draft',
+      icon: FileText,
+      path: '/admin/draft-templates',
+    })
+  }
+
+  const allLinks: SidebarLink[] = [
+    ...(shouldShowBackButton
+      ? [{ id: 'back-cases', label: 'Дела', icon: FolderOpen, path: '/cases' }]
+      : []),
+    ...navItems,
+    ...extraLinks,
+  ]
 
   useEffect(() => {
-    localStorage.setItem(SIDEBAR_STATE_KEY, String(userCollapsed))
-  }, [userCollapsed])
+    if (!forceCollapsed) {
+      localStorage.setItem(SIDEBAR_STATE_KEY, String(userCollapsed))
+    }
+  }, [userCollapsed, forceCollapsed])
+
+  useEffect(() => {
+    if (!isOpen) setShouldAnimate(true)
+  }, [isOpen])
+
+  useEffect(() => {
+    if (!isUserMenuOpen) return
+    const handleClickOutside = () => setIsUserMenuOpen(false)
+    document.addEventListener('click', handleClickOutside)
+    return () => document.removeEventListener('click', handleClickOutside)
+  }, [isUserMenuOpen])
 
   useEffect(() => {
     let active = true
@@ -56,7 +122,6 @@ const UnifiedSidebar = ({ navItems, title = 'Legal AI', showBackButton = true, f
         if (active) setShowLegalCorpusItem(isUploader)
         localStorage.setItem(LEGAL_CORPUS_UPLOADER_CACHE_KEY, isUploader ? '1' : '0')
       } catch {
-        // Keep last known value to avoid flickering permission on transient API errors.
         if (active) {
           setShowLegalCorpusItem(localStorage.getItem(LEGAL_CORPUS_UPLOADER_CACHE_KEY) === '1')
         }
@@ -69,138 +134,193 @@ const UnifiedSidebar = ({ navItems, title = 'Legal AI', showBackButton = true, f
   }, [])
 
   const toggleCollapse = () => {
-    setUserCollapsed((prev: boolean) => !prev)
+    if (forceCollapsed) return
+    setUserCollapsed((prev) => !prev)
   }
 
-  const navPad = isCollapsed ? 'var(--space-2)' : 'var(--space-4)'
+  const getUserInitials = () => {
+    if (user?.full_name) return user.full_name.charAt(0).toUpperCase()
+    if (user?.email) return user.email.charAt(0).toUpperCase()
+    return '?'
+  }
+
+  const getDisplayName = () => {
+    if (!user) return ''
+    return user.full_name || user.email.split('@')[0] || ''
+  }
+
+  const handleLogout = async () => {
+    setIsUserMenuOpen(false)
+    await logout()
+    navigate('/login')
+  }
+
+  const glassPanelClass =
+    'bg-white/65 border border-white/70 shadow-[0_-2px_7px_rgba(15,23,42,0.044),0_5px_12px_rgba(15,23,42,0.095),inset_0_1px_0_rgba(255,255,255,0.85)] backdrop-blur-2xl'
+
+  const isTabular = _variant === 'tabular'
 
   return (
     <div
-      className={`unified-sidebar h-screen flex flex-col relative overflow-hidden transition-all duration-200 ease-in-out shrink-0 ${
-        isCollapsed ? 'w-[70px]' : 'w-[250px]'
-      }`}
+      className={cn(
+        'unified-sidebar shrink-0 flex flex-col transition-all duration-300 z-[99] relative',
+        isOpen
+          ? 'w-64 h-[calc(100dvh-1rem)] md:h-[calc(100dvh-1.5rem)]'
+          : forceCollapsed
+            ? 'w-14 h-[calc(100dvh-1rem)] md:h-[calc(100dvh-1.5rem)]'
+            : 'max-md:hidden w-14 md:h-[calc(100dvh-1.5rem)] h-auto',
+        'my-2 ml-2 md:my-3 md:ml-3 mr-0 rounded-2xl overflow-visible',
+        isTabular && isOpen && 'md:mr-1',
+        glassPanelClass,
+      )}
     >
-      <div className="relative z-10 flex flex-col h-full">
-        {title && (
-          <div
-            className="unified-sidebar__header flex items-center justify-between"
-            style={{ padding: 'var(--space-4)' }}
-          >
-            {!isCollapsed && (
-              <h1 className="unified-sidebar__title flex-1">
-                {title}
-              </h1>
-            )}
-            {isCollapsed && (
-              <div className="flex-1 flex justify-center">
-                <div className="text-xl" aria-hidden>
-                  ⚖️
-                </div>
-              </div>
-            )}
-            <button
-              type="button"
-              onClick={toggleCollapse}
-              className="unified-sidebar__toggle p-2 flex items-center justify-center"
-              aria-label={isCollapsed ? 'Развернуть меню' : 'Свернуть меню'}
-            >
-              {isCollapsed ? (
-                <ChevronRight className="w-5 h-5" aria-hidden />
-              ) : (
-                <ChevronLeft className="w-5 h-5" aria-hidden />
-              )}
-            </button>
-          </div>
+      <div
+        className={cn(
+          'items-center justify-between px-2.5 py-3 min-h-[3.25rem]',
+          !isOpen ? 'hidden md:flex' : 'flex',
         )}
-
-        <nav
-          className="flex-1 space-y-1 overflow-y-auto overflow-x-hidden"
-          style={{ padding: navPad }}
-        >
-          {shouldShowBackButton && (
+      >
+        {isOpen && (
+          <div className="px-2 min-w-0 flex-1">
             <button
               type="button"
               onClick={() => navigate('/cases')}
-              className={`unified-sidebar__link mb-2 ${isCollapsed ? 'justify-center px-2 py-3' : 'gap-3 px-4 py-3'}`}
+              className="flex items-center gap-1.5 hover:opacity-80 transition-opacity border-0 bg-transparent p-0 cursor-pointer max-w-full"
             >
-              <FolderOpen className="unified-sidebar__link-icon w-5 h-5" aria-hidden />
-              {!isCollapsed && <span className="flex-1 text-left">Дела</span>}
+              <span className="text-xl leading-none shrink-0" aria-hidden>
+                ⚖️
+              </span>
+              <span
+                className={cn(
+                  'text-2xl font-light font-serif text-gray-900 truncate',
+                  shouldAnimate && 'unified-sidebar-fade-in',
+                )}
+              >
+                {title}
+              </span>
             </button>
-          )}
+          </div>
+        )}
+        {!forceCollapsed && (
+          <button
+            type="button"
+            onClick={toggleCollapse}
+            className={cn(
+              'h-9 w-9 p-2.5 flex items-center justify-center rounded-md hover:bg-gray-100 transition-colors text-gray-700 shrink-0',
+              !isOpen && 'mx-auto',
+            )}
+            aria-label={isOpen ? 'Свернуть меню' : 'Развернуть меню'}
+          >
+            <PanelLeft className="h-4 w-4" />
+          </button>
+        )}
+      </div>
 
-          {renderedNavItems.map((item) => {
-            const Icon = item.icon
-            const active = isActive(item.path)
+      <nav className="flex flex-col min-h-0 flex-1 overflow-y-auto overflow-x-hidden pb-2">
+        {allLinks.map((item) => {
+          const Icon = item.icon
+          const active = isActive(item.path)
 
-            return (
+          return (
+            <div key={`${item.id}:${item.path}`} className="py-0.5 px-2.5">
               <button
-                key={`${item.id}:${item.path}`}
                 type="button"
                 onClick={() => navigate(item.path)}
-                className={`
-                  unified-sidebar__link
-                  ${active ? 'unified-sidebar__link--active' : ''}
-                  ${isCollapsed ? 'justify-center px-2 py-3' : 'gap-3 px-4 py-3'}
-                `}
+                aria-label={!isOpen ? item.label : undefined}
+                className={cn(
+                  'w-full h-9 flex items-center gap-3 px-2.5 py-2 rounded-md transition-colors text-left border-0 cursor-pointer',
+                  active ? 'bg-gray-200/60 text-gray-900' : 'text-gray-700 hover:bg-gray-100',
+                  !isOpen ? (forceCollapsed ? 'flex justify-center' : 'hidden md:flex justify-center') : 'flex',
+                )}
               >
-                <span className="unified-sidebar__accent" aria-hidden />
-                <Icon className="unified-sidebar__link-icon w-5 h-5" aria-hidden />
-                {!isCollapsed && <span className="flex-1 text-left">{item.label}</span>}
+                <Icon
+                  className={cn(
+                    'h-4 w-4 flex-shrink-0',
+                    active ? 'text-gray-900' : 'text-black',
+                  )}
+                  aria-hidden
+                />
+                {isOpen && (
+                  <span
+                    className={cn(
+                      'text-sm font-medium truncate',
+                      shouldAnimate && 'unified-sidebar-fade-in-2',
+                    )}
+                  >
+                    {item.label}
+                  </span>
+                )}
               </button>
-            )
-          })}
+            </div>
+          )
+        })}
+      </nav>
 
-          {showInternalSidebarLinks &&
-            showLegalCorpusItem &&
-            !navItems.some((item) => item.path === '/legal-corpus') && (
-              <button
-                type="button"
-                onClick={() => navigate('/legal-corpus')}
-                className={`
-                unified-sidebar__link
-                ${isActive('/legal-corpus') ? 'unified-sidebar__link--active' : ''}
-                ${isCollapsed ? 'justify-center px-2 py-3' : 'gap-3 px-4 py-3'}
-              `}
-              >
-                <span className="unified-sidebar__accent" aria-hidden />
-                <Scale className="unified-sidebar__link-icon w-5 h-5" aria-hidden />
-                {!isCollapsed && <span className="flex-1 text-left">Справочник</span>}
-              </button>
-            )}
-
-          {!navItems.some((item) => item.path === '/court-practice') && (
-              <button
-                type="button"
-                onClick={() => navigate('/court-practice')}
-                className={`
-                unified-sidebar__link
-                ${isActive('/court-practice') ? 'unified-sidebar__link--active' : ''}
-                ${isCollapsed ? 'justify-center px-2 py-3' : 'gap-3 px-4 py-3'}
-              `}
-              >
-                <span className="unified-sidebar__accent" aria-hidden />
-                <Gavel className="unified-sidebar__link-icon w-5 h-5" aria-hidden />
-                {!isCollapsed && <span className="flex-1 text-left">Суд. практика</span>}
-              </button>
-            )}
-
-          {showInternalSidebarLinks && !navItems.some((item) => item.path === '/admin/draft-templates') && (
+      {user && (
+        <div className="mt-auto p-1 shrink-0">
+          <div className="relative">
             <button
               type="button"
-              onClick={() => navigate('/admin/draft-templates')}
-              className={`
-                unified-sidebar__link
-                ${isActive('/admin/draft-templates') ? 'unified-sidebar__link--active' : ''}
-                ${isCollapsed ? 'justify-center px-2 py-3' : 'gap-3 px-4 py-3'}
-              `}
+              onClick={(event) => {
+                event.stopPropagation()
+                setIsUserMenuOpen((open) => !open)
+              }}
+              className={cn(
+                'flex items-center transition-colors w-full px-2.5 py-3 border-t border-white/60 rounded-xl cursor-pointer',
+                isUserMenuOpen ? 'bg-gray-200/60' : 'hover:bg-gray-100',
+                !isOpen ? (forceCollapsed ? 'justify-center' : 'hidden md:flex justify-center') : 'gap-3',
+              )}
+              aria-label={!isOpen ? getDisplayName() || user.email : undefined}
             >
-              <span className="unified-sidebar__accent" aria-hidden />
-              <FileText className="unified-sidebar__link-icon w-5 h-5" aria-hidden />
-              {!isCollapsed && <span className="flex-1 text-left">Шаблоны Draft</span>}
+              <span
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-900 text-sm font-medium text-white"
+                aria-hidden
+              >
+                {getUserInitials()}
+              </span>
+              {isOpen && (
+                <>
+                  <span className="min-w-0 flex-1 text-left">
+                    <span
+                      className={cn(
+                        'block truncate text-sm font-medium text-gray-900',
+                        shouldAnimate && 'unified-sidebar-fade-in',
+                      )}
+                    >
+                      {getDisplayName()}
+                    </span>
+                    <span
+                      className={cn(
+                        'block truncate text-xs text-gray-500',
+                        shouldAnimate && 'unified-sidebar-fade-in-2',
+                      )}
+                    >
+                      {user.email}
+                    </span>
+                  </span>
+                  <ChevronsUpDown className="h-4 w-4 shrink-0 text-gray-400" aria-hidden />
+                </>
+              )}
             </button>
-          )}
-        </nav>
-      </div>
+
+            {isUserMenuOpen && isOpen && (
+              <div
+                className="absolute bottom-full left-1 mb-1 w-full min-w-[12rem] rounded-xl border border-white/70 bg-white/90 p-1 shadow-lg backdrop-blur-xl z-50"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  onClick={() => void handleLogout()}
+                  className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-gray-700 hover:bg-white/70 transition-colors border-0 bg-transparent cursor-pointer"
+                >
+                  <LogOut className="h-4 w-4 shrink-0" aria-hidden />
+                  Выйти
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -68,6 +68,13 @@ class LegalCorpusRetrievalPlanLLM(BaseModel):
             "(например 61.2, 213.4, 223.2 — по смыслу вопроса, не по шаблону)."
         ),
     )
+    clause_ref: str = Field(
+        default="",
+        description=(
+            "Если пользователь спрашивает про конкретный пункт статьи — номер пункта "
+            "(например «3» или «1.1»). Пусто — нужна вся статья целиком."
+        ),
+    )
     search_queries: List[str] = Field(
         default_factory=list,
         description="3–6 коротких поисковых фраз для hybrid/FTS (5–18 слов, русский).",
@@ -90,6 +97,19 @@ class LegalCorpusRetrievalPlanLLM(BaseModel):
                 seen.add(a)
                 out.append(a)
         return out[:12]
+
+    @field_validator("clause_ref", mode="before")
+    @classmethod
+    def _norm_clause_ref(cls, v: object) -> str:
+        if v is None:
+            return ""
+        s = str(v).strip().replace(",", ".")
+        if not s:
+            return ""
+        parts = s.split(".")
+        if all(p.isdigit() for p in parts if p):
+            return s
+        return ""
 
     @field_validator("instrument_ids", mode="before")
     @classmethod
@@ -135,7 +155,8 @@ def _planner_system_prompt(*, max_queries: int, legal_research: bool) -> str:
         "Доступные акты (instrument_id):\n"
         f"{_instruments_catalog_blurb()}\n\n"
         "Правила:\n"
-        "- topic: article_lookup — если пользователь явно спросил текст/смысл конкретной статьи; "
+        "- topic: article_lookup — если пользователь явно спросил текст/смысл конкретной статьи "
+        "или пункта статьи; укажи clause_ref при вопросе про пункт (например п. 3 ст. 61 → clause_ref=3); "
         "challenge_transactions — оспаривание/подозрительные/предпочтительные сделки; "
         "limitation_challenge — сроки или исковая давность по оспариванию сделок; "
         "general_bankruptcy — любой другой вопрос по 127‑ФЗ (внесудебное, гражданин, реестр, ФУ, МФЦ, субсидиарка и т.д.); "
@@ -282,6 +303,10 @@ def _merge_plans(
     if llm.user_intent_summary:
         rationale_parts.insert(1, f"intent={llm.user_intent_summary[:200]}")
 
+    from app.services.legal_norm_cross_ref import normalize_article_number
+
+    user_clause_ref = normalize_article_number(llm.clause_ref or "") if llm else ""
+
     merged = LegalRetrievalPlan(
         topic=topic,
         required_articles=required,
@@ -289,6 +314,7 @@ def _merge_plans(
         search_queries=queries or det.search_queries,
         rationale="; ".join(p for p in rationale_parts if p),
         user_articles=list(det.user_articles) or extract_all_article_numbers(question),
+        user_clause_ref=user_clause_ref or det.user_clause_ref,
     )
     return merged, "llm+deterministic"
 

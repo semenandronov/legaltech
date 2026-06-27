@@ -19,12 +19,13 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
-import { MessageSquare, FileEdit, BookOpen } from 'lucide-react'
+import { buildCaseNavItems } from '@/lib/caseNavItems'
+import { useAuth } from '@/contexts/AuthContext'
+import { agentRunsEnabled } from '../lib/agentRunsPolicy'
 import ThinkingBlock from '../components/Chat/ThinkingBlock'
 import MessageContent from '../components/Chat/MessageContent'
 import { AgentInterruptCard } from '../components/AgentRuns/AgentInterruptCard'
 import { WorkflowArtifacts } from '../components/AgentRuns/WorkflowArtifacts'
-import { agentRunsEnabled } from '../lib/agentRunsPolicy'
 import {
   applyAgentRunEvent,
   artifactsFromStoredRecord,
@@ -122,6 +123,7 @@ function runSliceFromDetail(detail: Awaited<ReturnType<typeof getAgentRun>>): Ag
 
 const CaseWorkflowsPage = () => {
   const { caseId } = useParams<{ caseId: string }>()
+  const { user } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
   const runFromUrl = searchParams.get('run')
 
@@ -149,12 +151,8 @@ const CaseWorkflowsPage = () => {
   const abortRef = useRef<AbortController | null>(null)
 
   const navItems = useMemo(
-    () => [
-      { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
-      { id: 'editor', label: 'Редактор', icon: FileEdit, path: `/cases/${caseId}/editor` },
-      { id: 'playbooks', label: 'Playbooks', icon: BookOpen, path: `/cases/${caseId}/playbooks` },
-    ],
-    [caseId],
+    () => (caseId ? buildCaseNavItems(caseId, user?.email) : []),
+    [caseId, user?.email],
   )
 
   const refreshMeta = useCallback(async () => {

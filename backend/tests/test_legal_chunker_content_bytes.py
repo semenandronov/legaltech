@@ -42,6 +42,29 @@ def test_chunk_skips_docling_when_content_bytes_missing(monkeypatch):
     assert not docs[0].metadata.get("dl_meta")
 
 
+def test_chunk_skips_docling_when_loader_did_ocr_even_with_content_bytes(monkeypatch):
+    calls: list[int] = []
+
+    def _boom(*args, **kwargs):
+        calls.append(1)
+        return [], ""
+
+    monkeypatch.setattr("app.services.legal_chunker._docling_pre_segmentation", _boom)
+    chunker = LegalChunkerV2()
+    docs = chunker.chunk(
+        content_bytes=b"%PDF-1.4 fake",
+        filename="scan.pdf",
+        base_metadata={"file_id": "f1"},
+        fallback_text="# Страница 1\n\n" + ("Текст со скана. " * 20),
+        loader_did_ocr=True,
+        loader_native_text=False,
+        loader_documents=None,
+    )
+    assert calls == []
+    assert docs
+    assert str(docs[0].metadata.get("preseg_strategy") or "").startswith("ocr_")
+
+
 def test_chunk_uses_docling_when_content_bytes_present(monkeypatch):
     monkeypatch.setattr(
         "app.services.legal_chunker._docling_pre_segmentation",

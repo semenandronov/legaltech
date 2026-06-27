@@ -63,8 +63,21 @@ def test_run_legal_corpus_fast_path(monkeypatch):
     fast_docs = [
         Document(
             page_content="Статья 61 " + "текст " * 80,
-            metadata={"source_filename": "127.pdf", "section_title": "Статья 61"},
-        )
+            metadata={
+                "source_filename": "127.pdf",
+                "section_title": "Статья 61",
+                "article_number": "61",
+                "clause_ref": "1",
+            },
+        ),
+        Document(
+            page_content="2. Второй пункт " + "текст " * 80,
+            metadata={
+                "source_filename": "127.pdf",
+                "article_number": "61",
+                "clause_ref": "2",
+            },
+        ),
     ]
     lookup_plan = LegalRetrievalPlan(
         topic="article_lookup",
@@ -78,6 +91,11 @@ def test_run_legal_corpus_fast_path(monkeypatch):
         lra,
         "resolve_legal_retrieval_plan",
         lambda *a, **k: (lookup_plan, "deterministic"),
+    )
+    monkeypatch.setattr(
+        lra,
+        "_fetch_norm_tree_for_plan",
+        lambda plan, *, reference_date: ([], False),
     )
     monkeypatch.setattr(
         lra,
@@ -151,7 +169,7 @@ def test_skip_rerank_on_fast_path_sufficient():
     docs = [
         Document(
             page_content="Статья 61.2 " + "x" * 500,
-            metadata={"section_title": "Статья 61.2"},
+            metadata={"section_title": "Статья 61.2", "article_number": "61.2", "clause_ref": "1"},
         )
     ]
     assert lra._skip_rerank_on_fast_path(True, docs, plan) is True

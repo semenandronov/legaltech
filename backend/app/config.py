@@ -142,6 +142,10 @@ class Config:
     FILE_PROCESSING_MAX_PARALLEL_EMBEDDINGS: int = int(
         os.getenv("FILE_PROCESSING_MAX_PARALLEL_EMBEDDINGS", "2") or "2"
     )
+    # Docling layout/table inference (MPS/GPU): serialize to avoid oversubscription.
+    FILE_PROCESSING_MAX_PARALLEL_DOCLING: int = int(
+        os.getenv("FILE_PROCESSING_MAX_PARALLEL_DOCLING", "1") or "1"
+    )
     # How many cases may ingest files concurrently (scheduler-level cap).
     FILE_PROCESSING_MAX_CONCURRENT_CASES: int = int(
         os.getenv("FILE_PROCESSING_MAX_CONCURRENT_CASES", "2") or "2"
@@ -303,7 +307,11 @@ class Config:
     ALLOWED_EXTENSIONS: List[str] = [
         ".pdf",
         ".docx",
+        ".html",
+        ".htm",
         ".txt",
+        ".html",
+        ".htm",
         ".xlsx",
         ".csv",
         ".png",
@@ -353,8 +361,8 @@ class Config:
     PDF_OCR_MIN_EXPECTED_CHARS_PER_PAGE: int = int(
         os.getenv("PDF_OCR_MIN_EXPECTED_CHARS_PER_PAGE", "5")
     )
-    # Скан без текстового слоя: tesseract (PyMuPDF+pytesseract) | docling_easyocr (Docling, см. DOCLING_PDF_OCR_ENGINE).
-    # Для подсветки по prov: docling_easyocr + не ставить ocr:true в лоадере; LegalChunker повторно гоняет Docling по bytes.
+    # Скан без текстового слоя: локальный fallback — только Tesseract (PyMuPDF+pytesseract).
+    # Основной OCR для сканов — Yandex Vision; текст идёт в LegalChunkerV2 без повторного Docling.
     PDF_SCAN_OCR_ENGINE: str = clean_env_str(os.getenv("PDF_SCAN_OCR_ENGINE"), "tesseract").lower()
     # OCR robust settings (quota/backoff/diagnostics)
     YANDEX_OCR_MAX_RETRIES: int = int(os.getenv("YANDEX_OCR_MAX_RETRIES", "3"))
@@ -605,6 +613,10 @@ class Config:
         for x in os.getenv("DOCLING_OCR_LANGUAGES", "").split(",")
         if x.strip()
     ]
+    # Прогрев кэшированного DocumentConverter при старте API (native PDF ingest path).
+    DOCLING_WARMUP_ON_STARTUP: bool = (
+        os.getenv("DOCLING_WARMUP_ON_STARTUP", "true").strip().lower() == "true"
+    )
 
     # LLM context limits
     MAX_CONTEXT_CHARS: int = 60_000  # Приближённо к лимиту ~32k токенов
@@ -648,6 +660,24 @@ class Config:
     )
     EDITOR_ATTACH_MAX_CHARS_TOTAL: int = int(
         os.getenv("EDITOR_ATTACH_MAX_CHARS_TOTAL", "120000") or "120000"
+    )
+    # Edit mode: full HTML in generate_edits prompt when document is smaller than this.
+    EDITOR_GENERATE_EDITS_FULL_HTML_THRESHOLD: int = int(
+        os.getenv("EDITOR_GENERATE_EDITS_FULL_HTML_THRESHOLD", "12000") or "12000"
+    )
+    # Large documents: max blocks with full HTML included alongside outline.
+    EDITOR_GENERATE_EDITS_RELEVANT_BLOCK_LIMIT: int = int(
+        os.getenv("EDITOR_GENERATE_EDITS_RELEVANT_BLOCK_LIMIT", "8") or "8"
+    )
+    EDITOR_GENERATE_EDITS_BLOCK_SNIPPETS_MAX_CHARS: int = int(
+        os.getenv("EDITOR_GENERATE_EDITS_BLOCK_SNIPPETS_MAX_CHARS", "20000") or "20000"
+    )
+    EDITOR_GENERATE_EDITS_FALLBACK_HTML_CHARS: int = int(
+        os.getenv("EDITOR_GENERATE_EDITS_FALLBACK_HTML_CHARS", "16000") or "16000"
+    )
+    # Mass edit approval threshold (client applies patches; server only messages).
+    EDITOR_MASS_EDIT_APPROVAL_THRESHOLD: int = int(
+        os.getenv("EDITOR_MASS_EDIT_APPROVAL_THRESHOLD", "10") or "10"
     )
     FILE_STRUCTURED_TEXT_MAX_STORE_CHARS: int = int(
         os.getenv("FILE_STRUCTURED_TEXT_MAX_STORE_CHARS", "2000000") or "2000000"
@@ -1194,7 +1224,9 @@ class Config:
     YANDEX_EMBEDDING_SEGMENT_OVERLAP_CHARS: int = int(
         os.getenv("YANDEX_EMBEDDING_SEGMENT_OVERLAP_CHARS", "150") or "150"
     )
-    # OpenAI-compat: один текст на запрос; параллель до N (квота векторизации ~10/с).
+    # OpenAI-compat: один текст на запрос; time-window micro-batching (см. yandex_embedding_http).
+    YANDEX_EMBEDDING_RPS_LIMIT: int = int(os.getenv("YANDEX_EMBEDDING_RPS_LIMIT", "10") or "10")
+    # gRPC-only: параллель одиночных вызовов SDK (HTTP path uses RPS_LIMIT above).
     YANDEX_EMBEDDING_MAX_PARALLEL_REQUESTS: int = int(
         os.getenv("YANDEX_EMBEDDING_MAX_PARALLEL_REQUESTS")
         or os.getenv("YANDEX_EMBEDDING_BATCH_SIZE", "8")
@@ -1203,7 +1235,7 @@ class Config:
     YANDEX_EMBEDDING_MIN_REQUEST_INTERVAL_SEC: float = float(
         os.getenv("YANDEX_EMBEDDING_MIN_REQUEST_INTERVAL_SEC", "0.11") or "0.11"
     )
-    # Deprecated alias — не используйте для multi-input batch (API Yandex не поддерживает).
+    # Deprecated alias — не batch API; для gRPC parallel fallback.
     YANDEX_EMBEDDING_BATCH_SIZE: int = int(os.getenv("YANDEX_EMBEDDING_BATCH_SIZE", "8") or "8")
 
     # GigaChat (Сбер) - с поддержкой function calling

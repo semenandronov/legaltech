@@ -1,17 +1,26 @@
 """Background file processor: OCR → classify → index in PGVector.
 
-Each file is processed independently. A single call to process_files_background
-handles a batch of file IDs sequentially, sharing one DocumentProcessor instance
-to avoid re-initialising Yandex embeddings for every file.
+Each file is processed independently in a bounded thread pool (see
+``file_processing_concurrency``). A single call to ``process_files_background``
+shares one ``DocumentProcessor`` instance across workers to avoid re-initialising
+Yandex embeddings for every file.
 """
 from __future__ import annotations
 
-import logging
-from typing import List
 import hashlib
+import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List
 
+from langchain_core.documents import Document
 from sqlalchemy.orm import Session
 
+from app.services.file_processing_concurrency import (
+    case_metadata_lock,
+    document_passport_slot,
+    max_parallel_files,
+)
 from app.utils.database import SessionLocal
 
 logger = logging.getLogger(__name__)
@@ -33,16 +42,18 @@ def _generate_llm_document_passport(
     """Returns (summary, key_points, doc_type, summary_version)."""
     from app.services.document_passport_graph import generate_document_passport
 
-    return generate_document_passport(
-        text=text,
-        filename=filename,
-        hint_doc_type=hint_doc_type,
-        max_attempts=3,
-    )
+    with document_passport_slot():
+        return generate_document_passport(
+            text=text,
+            filename=filename,
+            hint_doc_type=hint_doc_type,
+            max_attempts=3,
+        )
 
 
 def _reconnect(db: Session) -> None:
     from sqlalchemy import text
+
     try:
         db.execute(text("SELECT 1"))
     except Exception:
@@ -58,9 +69,10 @@ def _reconnect(db: Session) -> None:
 
 def process_files_background(file_ids: List[str], case_id: str) -> None:
     """
-    Blocking function — run via asyncio.to_thread from the route handler.
+    Blocking function — run via asyncio.to_thread from the route handler or worker.
 
-    For each file_id:
+    Files in the batch run in parallel (bounded by ``FILE_PROCESSING_MAX_PARALLEL_FILES``).
+    Per file:
       1. Load raw bytes (UPLOAD_DIR + file_path, else file_content in DB)
       2. OCR / parse via DocumentLoaderService
       3. Classify
@@ -68,50 +80,94 @@ def process_files_background(file_ids: List[str], case_id: str) -> None:
       5. Split + embed + store in PGVector
       6. Mark processing_status = 'ready'
 
-    Case.full_text and Case.status are updated when all files are done.
+    Case.full_text and Case.status are updated when all files in the batch are done.
     """
-    from app.services.langchain_loaders import DocumentLoaderService
-    from app.services.document_classifier_service import DocumentClassifierService
-    from app.services.document_processor import DocumentProcessor, get_document_processor
-    from app.services.chat.entity_index_service import merge_case_entity_index
-    from app.models.case import File as FileModel, Case
-    from app.models.analysis import DocumentClassification
+    from app.services.document_processor import get_document_processor
 
-    db = SessionLocal()
-    document_processor: DocumentProcessor | None = None
-    prewarm_documents = []
+    if not file_ids:
+        return
+
+    document_processor = None
+    prewarm_documents: List[Document] = []
+    prewarm_lock = threading.Lock()
 
     try:
-        # Initialise DocumentProcessor once for the whole batch (expensive: YandexEmbeddings)
         try:
             document_processor = get_document_processor()
         except Exception as e:
-            logger.error(f"Cannot initialise DocumentProcessor for case {case_id}: {e}", exc_info=True)
-            # Mark all files as error
-            for fid in file_ids:
-                _set_error(db, fid, f"Ошибка инициализации обработчика: {e}")
+            logger.error(
+                "Cannot initialise DocumentProcessor for case %s: %s",
+                case_id,
+                e,
+                exc_info=True,
+            )
+            err_db = SessionLocal()
+            try:
+                for fid in file_ids:
+                    _set_error(err_db, fid, f"Ошибка инициализации обработчика: {e}")
+            finally:
+                err_db.close()
             return
 
-        for file_id in file_ids:
-            try:
-                file_documents = _process_one_file(db, file_id, case_id, document_processor)
-                if file_documents:
-                    prewarm_documents.extend(file_documents)
-            except Exception as e:
-                logger.error(f"Unhandled error processing file {file_id}: {e}", exc_info=True)
-                _set_error(db, file_id, str(e)[:1000])
+        workers = min(max_parallel_files(), len(file_ids))
 
-        # After all files are processed, update Case stats
-        _update_case_stats(db, case_id)
-        if prewarm_documents:
+        def _worker(file_id: str) -> List[Document]:
+            db = SessionLocal()
+            try:
+                return _process_one_file(db, file_id, case_id, document_processor)
+            except Exception as exc:
+                logger.error(
+                    "Unhandled error processing file %s: %s",
+                    file_id,
+                    exc,
+                    exc_info=True,
+                )
+                _set_error(db, file_id, str(exc)[:1000])
+                return []
+            finally:
+                db.close()
+
+        with ThreadPoolExecutor(
+            max_workers=workers,
+            thread_name_prefix="file-ingest",
+        ) as pool:
+            futures = {pool.submit(_worker, fid): fid for fid in file_ids}
+            for fut in as_completed(futures):
+                file_id = futures[fut]
+                try:
+                    file_documents = fut.result()
+                except Exception as exc:
+                    logger.error(
+                        "Worker future failed for file %s: %s",
+                        file_id,
+                        exc,
+                        exc_info=True,
+                    )
+                    continue
+                if file_documents:
+                    with prewarm_lock:
+                        prewarm_documents.extend(file_documents)
+
+        stats_db = SessionLocal()
+        try:
+            _update_case_stats(stats_db, case_id)
+        finally:
+            stats_db.close()
+
+        if prewarm_documents and document_processor is not None:
             document_processor.prewarm_bm25_index(
                 case_id,
                 documents=prewarm_documents,
                 force_rebuild=True,
             )
 
-    finally:
-        db.close()
+    except Exception as exc:
+        logger.error(
+            "process_files_background failed for case %s: %s",
+            case_id,
+            exc,
+            exc_info=True,
+        )
 
 
 def _process_one_file(
@@ -119,7 +175,7 @@ def _process_one_file(
     file_id: str,
     case_id: str,
     document_processor,
-) -> None:
+) -> List[Document]:
     from app.services.langchain_loaders import DocumentLoaderService
     from app.services.document_classifier_service import DocumentClassifierService
     from app.services.chat.entity_index_service import merge_case_entity_index
@@ -130,13 +186,13 @@ def _process_one_file(
 
     file_model = db.query(FileModel).filter(FileModel.id == file_id).first()
     if not file_model:
-        logger.error(f"File {file_id} not found in DB")
+        logger.error("File %s not found in DB", file_id)
         return []
 
     filename = file_model.filename
 
     if file_model.processing_status == "cancelled":
-        logger.info(f"File {file_id} ({filename}) was cancelled, skipping")
+        logger.info("File %s (%s) was cancelled, skipping", file_id, filename)
         return []
 
     from app.services.case_file_bytes import load_case_file_bytes
@@ -157,18 +213,17 @@ def _process_one_file(
         )
         return []
 
-    # Mark as processing
     from datetime import datetime as _dt
+
     file_model.processing_status = "processing"
     file_model.processing_started_at = _dt.utcnow()
     db.commit()
-    logger.info(f"▶ Processing file {file_id} ({filename}), {len(content)} bytes")
+    logger.info("▶ Processing file %s (%s), %s bytes", file_id, filename, len(content))
 
-    # --- OCR / parse ---
     try:
         langchain_docs = DocumentLoaderService.load_document(content, filename)
     except Exception as e:
-        logger.error(f"OCR failed for {filename} ({file_id}): {e}", exc_info=True)
+        logger.error("OCR failed for %s (%s): %s", filename, file_id, e, exc_info=True)
         _set_error(db, file_id, f"Ошибка OCR: {str(e)[:800]}")
         return []
 
@@ -183,40 +238,66 @@ def _process_one_file(
         _set_error(db, file_id, "Файл не содержит текста после обработки")
         return []
 
-    MAX_TEXT = 50 * 1024 * 1024
-    if len(text) > MAX_TEXT:
-        logger.warning(f"File {filename} text truncated from {len(text)} to {MAX_TEXT} chars")
-        text = text[:MAX_TEXT]
+    max_text = 50 * 1024 * 1024
+    if len(text) > max_text:
+        logger.warning(
+            "File %s text truncated from %s to %s chars",
+            filename,
+            len(text),
+            max_text,
+        )
+        text = text[:max_text]
 
-    # --- Classify ---
     file_classification: dict = {
-        "doc_type": "other", "tags": [], "confidence": 0.0,
-        "needs_human_review": True, "reasoning": "",
+        "doc_type": "other",
+        "tags": [],
+        "confidence": 0.0,
+        "needs_human_review": True,
+        "reasoning": "",
     }
     try:
         classifier = DocumentClassifierService()
-        file_classification = classifier.classify_document(text=text, filename=filename, case_context=None)
-        logger.info(f"Classified {filename}: {file_classification.get('doc_type')} ({file_classification.get('confidence', 0):.2f})")
+        file_classification = classifier.classify_document(
+            text=text,
+            filename=filename,
+            case_context=None,
+        )
+        logger.info(
+            "Classified %s: %s (%.2f)",
+            filename,
+            file_classification.get("doc_type"),
+            file_classification.get("confidence", 0),
+        )
     except Exception as e:
-        logger.warning(f"Classification failed for {filename}: {e}")
+        logger.warning("Classification failed for %s: %s", filename, e)
 
-    # --- Save text to DB ---
     _reconnect(db)
     file_model = db.query(FileModel).filter(FileModel.id == file_id).first()
     if not file_model:
         return []
-    # Re-check if cancelled during OCR (which can take minutes)
     if file_model.processing_status == "cancelled":
-        logger.info(f"File {file_id} ({filename}) was cancelled during OCR, skipping")
+        logger.info("File %s (%s) was cancelled during OCR, skipping", file_id, filename)
         return []
+
     try:
-        passport_summary, passport_key_points, passport_doc_type, passport_version = _generate_llm_document_passport(
+        (
+            passport_summary,
+            passport_key_points,
+            passport_doc_type,
+            passport_version,
+        ) = _generate_llm_document_passport(
             text=text,
             filename=filename,
             hint_doc_type=file_classification.get("doc_type", "other"),
         )
     except Exception as e:
-        logger.error("Document passport generation failed for %s (%s): %s", filename, file_id, e, exc_info=True)
+        logger.error(
+            "Document passport generation failed for %s (%s): %s",
+            filename,
+            file_id,
+            e,
+            exc_info=True,
+        )
         _set_error(
             db,
             file_id,
@@ -227,6 +308,7 @@ def _process_one_file(
             ),
         )
         return []
+
     if not str(passport_summary or "").strip():
         _set_error(
             db,
@@ -247,6 +329,7 @@ def _process_one_file(
             ),
         )
         return []
+
     logger.info(
         "Document passport generated for %s: version=%s summary_len=%s key_points=%s doc_type=%s",
         filename,
@@ -261,17 +344,18 @@ def _process_one_file(
     file_model.doc_key_points = passport_key_points
     file_model.summary_version = passport_version
     file_model.summary_content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
-    case_model = db.query(Case).filter(Case.id == case_id).first()
-    if case_model:
-        merge_case_entity_index(
-            case_model,
-            file_id=file_id,
-            filename=filename,
-            text=text,
-        )
+
+    with case_metadata_lock(case_id):
+        case_model = db.query(Case).filter(Case.id == case_id).first()
+        if case_model:
+            merge_case_entity_index(
+                case_model,
+                file_id=file_id,
+                filename=filename,
+                text=text,
+            )
     db.flush()
 
-    # Save classification
     try:
         existing = db.query(DocumentClassification).filter(
             DocumentClassification.file_id == file_id
@@ -287,17 +371,18 @@ def _process_one_file(
                 key_topics=file_classification.get("tags", []),
                 confidence=str(file_classification.get("confidence", 0.0)),
                 reasoning=file_classification.get("reasoning", ""),
-                needs_human_review="true" if file_classification.get("needs_human_review") else "false",
+                needs_human_review=(
+                    "true" if file_classification.get("needs_human_review") else "false"
+                ),
                 prompt_version="v1",
             )
             db.add(doc_cls)
     except Exception as e:
-        logger.warning(f"Could not save classification for {filename}: {e}")
+        logger.warning("Could not save classification for %s: %s", filename, e)
 
     db.commit()
-    logger.info(f"✅ Text saved for {filename} ({file_id}), {len(text)} chars")
+    logger.info("✅ Text saved for %s (%s), %s chars", filename, file_id, len(text))
 
-    # --- Build direct Docling chunks + embed + index ---
     try:
         ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "unknown"
         metadata = {
@@ -332,8 +417,11 @@ def _process_one_file(
             case_id=case_id,
             documents=file_documents,
             db=db,
+            bm25_after_store="invalidate_only",
         )
-        docling_count = sum(1 for d in file_documents if d.metadata.get("chunk_level") == "docling")
+        docling_count = sum(
+            1 for d in file_documents if d.metadata.get("chunk_level") == "docling"
+        )
         logger.info(
             "✅ Indexed %s chunks for %s (docling=%s)",
             len(file_documents),
@@ -341,23 +429,23 @@ def _process_one_file(
             docling_count,
         )
     except Exception as e:
-        logger.error(f"Indexing failed for {filename} ({file_id}): {e}", exc_info=True)
+        logger.error("Indexing failed for %s (%s): %s", filename, file_id, e, exc_info=True)
         _set_error(db, file_id, f"Ошибка индексирования: {str(e)[:500]}")
         return []
 
-    # Mark ready
     _reconnect(db)
     file_model = db.query(FileModel).filter(FileModel.id == file_id).first()
     if file_model:
         file_model.processing_status = "ready"
         file_model.processing_error = None
         db.commit()
-    logger.info(f"✅ File {file_id} ({filename}) is ready")
+    logger.info("✅ File %s (%s) is ready", file_id, filename)
     return file_documents
 
 
 def _set_error(db: Session, file_id: str, message: str) -> None:
     from app.models.case import File as FileModel
+
     try:
         _reconnect(db)
         file_model = db.query(FileModel).filter(FileModel.id == file_id).first()
@@ -366,7 +454,7 @@ def _set_error(db: Session, file_id: str, message: str) -> None:
             file_model.processing_error = message
             db.commit()
     except Exception as e:
-        logger.error(f"Could not set error status for file {file_id}: {e}")
+        logger.error("Could not set error status for file %s: %s", file_id, e)
 
 
 def _update_case_stats(db: Session, case_id: str) -> None:
@@ -391,9 +479,9 @@ def _update_case_stats(db: Session, case_id: str) -> None:
         if text_parts:
             full_text = "\n\n".join(text_parts)
             full_text = _sanitize(full_text)
-            MAX_TEXT = 100 * 1024 * 1024
-            if len(full_text) > MAX_TEXT:
-                full_text = full_text[:MAX_TEXT]
+            max_text = 100 * 1024 * 1024
+            if len(full_text) > max_text:
+                full_text = full_text[:max_text]
             case.full_text = full_text
 
         pending = [f for f in files if f.processing_status in ("pending", "processing")]
@@ -411,6 +499,11 @@ def _update_case_stats(db: Session, case_id: str) -> None:
         case.num_documents = len(files)
         case.file_names = [f.filename for f in files]
         db.commit()
-        logger.info(f"Case {case_id} stats updated: {len(files)} files, status={case.status}")
+        logger.info(
+            "Case %s stats updated: %s files, status=%s",
+            case_id,
+            len(files),
+            case.status,
+        )
     except Exception as e:
-        logger.error(f"Could not update case stats for {case_id}: {e}", exc_info=True)
+        logger.error("Could not update case stats for %s: %s", case_id, e, exc_info=True)

@@ -1,9 +1,9 @@
-"""Постановка файлов в обработку: локально или на worker-контейнер."""
+"""Постановка файлов в обработку: планировщик на дело, локально или на worker."""
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import List
+from typing import List, Sequence
 
 from app.config import config
 from app.services.yandex_metadata_iam import resolve_worker_invoke_iam_token
@@ -27,18 +27,37 @@ def _worker_dispatch_headers(secret: str) -> dict[str, str]:
     return headers
 
 
-def schedule_case_files_processing(file_ids: List[str], case_id: str) -> None:
-    """Не блокирует HTTP-ответ загрузки — fire-and-forget локальная обработка."""
-    if not file_ids:
-        return
-    if config.file_processing_via_worker():
-        asyncio.create_task(_dispatch_with_fallback(file_ids, case_id))
+def schedule_case_files_processing(
+    case_id: str,
+    file_ids: Sequence[str],
+) -> None:
+    """
+    Fire-and-forget ingest scheduling (non-blocking HTTP).
+
+    Routes all uploads through ``file_ingest_scheduler`` so repeated uploads to the
+    same case coalesce into one drain loop instead of spawning unbounded tasks.
+    """
+    ids = [str(fid) for fid in file_ids if fid]
+    if not ids or not case_id:
         return
 
-    async def _bg() -> None:
-        await _run_local(file_ids, case_id)
+    async def _enqueue() -> None:
+        from app.services.file_ingest_scheduler import enqueue_case_files
 
-    asyncio.create_task(_bg())
+        await enqueue_case_files(ids, case_id)
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(_enqueue())
+    else:
+        loop.create_task(_enqueue())
+
+    logger.info(
+        "File ingest scheduled: case=%s files=%s",
+        case_id,
+        len(ids),
+    )
 
 
 async def dispatch_files_to_worker(file_ids: List[str], case_id: str) -> bool:
@@ -77,16 +96,6 @@ async def dispatch_files_to_worker(file_ids: List[str], case_id: str) -> bool:
             exc_info=True,
         )
         return False
-
-
-async def _dispatch_with_fallback(file_ids: List[str], case_id: str) -> None:
-    ok = await dispatch_files_to_worker(file_ids, case_id)
-    if not ok:
-        logger.warning(
-            "Worker dispatch failed for case %s — falling back to local processing",
-            case_id,
-        )
-        await _run_local(file_ids, case_id)
 
 
 async def _run_local(file_ids: List[str], case_id: str) -> None:

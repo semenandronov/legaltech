@@ -3,6 +3,7 @@ import type { StagedCaseFile } from '../../lib/caseFileStaging'
 import { stagedDisplayName } from '../../lib/caseFileStaging'
 import type { FileProcessingStatus } from '../../services/api'
 import { processingStatusLabel } from '../../hooks/useCaseProcessingPoll'
+import { cn } from '@/lib/utils'
 
 type Row =
   | { type: 'staged'; item: StagedCaseFile }
@@ -36,10 +37,10 @@ export function CaseFileStagingList({
 
   return (
     <div className="mt-4 space-y-2">
-      <p className="text-xs font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+      <p className="text-xs font-medium text-gray-700">
         {title}
         {processing.length > 0 && (
-          <span style={{ color: 'var(--color-text-muted)', fontWeight: 400 }}>
+          <span className="font-normal text-gray-400">
             {' '}
             · готово {readyCount}/{processing.length}
           </span>
@@ -76,11 +77,10 @@ export function CaseFileStagingList({
                 <button
                   type="button"
                   onClick={() => onRemoveStaged(item.key)}
-                  className="flex-shrink-0 p-0.5 rounded transition-colors hover:opacity-70"
-                  style={{ color: 'var(--color-text-muted)' }}
+                  className="flex-shrink-0 rounded-full p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
                   aria-label={`Удалить ${name}`}
                 >
-                  <X className="w-3.5 h-3.5" />
+                  <X className="h-3.5 w-3.5" />
                 </button>
               ) : undefined
             }
@@ -104,30 +104,25 @@ function StagingRow({
 }) {
   return (
     <div
-      className="flex items-center gap-3 px-4 py-3 rounded-lg border"
-      style={{
-        borderColor: icon === 'error' ? 'var(--color-error, #dc2626)' : 'var(--color-border)',
-        backgroundColor: 'var(--color-bg-elevated)',
-      }}
+      className={cn(
+        'flex items-center gap-3 rounded-lg border bg-white px-4 py-3',
+        icon === 'error' ? 'border-red-200' : 'border-gray-200',
+      )}
     >
       {icon === 'ready' ? (
-        <CheckCircle className="w-4 h-4 flex-shrink-0 text-green-500" />
+        <CheckCircle className="h-4 w-4 flex-shrink-0 text-green-500" />
       ) : icon === 'error' ? (
-        <AlertCircle className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--color-error, #dc2626)' }} />
+        <AlertCircle className="h-4 w-4 flex-shrink-0 text-red-500" />
       ) : icon === 'busy' ? (
-        <Loader className="w-4 h-4 flex-shrink-0 animate-spin" style={{ color: 'var(--color-text-muted)' }} />
+        <Loader className="h-4 w-4 flex-shrink-0 animate-spin text-gray-400" />
       ) : icon === 'drive' ? (
-        <Cloud className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />
+        <Cloud className="h-4 w-4 flex-shrink-0 text-gray-400" />
       ) : (
-        <FileText className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />
+        <FileText className="h-4 w-4 flex-shrink-0 text-gray-400" />
       )}
-      <div className="flex-1 min-w-0">
-        <span className="text-sm truncate block" style={{ color: 'var(--color-text-primary)' }}>
-          {filename}
-        </span>
-        <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-          {subtitle}
-        </span>
+      <div className="min-w-0 flex-1">
+        <span className="block truncate text-sm text-gray-900">{filename}</span>
+        <span className="text-xs text-gray-500">{subtitle}</span>
       </div>
       {trailing}
     </div>

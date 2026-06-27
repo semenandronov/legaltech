@@ -25,6 +25,12 @@
   --color-accent-muted: #3d3a36;
   --color-accent-hover: #2a2826;
   --color-on-accent: #f8f7f4;
+
+  /* Ссылки и цитаты */
+  --color-link: #2563eb;
+  --color-link-hover: #1d4ed8;
+  --color-link-bg: rgba(37, 99, 235, 0.08);
+  --color-citation-highlight: rgba(37, 99, 235, 0.2);
   /* Плашка сообщения пользователя в чате: тёплый графит, не чёрный */
   --color-user-message-bg: #3f3c38;
   --color-user-message-text: #faf9f6;
@@ -88,17 +94,23 @@
   --space-20: 80px;
   --space-24: 96px;
 
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
-  --radius-2xl: 20px;
+  /* Единое скругление ~10px (Mike-style) */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --radius-2xl: 18px;
   --radius-full: 9999px;
 
-  --shadow-sm: 0 1px 2px 0 rgba(19, 18, 16, 0.04);
-  --shadow-md: 0 2px 6px 0 rgba(19, 18, 16, 0.07);
-  --shadow-lg: 0 4px 12px 0 rgba(19, 18, 16, 0.09);
-  --shadow-xl: 0 8px 20px 0 rgba(19, 18, 16, 0.1);
+  /* Кнопки */
+  --btn-height: 36px;
+  --btn-height-sm: 32px;
+
+  /* Тени — минимальные; опора на border */
+  --shadow-sm: 0 1px 0 rgba(19, 18, 16, 0.04);
+  --shadow-md: 0 1px 2px rgba(19, 18, 16, 0.05);
+  --shadow-lg: 0 4px 16px rgba(19, 18, 16, 0.08);
+  --shadow-xl: 0 8px 24px rgba(19, 18, 16, 0.1);
   --shadow-none: none;
 
   --transition-fast: 150ms ease;
@@ -134,6 +146,10 @@
   --color-accent-muted: #3d3a36;
   --color-accent-hover: #2a2826;
   --color-on-accent: #f8f7f4;
+  --color-link: #2563eb;
+  --color-link-hover: #1d4ed8;
+  --color-link-bg: rgba(37, 99, 235, 0.08);
+  --color-citation-highlight: rgba(37, 99, 235, 0.2);
   --color-user-message-bg: #3f3c38;
   --color-user-message-text: #faf9f6;
   --color-success: #3d5c45;

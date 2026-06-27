@@ -113,11 +113,20 @@ export const EditSuggestionCard: React.FC<EditSuggestionCardProps> = ({
       {/* Title */}
       <div
         className="px-4 pt-3 pb-2 cursor-pointer"
-        onClick={() => edit.found_in_document && !isProcessed && originalText && onNavigate(originalText)}
+        onClick={() => {
+        if (!edit.found_in_document || isProcessed) return
+        const nav = (edit.original_text || '').trim()
+        if (nav) onNavigate(nav)
+      }}
       >
         <h4 className="text-sm font-semibold text-gray-900 leading-snug">
           {title}
         </h4>
+        {edit.node_id && !isProcessed && (
+          <span className="inline-block mt-1.5 text-[10px] font-medium px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 border border-indigo-100">
+            блок {edit.node_id.slice(0, 12)}{edit.node_id.length > 12 ? '…' : ''}
+          </span>
+        )}
         {isApplied && (
           <span className="inline-block mt-1 text-xs font-medium text-green-600">Применено</span>
         )}
@@ -166,7 +175,9 @@ export const EditSuggestionCard: React.FC<EditSuggestionCardProps> = ({
         {/* Warning if text not found */}
         {!edit.found_in_document && !isProcessed && (
           <div className="mt-2 text-xs text-amber-600">
-            Текст не найден в документе
+            {edit.node_id
+              ? 'Блок не найден в документе'
+              : 'Текст не найден в документе'}
           </div>
         )}
       </div>

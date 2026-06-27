@@ -1,11 +1,11 @@
 import { lazy, Suspense, useMemo } from 'react'
 import { Routes, Route, Navigate, useParams } from 'react-router-dom'
 import { Box, CircularProgress } from '@mui/material'
-import { MessageSquare, FileEdit, BookOpen, Scissors } from 'lucide-react'
 import ProtectedRoute from './components/ProtectedRoute'
 import { InternalDevToolsRoute } from './components/InternalDevToolsRoute'
+import { FeatureRoute } from './components/FeatureRoute'
 import { useAuth } from './contexts/AuthContext'
-import { canAccessInternalDevTools } from './utils/internalDevToolsAccess'
+import { buildCaseNavItems } from './lib/caseNavItems'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import UnifiedSidebar from './components/Layout/UnifiedSidebar'
@@ -90,11 +90,13 @@ function App() {
         path="/legal-corpus"
         element={
           <ProtectedRoute>
-            <InternalDevToolsRoute redirectTo="/cases">
-              <Suspense fallback={<PageLoader />}>
-                <LegalCorpusManagePage />
-              </Suspense>
-            </InternalDevToolsRoute>
+            <FeatureRoute feature="legalCorpusPages" redirectTo="/cases">
+              <InternalDevToolsRoute redirectTo="/cases">
+                <Suspense fallback={<PageLoader />}>
+                  <LegalCorpusManagePage />
+                </Suspense>
+              </InternalDevToolsRoute>
+            </FeatureRoute>
           </ProtectedRoute>
         }
       />
@@ -102,9 +104,11 @@ function App() {
         path="/court-practice"
         element={
           <ProtectedRoute>
-            <Suspense fallback={<PageLoader />}>
-              <CourtPracticeManagePage />
-            </Suspense>
+            <FeatureRoute feature="courtPracticePages" redirectTo="/cases">
+              <Suspense fallback={<PageLoader />}>
+                <CourtPracticeManagePage />
+              </Suspense>
+            </FeatureRoute>
           </ProtectedRoute>
         }
       />
@@ -112,11 +116,13 @@ function App() {
         path="/admin/draft-templates"
         element={
           <ProtectedRoute>
-            <InternalDevToolsRoute redirectTo="/cases">
-              <Suspense fallback={<PageLoader />}>
-                <DraftTemplatesAdminPage />
-              </Suspense>
-            </InternalDevToolsRoute>
+            <FeatureRoute feature="draftTemplates" redirectTo="/cases">
+              <InternalDevToolsRoute redirectTo="/cases">
+                <Suspense fallback={<PageLoader />}>
+                  <DraftTemplatesAdminPage />
+                </Suspense>
+              </InternalDevToolsRoute>
+            </FeatureRoute>
           </ProtectedRoute>
         }
       />
@@ -162,7 +168,9 @@ function App() {
         path="/cases/:caseId/chunk-lab"
         element={
           <ProtectedRoute>
-            <ChunkLabRouteGate />
+            <FeatureRoute feature="chunkLab" redirectTo="/cases">
+              <ChunkLabRouteGate />
+            </FeatureRoute>
           </ProtectedRoute>
         }
       />
@@ -210,9 +218,11 @@ function App() {
         path="/cases/:caseId/editor/:documentId?"
         element={
           <ProtectedRoute>
-            <Suspense fallback={<PageLoader />}>
-              <DocumentEditorPage />
-            </Suspense>
+            <FeatureRoute feature="editor" redirectTo="/cases">
+              <Suspense fallback={<PageLoader />}>
+                <DocumentEditorPage />
+              </Suspense>
+            </FeatureRoute>
           </ProtectedRoute>
         }
       />
@@ -220,9 +230,11 @@ function App() {
         path="/cases/:caseId/playbooks"
         element={
           <ProtectedRoute>
-            <Suspense fallback={<PageLoader />}>
-              <PlaybooksPage />
-            </Suspense>
+            <FeatureRoute feature="playbooks" redirectTo="/cases">
+              <Suspense fallback={<PageLoader />}>
+                <PlaybooksPage />
+              </Suspense>
+            </FeatureRoute>
           </ProtectedRoute>
         }
       />
@@ -230,9 +242,11 @@ function App() {
         path="/cases/:caseId/workflows"
         element={
           <ProtectedRoute>
-            <Suspense fallback={<PageLoader />}>
-              <CaseWorkflowsPage />
-            </Suspense>
+            <FeatureRoute feature="agentRuns" redirectTo="/cases">
+              <Suspense fallback={<PageLoader />}>
+                <CaseWorkflowsPage />
+              </Suspense>
+            </FeatureRoute>
           </ProtectedRoute>
         }
       />
@@ -257,27 +271,16 @@ const CaseChatPage = () => {
   const { caseId } = useParams<{ caseId: string }>()
   const { user } = useAuth()
 
-  const navItems = useMemo(() => {
-    const all = [
-      { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
-      { id: 'chunk-lab', label: 'Чанки', icon: Scissors, path: `/cases/${caseId}/chunk-lab` },
-      { id: 'editor', label: 'Редактор', icon: FileEdit, path: `/cases/${caseId}/editor` },
-      { id: 'playbooks', label: 'Playbooks', icon: BookOpen, path: `/cases/${caseId}/playbooks` },
-    ]
-    if (!canAccessInternalDevTools(user?.email)) {
-      return all.filter((item) => item.id !== 'chunk-lab')
-    }
-    return all
-  }, [caseId, user?.email])
+  const navItems = useMemo(
+    () => (caseId ? buildCaseNavItems(caseId, user?.email) : []),
+    [caseId, user?.email],
+  )
 
   return (
     <Suspense fallback={<PageLoader />}>
-      <div 
-        className="flex h-screen"
-        style={{ backgroundColor: 'var(--color-bg-primary)' }}
-      >
-        <UnifiedSidebar navItems={navItems} title="Legal AI" />
-        <main className="flex-1 overflow-hidden">
+      <div className="ws-shell ws-tabular-shell flex h-screen overflow-hidden">
+        <UnifiedSidebar navItems={navItems} title="Legal AI" showBackButton={false} variant="tabular" />
+        <main className="ws-tabular-page flex min-h-0 flex-1 flex-col overflow-hidden">
           <AssistantChatPage />
         </main>
       </div>

@@ -8,7 +8,11 @@ class TestDocumentConverterService:
     
     def setup_method(self):
         """Set up test fixtures"""
+        DocumentConverterService.reset_converter_cache_for_tests()
         self.converter = DocumentConverterService()
+
+    def teardown_method(self):
+        DocumentConverterService.reset_converter_cache_for_tests()
     
     def test_convert_txt_to_html(self):
         """Test converting TXT file to HTML"""

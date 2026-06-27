@@ -7,6 +7,20 @@ from app.services.langchain_agents.graphs.nodes.editor_nodes import editor_enric
 
 
 @patch("app.services.chat.case_context_pipeline.run_case_context_pipeline")
+def test_editor_enrich_skips_rag_for_local_edit(mock_pipeline):
+    state = {
+        "case_id": "case-1",
+        "question": "Поменяй сумму неустойки на 150 000",
+        "editor_mode_hint": "edit",
+        "document_id": "doc-1",
+    }
+    result = editor_enrich_case_context_node(state, db=MagicMock(), rag_service=MagicMock())
+
+    mock_pipeline.assert_not_called()
+    assert result.get("context_pipeline_meta", {}).get("pipeline") == "editor_skip"
+
+
+@patch("app.services.chat.case_context_pipeline.run_case_context_pipeline")
 def test_editor_enrich_uses_case_context_pipeline(mock_pipeline):
     mock_pipeline.return_value = {
         "rag_context": "ctx",

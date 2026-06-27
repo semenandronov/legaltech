@@ -25,10 +25,12 @@ import {
   filePreviewFromCitation,
   shouldOpenOriginalByCitationId,
 } from '@/lib/caseCitationViewer'
-import { buildChunkLabViewerCellData } from '@/utils/chunkLabViewerCellData'
+import { buildChunkLabViewerCellData, citationHighlightRevision } from '@/utils/chunkLabViewerCellData'
 import { TabularDocumentViewer } from '@/components/TabularReview/TabularDocumentViewer'
 import { DocumentHighlighter } from '@/components/Documents/DocumentHighlighter'
 import { TextHighlighter } from '@/components/TabularReview/TextHighlighter'
+import { CitationQuoteBanner } from '@/components/Documents/CitationQuoteBanner'
+import { findQuoteMatchInPlain, highlightQuoteInHtml, CITATION_HIGHLIGHT_MARK_ID } from '@/utils/citationHighlight'
 
 const FILE_LIST_TTL_MS = 5 * 60 * 1000
 type CachedFileList = { ts: number; documents: any[] }
@@ -232,6 +234,21 @@ const DocumentPreviewSheet = ({
       bbox: source.bbox,
       bbox_regions: source.bbox_regions,
       page_bbox: source.page_bbox,
+      char_start: source.char_start,
+      char_end: source.char_end,
+    })
+  }, [source])
+
+  const highlightRevision = useMemo(() => {
+    if (!source) return ''
+    return citationHighlightRevision({
+      citation_id: source.citation_id,
+      chunk_id: source.chunk_id,
+      page: source.page,
+      char_start: source.char_start,
+      char_end: source.char_end,
+      quote: source.quote,
+      quote_anchor: source.quote_anchor,
     })
   }, [source])
 
@@ -296,35 +313,13 @@ const DocumentPreviewSheet = ({
       return
     }
 
-    const quoteToFind = anchorText.trim()
-    const textLower = documentText.toLowerCase()
-    const quoteLower = quoteToFind.toLowerCase().replace(/\.{3}$/, '')
-
-    if (quoteToFind.length < 10) {
-      setFoundHighlights([])
+    const match = findQuoteMatchInPlain(documentText, anchorText.trim())
+    if (match) {
+      setFoundHighlights([{ char_start: match.start, char_end: match.end }])
       return
     }
 
-    let startIdx = -1
-    let matchLength = quoteLower.length
-
-    startIdx = textLower.indexOf(quoteLower)
-    if (startIdx === -1 && quoteLower.length > 100) {
-      const shortQuote = quoteLower.substring(0, 100)
-      startIdx = textLower.indexOf(shortQuote)
-      if (startIdx !== -1) matchLength = 100
-    }
-    if (startIdx === -1 && quoteLower.length > 50) {
-      const shortQuote = quoteLower.substring(0, 50)
-      startIdx = textLower.indexOf(shortQuote)
-      if (startIdx !== -1) matchLength = 50
-    }
-
-    if (startIdx !== -1) {
-      setFoundHighlights([{ char_start: startIdx, char_end: startIdx + matchLength }])
-    } else {
-      setFoundHighlights([])
-    }
+    setFoundHighlights([])
   }, [documentText, anchorText, source?.char_start, source?.char_end, source?.chunk_id])
   
   // Используем найденные позиции
@@ -671,102 +666,11 @@ const DocumentPreviewSheet = ({
   // Auto-scroll to the first <mark id="citation-highlight"> after DOCX content renders
   useEffect(() => {
     if (!docxContainerRef.current || !documentHtml) return
-    const mark = docxContainerRef.current.querySelector('#citation-highlight')
+    const mark = docxContainerRef.current.querySelector(`#${CITATION_HIGHLIGHT_MARK_ID}`)
     if (mark) {
       mark.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }
-  }, [documentHtml])
-
-  /**
-   * Highlight a quote inside an HTML string using DOM text-node traversal.
-   * Regex-based search fails when HTML tags split the matched text (e.g. <strong>text</strong>).
-   * This function walks all text nodes, builds the full plain-text string, finds the quote
-   * position, then wraps the matching segment(s) with <mark> elements in the real DOM tree.
-   */
-  const insertMarkInHtml = (html: string, quote: string): string => {
-    if (!quote || quote.length < 10) return html
-    const searchText = quote.replace(/\.{3}$/, '').trim()
-    if (searchText.length < 10) return html
-    try {
-      const container = window.document.createElement('div')
-      container.innerHTML = html
-
-      // Collect all leaf text nodes
-      const textNodes: Text[] = []
-      const walk = (node: Node): void => {
-        if (node.nodeType === Node.TEXT_NODE) {
-          textNodes.push(node as Text)
-        } else {
-          Array.from(node.childNodes).forEach(walk)
-        }
-      }
-      walk(container)
-
-      const nodeTexts = textNodes.map(n => n.textContent || '')
-      const fullText = nodeTexts.join('')
-      const fullTextLower = fullText.toLowerCase()
-
-      // Try progressively shorter prefixes of the quote until a match is found
-      let pos = -1
-      let matchLength = 0
-      for (const len of [200, 100, 60, 30]) {
-        const candidate = searchText.substring(0, len).toLowerCase()
-        if (candidate.length < 10) continue
-        const idx = fullTextLower.indexOf(candidate)
-        if (idx !== -1) {
-          pos = idx
-          matchLength = candidate.length
-          break
-        }
-      }
-      if (pos === -1) return html
-
-      const endPos = pos + matchLength
-      let currentPos = 0
-      let firstMark = true
-
-      for (let i = 0; i < textNodes.length; i++) {
-        const nodeStart = currentPos
-        const nodeText = nodeTexts[i]
-        const nodeEnd = nodeStart + nodeText.length
-
-        if (nodeEnd > pos && nodeStart < endPos) {
-          const hlStart = Math.max(0, pos - nodeStart)
-          const hlEnd = Math.min(nodeText.length, endPos - nodeStart)
-
-          if (hlStart < hlEnd) {
-            const parent = textNodes[i].parentNode
-            if (parent) {
-              const before = nodeText.substring(0, hlStart)
-              const middle = nodeText.substring(hlStart, hlEnd)
-              const after = nodeText.substring(hlEnd)
-
-              const mark = window.document.createElement('mark')
-              mark.style.backgroundColor = '#fef08a'
-              mark.style.borderRadius = '2px'
-              mark.style.padding = '2px 0'
-              if (firstMark) {
-                mark.id = 'citation-highlight'
-                firstMark = false
-              }
-              mark.textContent = middle
-
-              const frag = window.document.createDocumentFragment()
-              if (before) frag.appendChild(window.document.createTextNode(before))
-              frag.appendChild(mark)
-              if (after) frag.appendChild(window.document.createTextNode(after))
-              parent.replaceChild(frag, textNodes[i])
-            }
-          }
-        }
-        currentPos = nodeEnd
-      }
-
-      return container.innerHTML
-    } catch {
-      return html
-    }
-  }
+  }, [documentHtml, highlightRevision, anchorText])
 
   if (!isOpen) return null
 
@@ -999,11 +903,18 @@ const DocumentPreviewSheet = ({
               </a>
             </Box>
           ) : fileInfo && fileInfo.file_type === 'pdf' ? (
-            // Как ChunkLabPage: TabularDocumentViewer + тот же cellData (verbatim, page basis one, bbox).
             <Box sx={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+              {anchorText ? (
+                <CitationQuoteBanner
+                  quote={anchorText}
+                  page={source?.page}
+                  className="!bg-white"
+                />
+              ) : null}
               <Box sx={{ flex: 1, overflow: 'hidden', minHeight: 0 }}>
                 <TabularDocumentViewer
-                  key={`preview-pdf:${fileInfo.id}:${source?.source_id ?? ''}:${source?.chunk_id ?? ''}:${String(source?.page ?? '')}`}
+                  key={`preview-pdf:${fileInfo.id}`}
+                  highlightRevision={highlightRevision}
                   fileId={fileInfo.id}
                   caseId={caseId}
                   fileType="pdf"
@@ -1023,16 +934,22 @@ const DocumentPreviewSheet = ({
               </Stack>
             </Box>
           ) : fileInfo && documentHtml && fileInfo.file_type === 'docx' ? (
-            // DOCX - отображаем HTML с подсветкой цитаты через <mark>
-            <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
-              <Box
-                ref={docxContainerRef}
-                component="div"
-                dangerouslySetInnerHTML={{
-                  __html: anchorText ? insertMarkInHtml(documentHtml, anchorText) : documentHtml
-                }}
-                sx={{ fontSize: '0.875rem', fontFamily: 'inherit' }}
-              />
+            <Box sx={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
+              {anchorText ? (
+                <CitationQuoteBanner quote={anchorText} page={source?.page} className="!bg-white" />
+              ) : null}
+              <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
+                <Box
+                  ref={docxContainerRef}
+                  component="div"
+                  dangerouslySetInnerHTML={{
+                    __html: anchorText
+                      ? highlightQuoteInHtml(documentHtml, anchorText)
+                      : documentHtml,
+                  }}
+                  sx={{ fontSize: '0.875rem', fontFamily: 'inherit' }}
+                />
+              </Box>
             </Box>
           ) : fileInfo && documentText && (source?.source_type === 'court_practice' || ['txt', 'html', 'md', 'json', 'xml', 'csv'].includes(fileInfo.file_type.toLowerCase())) ? (
             // Текстовые документы - отображаем с подсветкой по координатам или по найденной цитате

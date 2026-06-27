@@ -4,6 +4,7 @@ import {
   onDraftModeChange,
   onLegalResearchChange,
 } from '../lib/chatInstrumentPolicy'
+import { productFeatures } from '../lib/productFeatures'
 
 /** Устаревшие ключи: настройки чата больше не сохраняются между визитами. */
 const LEGACY_INSTRUMENT_STORAGE_KEYS = [
@@ -48,6 +49,12 @@ export function useChatInstrumentSettings(): ChatInstrumentSettings {
 
   useEffect(() => {
     clearLegacyInstrumentStorage()
+  }, [])
+
+  useEffect(() => {
+    if (!productFeatures.legalCorpus) setLegalResearch(false)
+    if (!productFeatures.courtPractice) setCourtPractice(false)
+    if (!productFeatures.draftMode) setDraftMode(false)
   }, [])
 
   const reset = useCallback(() => {

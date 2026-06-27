@@ -337,20 +337,10 @@ async def upload_files(
         db.commit()
         logger.info(f"Committed case {case_id} with {len(new_file_ids)} pending files")
 
-        import asyncio as _asyncio
-        from app.services.file_processor_bg import process_files_background
+        from app.services.file_processing_enqueue import schedule_case_files_processing
 
-        async def _bg() -> None:
-            try:
-                await _asyncio.to_thread(process_files_background, new_file_ids, case_id)
-            except Exception as _e:
-                logger.error(
-                    f"Background processing error for case {case_id}: {_e}",
-                    exc_info=True,
-                )
-
-        _asyncio.create_task(_bg())
-        logger.info(f"Background processing started for case {case_id}")
+        schedule_case_files_processing(case_id, new_file_ids)
+        logger.info("Background processing scheduled for case %s", case_id)
 
         return {
             "case_id": case_id,

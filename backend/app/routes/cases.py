@@ -835,24 +835,9 @@ async def add_files_to_case(
         case.file_names = [f.filename for f in all_files]
         db.commit()
 
-        import asyncio as _asyncio
-        from app.services.file_processor_bg import process_files_background
+        from app.services.file_processing_enqueue import schedule_case_files_processing
 
-        async def _bg() -> None:
-            try:
-                await _asyncio.to_thread(process_files_background, new_file_ids, case_id)
-            except Exception as _e:
-                logger.error(
-                    f"Background processing task error for case {case_id}: {_e}",
-                    exc_info=True,
-                )
-
-        _asyncio.create_task(_bg())
-        logger.info(
-            "Background processing started for %s files in case %s",
-            len(new_file_ids),
-            case_id,
-        )
+        schedule_case_files_processing(case_id, new_file_ids)
 
         new_file_objs = db.query(FileModel).filter(FileModel.id.in_(new_file_ids)).all()
         return {

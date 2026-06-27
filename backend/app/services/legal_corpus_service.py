@@ -213,10 +213,20 @@ def index_uploaded_file(
         )
 
     corpus_file_id = str(uuid.uuid4())
+    ingest_content = content
+    ext = _file_type_from_name(safe_name)
+    if ext in ("html", "htm"):
+        from app.services.consultant_html_preprocess import (
+            is_consultant_plus_html,
+            prepare_consultant_html_for_ingest,
+        )
+
+        if is_consultant_plus_html(content):
+            ingest_content = prepare_consultant_html_for_ingest(content)
     _save_original_corpus_file(
         corpus_file_id=corpus_file_id,
         filename=safe_name,
-        file_content=content,
+        file_content=ingest_content,
         created_by_user_id=created_by_user_id,
     )
     store = get_case_vector_store()
@@ -229,7 +239,7 @@ def index_uploaded_file(
         vf, vt = None, None
         if inst:
             vf, vt = inst.valid_from, inst.valid_to
-        docs = DocumentLoaderService.load_document(content, safe_name)
+        docs = DocumentLoaderService.load_document(ingest_content, safe_name)
         if not docs:
             raise ValueError("Не удалось извлечь текст из файла")
 
@@ -255,7 +265,7 @@ def index_uploaded_file(
             },
             file_id=corpus_file_id,
             langchain_docs=docs,
-            content_bytes=content,
+            content_bytes=ingest_content,
         )
         if not file_documents:
             raise ValueError("Не удалось сформировать чанки из документа")
@@ -309,29 +319,22 @@ def index_uploaded_file(
         )
         try:
             from app.services.legal_instruments import instrument_validity
-            from app.services.legal_norm_graph import (
-                build_edges_for_documents,
-                sync_nodes_from_documents,
-            )
+            from app.services.legal_norm_graph import sync_legal_norm_graph
 
             iid = inst.instrument_id if inst else "other"
             vf, vt = instrument_validity(iid)
-            sync_nodes_from_documents(
+            graph_stats = sync_legal_norm_graph(
                 file_documents,
                 corpus_file_id=corpus_file_id,
                 instrument_id=iid,
+                instrument_short_name=inst.short_name if inst else "",
                 valid_from=vf,
                 valid_to=vt,
             )
-            edge_n = build_edges_for_documents(
-                file_documents,
-                source_instrument_id=iid,
-            )
             logger.info(
-                "Legal norm graph synced: corpus_file_id=%s nodes=%s edges_added=%s",
+                "Legal norm graph synced: corpus_file_id=%s stats=%s",
                 corpus_file_id,
-                sum(1 for d in file_documents if (d.metadata or {}).get("chunk_level") == "norm"),
-                edge_n,
+                graph_stats,
             )
         except Exception as graph_exc:
             logger.warning("Legal norm graph sync failed (non-fatal): %s", graph_exc, exc_info=True)

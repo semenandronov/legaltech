@@ -1,30 +1,25 @@
 "use client"
 
-import React, { useState } from "react"
+import React, { useEffect, useRef, useState } from 'react'
 import {
-  IconButton,
-  Menu,
-  MenuItem,
-  ListItemIcon,
-  ListItemText,
-  Divider,
-} from "@mui/material"
-import {
-  MoreVert as MoreVertIcon,
-  Edit as EditIcon,
-  PushPin as PinIcon,
-  Delete as DeleteIcon,
-  ArrowUpward as ArrowUpwardIcon,
-  ArrowDownward as ArrowDownwardIcon,
-  ClearAll as ClearAllIcon,
-} from "@mui/icons-material"
+  MoreHorizontal,
+  ArrowUp,
+  ArrowDown,
+  XCircle,
+  Play,
+  Pin,
+  Pencil,
+  Trash2,
+} from 'lucide-react'
 
 interface ColumnHeaderMenuProps {
   columnId: string
   columnLabel: string
   isPinned?: boolean
   disabled?: boolean
-  sortDirection?: "asc" | "desc" | false
+  isRunning?: boolean
+  sortDirection?: 'asc' | 'desc' | false
+  onRun?: () => void
   onEdit?: (anchorEl: HTMLElement) => void
   onPin?: () => void
   onUnpin?: () => void
@@ -36,10 +31,12 @@ interface ColumnHeaderMenuProps {
 
 export const ColumnHeaderMenu: React.FC<ColumnHeaderMenuProps> = ({
   columnId: _columnId,
-  columnLabel: _columnLabel,
+  columnLabel,
   isPinned = false,
   disabled = false,
+  isRunning = false,
   sortDirection = false,
+  onRun,
   onEdit,
   onPin,
   onUnpin,
@@ -48,26 +45,28 @@ export const ColumnHeaderMenu: React.FC<ColumnHeaderMenuProps> = ({
   onSortDesc,
   onClearSort,
 }) => {
-  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)
-  const triggerRef = React.useRef<HTMLButtonElement>(null)
-  const open = Boolean(anchorEl)
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
 
-  const handleClick = (event: React.MouseEvent<HTMLElement>) => {
-    event.stopPropagation()
-    setAnchorEl(event.currentTarget)
-  }
-
-  const handleClose = () => {
-    setAnchorEl(null)
-  }
+  useEffect(() => {
+    if (!open) return
+    function handleClickOutside(event: MouseEvent) {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [open])
 
   const run = (fn?: () => void) => {
-    handleClose()
+    setOpen(false)
     fn?.()
   }
 
   const handleEdit = () => {
-    handleClose()
+    setOpen(false)
     const anchor = triggerRef.current
     if (anchor && onEdit) {
       onEdit(anchor)
@@ -75,80 +74,115 @@ export const ColumnHeaderMenu: React.FC<ColumnHeaderMenuProps> = ({
   }
 
   const showSort = onSortAsc || onSortDesc
+  const showPin = onPin || onUnpin
+  const hasActions = showSort || onRun || showPin || onEdit || onDelete
+
+  if (!hasActions) return null
 
   return (
-    <>
-      <IconButton
+    <div ref={rootRef} className="ws-mike-col-menu" onClick={(e) => e.stopPropagation()}>
+      <button
         ref={triggerRef}
-        size="small"
-        onClick={handleClick}
-        disabled={disabled}
-        aria-label={`Меню колонки ${_columnLabel}`}
-        sx={{
-          p: 0.5,
-          color: "#6B7280",
-          "&:hover": { color: "#1F2937", bgcolor: "action.hover" },
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          if (disabled) return
+          setOpen((value) => !value)
         }}
+        disabled={disabled}
+        className={`ws-mike-col-menu-trigger ${disabled ? 'ws-mike-col-menu-trigger--disabled' : ''}`}
+        aria-label={`Меню колонки ${columnLabel}`}
+        aria-expanded={open}
       >
-        <MoreVertIcon fontSize="small" />
-      </IconButton>
-      <Menu
-        anchorEl={anchorEl}
-        open={open}
-        onClose={handleClose}
-        onClick={(e) => e.stopPropagation()}
-        transformOrigin={{ horizontal: "right", vertical: "top" }}
-        anchorOrigin={{ horizontal: "right", vertical: "bottom" }}
-      >
-        {showSort && (
-          <>
-            <MenuItem onClick={() => run(onSortAsc)} selected={sortDirection === "asc"}>
-              <ListItemIcon>
-                <ArrowUpwardIcon fontSize="small" />
-              </ListItemIcon>
-              <ListItemText>По возрастанию</ListItemText>
-            </MenuItem>
-            <MenuItem onClick={() => run(onSortDesc)} selected={sortDirection === "desc"}>
-              <ListItemIcon>
-                <ArrowDownwardIcon fontSize="small" />
-              </ListItemIcon>
-              <ListItemText>По убыванию</ListItemText>
-            </MenuItem>
-            {sortDirection && onClearSort && (
-              <MenuItem onClick={() => run(onClearSort)}>
-                <ListItemIcon>
-                  <ClearAllIcon fontSize="small" />
-                </ListItemIcon>
-                <ListItemText>Сбросить сортировку</ListItemText>
-              </MenuItem>
-            )}
-            <Divider />
-          </>
-        )}
+        <MoreHorizontal className="h-4 w-4" />
+      </button>
 
-        <MenuItem onClick={() => run(isPinned ? onUnpin : onPin)}>
-          <ListItemIcon>
-            <PinIcon fontSize="small" />
-          </ListItemIcon>
-          <ListItemText>{isPinned ? "Открепить колонку" : "Закрепить колонку"}</ListItemText>
-        </MenuItem>
+      {open && (
+        <div className="ws-mike-col-menu-dropdown" role="menu">
+          {showSort && (
+            <>
+              <button
+                type="button"
+                role="menuitem"
+                className={`ws-mike-col-menu-item ${sortDirection === 'asc' ? 'ws-mike-col-menu-item--active' : ''}`}
+                onClick={() => run(onSortAsc)}
+              >
+                <ArrowUp className="h-3.5 w-3.5" aria-hidden />
+                По возрастанию
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className={`ws-mike-col-menu-item ${sortDirection === 'desc' ? 'ws-mike-col-menu-item--active' : ''}`}
+                onClick={() => run(onSortDesc)}
+              >
+                <ArrowDown className="h-3.5 w-3.5" aria-hidden />
+                По убыванию
+              </button>
+              {sortDirection && onClearSort && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="ws-mike-col-menu-item"
+                  onClick={() => run(onClearSort)}
+                >
+                  <XCircle className="h-3.5 w-3.5" aria-hidden />
+                  Сбросить сортировку
+                </button>
+              )}
+              <div className="ws-mike-col-menu-divider" role="separator" />
+            </>
+          )}
 
-        <MenuItem onClick={handleEdit}>
-          <ListItemIcon>
-            <EditIcon fontSize="small" />
-          </ListItemIcon>
-          <ListItemText>Редактировать</ListItemText>
-        </MenuItem>
+          {onRun && (
+            <button
+              type="button"
+              role="menuitem"
+              className="ws-mike-col-menu-item"
+              onClick={() => run(onRun)}
+              disabled={disabled || isRunning}
+            >
+              <Play className="h-3.5 w-3.5" aria-hidden />
+              {isRunning ? 'Заполнение…' : 'Запустить ИИ'}
+            </button>
+          )}
 
-        <Divider />
+          {showPin && (
+            <button
+              type="button"
+              role="menuitem"
+              className="ws-mike-col-menu-item"
+              onClick={() => run(isPinned ? onUnpin : onPin)}
+            >
+              <Pin className="h-3.5 w-3.5" aria-hidden />
+              {isPinned ? 'Открепить колонку' : 'Закрепить колонку'}
+            </button>
+          )}
 
-        <MenuItem onClick={() => run(onDelete)} disabled={disabled} sx={{ color: "error.main" }}>
-          <ListItemIcon>
-            <DeleteIcon fontSize="small" color="error" />
-          </ListItemIcon>
-          <ListItemText>Удалить</ListItemText>
-        </MenuItem>
-      </Menu>
-    </>
+          {onEdit && (
+            <button type="button" role="menuitem" className="ws-mike-col-menu-item" onClick={handleEdit}>
+              <Pencil className="h-3.5 w-3.5" aria-hidden />
+              Редактировать
+            </button>
+          )}
+
+          {onDelete && (
+            <>
+              {(onRun || showPin || onEdit) && <div className="ws-mike-col-menu-divider" role="separator" />}
+              <button
+                type="button"
+                role="menuitem"
+                className="ws-mike-col-menu-item ws-mike-col-menu-item--danger"
+                onClick={() => run(onDelete)}
+                disabled={disabled}
+              >
+                <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                Удалить
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
   )
 }

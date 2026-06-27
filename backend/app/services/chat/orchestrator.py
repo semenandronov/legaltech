@@ -1537,6 +1537,7 @@ def prewarm_chat_runtime() -> Dict[str, Any]:
         "classifier_ready": False,
         "legal_llm_ready": False,
         "reranker_ready": False,
+        "docling_ready": False,
     }
     try:
         document_processor = get_document_processor()
@@ -1589,6 +1590,14 @@ def prewarm_chat_runtime() -> Dict[str, Any]:
     except Exception as exc:
         logger.warning("Case assistant prewarm: reranker failed: %s", exc, exc_info=True)
         readiness["reranker_ready"] = False
+
+    try:
+        from app.services.document_converter_service import DocumentConverterService
+
+        readiness["docling_ready"] = DocumentConverterService.warmup()
+    except Exception as exc:
+        logger.warning("Case assistant prewarm: docling failed: %s", exc, exc_info=True)
+        readiness["docling_ready"] = False
 
     readiness["elapsed_ms"] = int((time.monotonic() - started) * 1000)
     return readiness

@@ -7,9 +7,10 @@ from typing import List, Optional, Sequence, Tuple
 
 from app.services.legal_instruments import INSTRUMENTS, resolve_instrument
 
-# «ст. 61.3», «статья 10», «п. 2 ст. 10 ГК РФ»
+# «ст. 61.3», «статья 10», «статьей 3 настоящего ФЗ», «п. 2 ст. 10 ГК РФ»
+_ARTICLE_WORD_RE = r"стат(?:ья|ьи|ье|ью|ьей|ей|ьми|ями)"
 _ARTICLE_SIMPLE_RE = re.compile(
-    r"(?:ст\.?|стат(?:ья|ьи|ьями))\s*(?P<article>\d+(?:[.,]\d+)*)",
+    rf"(?:ст\.?|{_ARTICLE_WORD_RE})\s*(?P<article>\d+(?:[.,]\d+)*)",
     re.IGNORECASE,
 )
 _CLAUSE_PREFIX_RE = re.compile(
@@ -40,6 +41,26 @@ _FORWARD_MARKERS = (
     "применя",
     "руководству",
     "согласно",
+)
+
+# «пункте 2 статьи 61.1», «п. 2 ст. 10»
+_CLAUSE_ARTICLE_COMPOUND_RE = re.compile(
+    r"пункт(?:е|а|у|ом)?\s+(?P<clause>\d+(?:\.\d+)*)\s+"
+    rf"стать(?:и|ье|ью|ьей|ей)\s+(?P<article>\d+(?:\.\d+)*)",
+    re.IGNORECASE,
+)
+_P_CLAUSE_ST_RE = re.compile(
+    r"п\.?\s*(?P<clause>\d+(?:\.\d+)*)\s+ст\.?\s*(?P<article>\d+(?:\.\d+)*)",
+    re.IGNORECASE,
+)
+_SAME_ARTICLE_CLAUSE_RE = re.compile(
+    r"пункт(?:е|а|у|ом)?\s+(?P<clause>\d+(?:\.\d+)*)\s+настоящ(?:ей|его|ая|ий)\s+стать",
+    re.IGNORECASE,
+)
+_SAME_LAW_ARTICLE_RE = re.compile(
+    rf"(?:ст\.?|{_ARTICLE_WORD_RE})\s*(?P<article>\d+(?:\.\d+)*)\s+"
+    r"настоящ(?:его|его|им)\s+Федеральн(?:ого|ым)\s+закон",
+    re.IGNORECASE,
 )
 
 
@@ -139,22 +160,95 @@ def parse_cross_references_from_text(
     text: str,
     *,
     default_instrument_id: Optional[str] = None,
-    max_refs: int = 32,
+    source_article_number: Optional[str] = None,
+    source_clause_ref: Optional[str] = None,
+    max_refs: int = 48,
 ) -> List[ParsedCrossRef]:
     if not text:
         return []
     out: List[ParsedCrossRef] = []
     seen: set[str] = set()
+
+    def _append(parsed: Optional[ParsedCrossRef]) -> None:
+        if not parsed:
+            return
+        key = (
+            f"{parsed.target_instrument_id}|{parsed.article_number}|"
+            f"{parsed.clause_ref}|{parsed.edge_type}|{parsed.raw_text.lower()}"
+        )
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(parsed)
+
+    for m in _CLAUSE_ARTICLE_COMPOUND_RE.finditer(text):
+        article = normalize_article_number(m.group("article"))
+        clause = normalize_article_number(m.group("clause"))
+        raw = m.group(0).strip()
+        span = m.span()
+        target_iid = _resolve_instrument_hint(text[span[0] : span[1] + 80], default_instrument_id)
+        _append(
+            ParsedCrossRef(
+                raw_text=raw,
+                article_number=article,
+                clause_ref=clause,
+                target_instrument_id=target_iid,
+                edge_type=classify_edge_type(text, span),
+            )
+        )
+
+    for m in _P_CLAUSE_ST_RE.finditer(text):
+        article = normalize_article_number(m.group("article"))
+        clause = normalize_article_number(m.group("clause"))
+        raw = m.group(0).strip()
+        span = m.span()
+        target_iid = _resolve_instrument_hint(text[span[0] : span[1] + 80], default_instrument_id)
+        _append(
+            ParsedCrossRef(
+                raw_text=raw,
+                article_number=article,
+                clause_ref=clause,
+                target_instrument_id=target_iid,
+                edge_type=classify_edge_type(text, span),
+            )
+        )
+
+    if source_article_number:
+        for m in _SAME_ARTICLE_CLAUSE_RE.finditer(text):
+            clause = normalize_article_number(m.group("clause"))
+            raw = m.group(0).strip()
+            span = m.span()
+            _append(
+                ParsedCrossRef(
+                    raw_text=raw,
+                    article_number=normalize_article_number(source_article_number),
+                    clause_ref=clause,
+                    target_instrument_id=default_instrument_id,
+                    edge_type=classify_edge_type(text, span),
+                )
+            )
+
+    for m in _SAME_LAW_ARTICLE_RE.finditer(text):
+        article = normalize_article_number(m.group("article"))
+        raw = m.group(0).strip()
+        span = m.span()
+        _append(
+            ParsedCrossRef(
+                raw_text=raw,
+                article_number=article,
+                clause_ref="",
+                target_instrument_id=default_instrument_id,
+                edge_type=classify_edge_type(text, span),
+            )
+        )
+
     for m in _ARTICLE_SIMPLE_RE.finditer(text):
         start = m.start()
         window_start = max(0, start - 80)
-        raw = text[window_start:m.end()].strip()
-        # берём только хвост от последнего clause/part marker или от начала match
         art_raw = m.group(0).strip()
         prefix = text[window_start:start]
         clause_m = _CLAUSE_PREFIX_RE.search(prefix)
-        if clause_m:
-            raw = f"{clause_m.group(0).strip()} {art_raw}"
+        raw = f"{clause_m.group(0).strip()} {art_raw}" if clause_m else art_raw
         key = raw.lower()
         if key in seen:
             continue
@@ -164,11 +258,10 @@ def parse_cross_references_from_text(
             source_text=text,
             default_instrument_id=default_instrument_id,
         )
-        if parsed:
-            out.append(parsed)
+        _append(parsed)
         if len(out) >= max_refs:
             break
-    return out
+    return out[:max_refs]
 
 
 def make_norm_node_key(
@@ -183,6 +276,25 @@ def make_norm_node_key(
         cref = normalize_article_number(clause_ref)
         return f"{iid}::art::{art}::clause::{cref}"
     return f"{iid}::art::{art}"
+
+
+def is_clause_level_norm_key(norm_node_key: str) -> bool:
+    return "::clause::" in (norm_node_key or "")
+
+
+def parse_article_from_norm_key(norm_node_key: str) -> Optional[Tuple[str, str]]:
+    """instrument_id, article_number для ключа уровня статьи (без ::clause::)."""
+    nk = (norm_node_key or "").strip()
+    if not nk or is_clause_level_norm_key(nk):
+        return None
+    if "::art::" not in nk:
+        return None
+    iid, art = nk.split("::art::", 1)
+    iid = iid.strip().lower()
+    art = normalize_article_number(art.strip())
+    if not iid or not art:
+        return None
+    return iid, art
 
 
 def make_full_path(

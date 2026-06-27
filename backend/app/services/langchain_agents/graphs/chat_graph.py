@@ -754,6 +754,8 @@ class ChatGraphState(TypedDict):
     active_turn_id: Optional[str]  # UUID текущего хода (editor turn contract)
     turn_intent: Optional[str]  # ask | edit | draft для текущего хода
     structured_edits: Optional[List[Dict[str, Any]]]  # Структурированные изменения
+    edit_scope: Optional[Dict[str, Any]]  # План масштаба правки (targets, target_count)
+    pending_edit_targets: Optional[List[Dict[str, Any]]]  # Цели из Ask для handoff в Edit
     document_analysis: Optional[Dict[str, Any]]  # Анализ документа
     risks: Optional[List[Dict[str, Any]]]  # Найденные риски
     improved_text: Optional[str]  # Улучшенный текст
@@ -907,6 +909,8 @@ def create_initial_chat_state(
         editor_mode=bool(document_context),  # Режим редактора если есть document_context
         editor_mode_hint=editor_mode_hint,
         structured_edits=None,
+        edit_scope=None,
+        pending_edit_targets=None,
         document_analysis=None,
         risks=None,
         improved_text=None,
@@ -3358,6 +3362,22 @@ def generate_response_node(
         new_state["response"] = response_text
         new_state["messages"] = [AIMessage(content=response_text)]
 
+        if (document_context or "").strip() and (state.get("editor_mode_hint") or "").strip().lower() == "ask":
+            try:
+                from app.services.langchain_agents.graphs.editor_edit_handoff import (
+                    build_pending_targets_from_assistant_text,
+                )
+
+                pending = build_pending_targets_from_assistant_text(response_text)
+                if pending:
+                    new_state["pending_edit_targets"] = pending
+                    logger.info(
+                        "[GenerateResponse] Stored %d pending_edit_targets from Ask analysis",
+                        len(pending),
+                    )
+            except Exception:
+                logger.debug("pending_edit_targets extraction failed", exc_info=True)
+
         if (document_context or "").strip():
             _post_ms = int((_time.monotonic() - _postprocess_t0) * 1000)
             _prev = new_state.get("editor_latency_partial")
@@ -3701,33 +3721,8 @@ def route_after_quality_gate(state: ChatGraphState) -> str:
 
 
 def route_after_validate(state: ChatGraphState) -> str:
-    """
-    Маршрутизация после валидации.
-    
-    Hard limit: максимум 3 итерации.
-    Если edits невалидны и iteration < MAX, возвращаемся к generate_edits.
-    Иначе принудительно применяем.
-    """
-    MAX_EDIT_ITERATIONS = 3
-    
-    edits_valid = state.get("edits_valid", False)
-    iteration = state.get("edit_validation_iteration", 0)
-    edit_iterations = state.get("edit_iterations", 0)
-    
-    if not edits_valid:
-        # Проверяем количество итераций
-        if edit_iterations < MAX_EDIT_ITERATIONS:
-            # Увеличиваем счётчик итераций
-            new_state = dict(state)
-            new_state["edit_iterations"] = edit_iterations + 1
-            logger.info(f"[RouteAfterValidate] Edits invalid, retrying (iteration {edit_iterations + 1}/{MAX_EDIT_ITERATIONS})")
-            return "generate_edits"  # Повторная генерация
-        else:
-            # Hard limit достигнут - принудительно применяем
-            logger.warning(f"[RouteAfterValidate] Max iterations ({MAX_EDIT_ITERATIONS}) reached, applying edits anyway")
-            return "apply_edits"
-    
-    return "apply_edits"  # Применение валидных правок
+    """После детерминированной валидации — финализация предложений для UI."""
+    return "apply_edits"
 
 
 # ============== Graph Builder ==============
@@ -3935,7 +3930,7 @@ def create_chat_graph(
         }
     )
 
-    graph.add_edge("generate_editor_snippet", "generate_response")
+    graph.add_edge("generate_editor_snippet", END)
     
     # parallel_checks теперь выполняет все проверки внутри себя и объединяет результаты
     # Edge от parallel_checks к generate_response
@@ -3952,18 +3947,17 @@ def create_chat_graph(
     # Для generate_edits: валидация перед применением
     graph.add_edge("generate_edits", "validate_edits")
     
-    # Conditional edge после validate_edits (цикл валидации с hard limits)
+    # Conditional edge после validate_edits — без цикла обратно в generate_edits
     graph.add_conditional_edges(
         "validate_edits",
         route_after_validate,
         {
-            "generate_edits": "generate_edits",  # Повторная генерация если невалидно
-            "apply_edits": "apply_edits"  # Применение если валидно
+            "apply_edits": "apply_edits",
         }
     )
-    
-    # Edge от apply_edits к generate_response
-    graph.add_edge("apply_edits", "generate_response")
+
+    # Edit-turn: короткий ответ без второго LLM (generate_response)
+    graph.add_edge("apply_edits", END)
 
     graph.add_edge("rag_retrieval", "merge_retrieval_results")
     graph.add_edge("garant_retrieval", "merge_retrieval_results")

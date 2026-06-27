@@ -1,7 +1,6 @@
 """Shared case file persistence + background processing (local upload, Google Drive, etc.)."""
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 from dataclasses import dataclass
@@ -141,29 +140,10 @@ def refresh_case_file_metadata(db: Session, case: Case, case_id: str) -> None:
 
 
 def schedule_case_files_processing(case_id: str, file_ids: Sequence[str]) -> None:
-    """Same background path as POST /cases/{id}/files."""
-    if not file_ids:
-        return
+    """Same background path as POST /cases/{id}/files (via per-case ingest scheduler)."""
+    from app.services.file_processing_enqueue import schedule_case_files_processing as _schedule
 
-    from app.services.file_processor_bg import process_files_background
-
-    async def _bg() -> None:
-        try:
-            await asyncio.to_thread(process_files_background, list(file_ids), case_id)
-        except Exception as exc:
-            logger.error(
-                "Background processing task error for case %s: %s",
-                case_id,
-                exc,
-                exc_info=True,
-            )
-
-    asyncio.create_task(_bg())
-    logger.info(
-        "Background processing started for %s files in case %s",
-        len(file_ids),
-        case_id,
-    )
+    _schedule(case_id, file_ids)
 
 
 def cleanup_absolute_paths(paths: Sequence[str]) -> None:

@@ -1288,9 +1288,21 @@ class ChatGraphService:
                                     answer_after_reasoning_buffer = ""
                                     native_reasoning_phase = False
 
-                                # Финальный response после sanitize — заменяем preview стрима canonical текстом.
+                                # Финальный response (generate_response, apply_edits, draft snippet).
+                                from app.services.chat.turn_contract import EDITOR_FINAL_RESPONSE_NODES
+
                                 response = node_data.get("response")
-                                if isinstance(response, str):
+                                if (
+                                    isinstance(response, str)
+                                    and response.strip()
+                                    and (
+                                        node_name == "generate_response"
+                                        or (
+                                            is_editor_chat
+                                            and node_name in EDITOR_FINAL_RESPONSE_NODES
+                                        )
+                                    )
+                                ):
                                     full_response, sync_events = _finalize_generate_response_text(
                                         resp=response,
                                         streamed_text=full_response,

@@ -1,5 +1,7 @@
+import { useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { MessageSquare, FileText, Table, FileEdit, BookOpen } from 'lucide-react'
+import { useAuth } from '@/contexts/AuthContext'
+import { buildCaseNavItems } from '@/lib/caseNavItems'
 
 interface CaseNavigationProps {
   caseId: string
@@ -8,26 +10,24 @@ interface CaseNavigationProps {
 const CaseNavigation = ({ caseId }: CaseNavigationProps) => {
   const navigate = useNavigate()
   const location = useLocation()
-  
-  const navItems = [
-    { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
-    { id: 'documents', label: 'Документы', icon: FileText, path: `/cases/${caseId}/documents` },
-    { id: 'editor', label: 'Редактор', icon: FileEdit, path: `/cases/${caseId}/editor` },
-    { id: 'tabular-review', label: 'Tabular Review', icon: Table, path: `/cases/${caseId}/tabular-review` },
-    { id: 'playbooks', label: 'Playbooks', icon: BookOpen, path: `/cases/${caseId}/playbooks` },
-  ]
-  
+  const { user } = useAuth()
+
+  const navItems = useMemo(
+    () => buildCaseNavItems(caseId, user?.email),
+    [caseId, user?.email],
+  )
+
   const isActive = (path: string) => {
     return location.pathname === path || location.pathname.startsWith(path + '/')
   }
-  
+
   return (
     <div className="w-[250px] h-screen bg-secondary border-r border-border flex flex-col">
       <div className="p-4 space-y-1">
         {navItems.map((item) => {
           const Icon = item.icon
           const active = isActive(item.path)
-          
+
           return (
             <button
               key={item.id}

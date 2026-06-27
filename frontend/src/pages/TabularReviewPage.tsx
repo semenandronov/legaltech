@@ -1,18 +1,20 @@
-import React, { useState, useEffect, useRef, useCallback } from "react"
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
-import { MessageSquare, FileEdit, BookOpen, FolderOpen } from "lucide-react"
+import { FolderOpen } from "lucide-react"
 import UnifiedSidebar from "../components/Layout/UnifiedSidebar"
 import { TabularReviewTable } from "../components/TabularReview/TabularReviewTable"
 import { TabularReviewToolbar } from "../components/TabularReview/TabularReviewToolbar"
-import { ColumnBuilder } from "../components/TabularReview/ColumnBuilder"
+import { TabularReviewHeader } from "../components/TabularReview/TabularReviewHeader"
+import type { TabularColumnSavePayload } from "../components/TabularReview/TabularEditColumnMenu.types"
+import { MikeAddColumnModal } from "../components/TabularReview/mike/MikeAddColumnModal"
+import type { MikeColumnSavePayload } from "../components/TabularReview/mike/MikeAddColumnModal"
 import { BulkColumnBuilder } from "../components/TabularReview/BulkColumnBuilder"
-import { InlineCellEditor } from "../components/TabularReview/InlineCellEditor"
-import { DocumentSelector } from "../components/TabularReview/DocumentSelector"
-import { TabularDocumentViewer } from "../components/TabularReview/TabularDocumentViewer"
+import { MikeAddDocumentsModal } from "../components/TabularReview/mike/MikeAddDocumentsModal"
 import { TemplatesModal } from "../components/TabularReview/TemplatesModal"
 import { CaseTabularHubModal } from "../components/TabularReview/CaseTabularHubModal"
 import { TabularReviewHelpPanel } from "../components/TabularReview/TabularReviewHelpPanel"
 import { TabularReviewContextChat } from "../components/TabularReview/TabularReviewContextChat"
+import { TabularSidePanel } from "../components/TabularReview/TabularSidePanel"
 import { ExportTableDialog } from "../components/TabularReview/ExportTableDialog"
 import { tabularReviewApi, TableData, TabularColumn } from "../services/tabularReviewApi"
 import { appendColumnsToTableData, applyColumnCellsToTableData, applySingleColumnCellToTableData, buildProcessingCellKeys, clearProcessingCellKey, clearProcessingCellKeysForColumn, removeColumnFromTableData } from "../utils/tabularTableState"
@@ -24,15 +26,16 @@ import {
 import { buildTabularViewerCellData, type TabularCellClickPayload } from "../utils/tabularCellViewerData"
 import { useTabularReviewWebSocket } from "../hooks/useTabularReviewWebSocket"
 import { getCase, getDocuments } from "../services/api"
+import { buildCaseNavItems } from "@/lib/caseNavItems"
+import { useAuth } from "@/contexts/AuthContext"
 import { Card } from "../components/UI/Card"
 import Spinner from "../components/UI/Spinner"
 import { toast } from "sonner"
-import { Edit2, X, Check, LayoutTemplate } from "lucide-react"
-import { Drawer } from "@mui/material"
 
 const TabularReviewPage: React.FC = () => {
   const { reviewId, caseId } = useParams<{ reviewId?: string; caseId: string }>()
   const navigate = useNavigate()
+  const { user } = useAuth()
   const [searchParams] = useSearchParams()
   const returnTo = searchParams.get("returnTo")
 
@@ -56,11 +59,10 @@ const TabularReviewPage: React.FC = () => {
   const [processingCellKeys, setProcessingCellKeys] = useState<Set<string>>(new Set())
   const [showColumnBuilder, setShowColumnBuilder] = useState(false)
   const [showTableAddColumn, setShowTableAddColumn] = useState(false)
+  const [editingColumnId, setEditingColumnId] = useState<string | null>(null)
   const [bulkBuilderInitialPrompt, setBulkBuilderInitialPrompt] = useState<string | undefined>(undefined)
   const [filterPopoverOpen, setFilterPopoverOpen] = useState(false)
   const [filterAnchorEl, setFilterAnchorEl] = useState<HTMLElement | null>(null)
-  const [editColumnAnchorEl, setEditColumnAnchorEl] = useState<HTMLElement | null>(null)
-  const [editingColumn, setEditingColumn] = useState<{ id: string; label: string; type: string; prompt: string; column_config?: any } | null>(null)
   const [showDocumentSelector, setShowDocumentSelector] = useState(false)
   const [showTemplatesModal, setShowTemplatesModal] = useState(false)
   const [showExportDialog, setShowExportDialog] = useState(false)
@@ -69,18 +71,17 @@ const TabularReviewPage: React.FC = () => {
     fileId: string
     fileType?: string
     fileName?: string
+    columnId?: string
+    columnLabel?: string
+    reasoning?: string | null
+    confidence?: number | null
     sourceReferenceIndex?: number
+    hideDetailPanel?: boolean
     cellData: ReturnType<typeof buildTabularViewerCellData>
   } | null>(null)
   const [_loadingCellDetails, setLoadingCellDetails] = useState(false)
-  const [editingCell, setEditingCell] = useState<{
-    fileId: string
-    columnId: string
-    cell: any
-  } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const loadingRef = useRef(false)
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [isEditingName, setIsEditingName] = useState(false)
   const [editNameValue, setEditNameValue] = useState("")
   
@@ -96,6 +97,8 @@ const TabularReviewPage: React.FC = () => {
   const [loadingReviews, setLoadingReviews] = useState(false)
   const [showHelpPanel, setShowHelpPanel] = useState(false)
   const [showTableChat, setShowTableChat] = useState(true)
+  const [documentSearch, setDocumentSearch] = useState('')
+  const [selectedTableDocIds, setSelectedTableDocIds] = useState<string[]>([])
   const [caseFilesForHub, setCaseFilesForHub] = useState<Array<{ id: string; filename: string }>>([])
   const columnPollControllersRef = useRef<Map<string, ColumnExtractionPollController>>(new Map())
   const wsCompletedColumnRef = useRef<Set<string>>(new Set())
@@ -136,13 +139,9 @@ const TabularReviewPage: React.FC = () => {
   }, [])
 
   const handleRealtimeColumnDeleted = useCallback((columnId: string) => {
-    if (editingColumn?.id === columnId) {
-      setEditingColumn(null)
-      setEditColumnAnchorEl(null)
-    }
     setTableData((prev) => (prev ? removeColumnFromTableData(prev, columnId) : prev))
     finishColumnExtractionUi(columnId)
-  }, [editingColumn?.id, finishColumnExtractionUi])
+  }, [finishColumnExtractionUi])
 
   // Fetch case name for breadcrumb
   useEffect(() => {
@@ -179,18 +178,6 @@ const TabularReviewPage: React.FC = () => {
       })
       .catch(() => setCaseFilesForHub([]))
   }, [caseId, reviewId])
-
-  // Предупреждение при закрытии с несохранёнными изменениями
-  useEffect(() => {
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (hasUnsavedChanges) {
-        e.preventDefault()
-        e.returnValue = 'У вас есть несохранённые изменения. Вы уверены, что хотите покинуть страницу?'
-      }
-    }
-    window.addEventListener('beforeunload', handleBeforeUnload)
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [hasUnsavedChanges])
 
   useEffect(() => {
     if (reviewId && !loadingRef.current) {
@@ -387,8 +374,6 @@ const TabularReviewPage: React.FC = () => {
     try {
       await tabularReviewApi.updateCell(reviewId, fileId, columnId, value)
       toast.success("Ячейка обновлена")
-      setEditingCell(null)
-      setHasUnsavedChanges(false)  // Изменения сохранены
       await loadReviewData()
     } catch (err: any) {
       toast.error("Не удалось обновить ячейку: " + (err.message || ""))
@@ -434,6 +419,12 @@ const TabularReviewPage: React.FC = () => {
     }
   }
 
+  const handleAddColumns = async (columns: MikeColumnSavePayload[]) => {
+    for (const column of columns) {
+      await handleAddColumn(column)
+    }
+  }
+
   const handleStartRename = () => {
     if (tableData) {
       setEditNameValue(tableData.review.name)
@@ -458,29 +449,28 @@ const TabularReviewPage: React.FC = () => {
     }
   }
 
-  const handleColumnEdit = (columnId: string, anchorEl?: HTMLElement) => {
-    if (!tableData) return
-    const column = tableData.columns.find(c => c.id === columnId)
-    if (!column) return
-    setEditColumnAnchorEl(anchorEl ?? null)
-    setEditingColumn({
-      id: column.id,
-      label: column.column_label,
-      type: column.column_type,
-      prompt: column.prompt || "",
-      column_config: column.column_config,
-    })
+  const handleColumnSave = async (columnId: string, payload: TabularColumnSavePayload) => {
+    if (!reviewId) return
+    try {
+      await tabularReviewApi.updateColumn(reviewId, columnId, payload)
+      toast.success('Колонка обновлена')
+      await loadReviewData()
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Не удалось обновить колонку'
+      toast.error(message)
+      throw err
+    }
   }
 
-  const handleColumnDelete = async (columnId: string) => {
-    if (!reviewId || !tableData) return
+  const handleColumnDelete = async (columnId: string): Promise<boolean> => {
+    if (!reviewId || !tableData) return false
 
     const column = tableData.columns.find((c) => c.id === columnId)
-    if (!column) return
+    if (!column) return false
 
     if (runningColumnIds.has(columnId)) {
       toast.error("Дождитесь завершения заполнения колонки перед удалением")
-      return
+      return false
     }
 
     if (
@@ -488,66 +478,95 @@ const TabularReviewPage: React.FC = () => {
         `Удалить колонку «${column.column_label}»? Ячейки и комментарии к ней будут удалены без возможности восстановления.`,
       )
     ) {
-      return
+      return false
     }
 
     try {
       await tabularReviewApi.deleteColumn(reviewId, columnId)
       setTableData((prev) => (prev ? removeColumnFromTableData(prev, columnId) : prev))
-      if (editingColumn?.id === columnId) {
-        setEditingColumn(null)
-        setEditColumnAnchorEl(null)
-      }
       finishColumnExtractionUi(columnId)
       toast.success(`Колонка «${column.column_label}» удалена`)
+      return true
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Не удалось удалить колонку"
       toast.error(message)
+      return false
     }
   }
 
-  const handleUpdateColumn = async (column: {
-    column_label: string
-    column_type: string
-    prompt: string
-    column_config?: {
-      options?: Array<{ label: string; color: string }>
-      allow_custom?: boolean
-    }
-  }) => {
-    if (!reviewId || !editingColumn) return
-    
-    try {
-      await tabularReviewApi.updateColumn(
-        reviewId,
-        editingColumn.id,
-        {
-          column_label: column.column_label,
-          column_type: column.column_type,
-          prompt: column.prompt,
-          column_config: column.column_config,
-        }
-      )
-      toast.success("Колонка обновлена")
-      setEditingColumn(null)
-      setShowColumnBuilder(false)
-      await loadReviewData()
-    } catch (err: any) {
-      toast.error("Не удалось обновить колонку: " + (err.message || ""))
-      throw err
-    }
+  const editingColumn = useMemo(
+    () => tableData?.columns.find((column) => column.id === editingColumnId) ?? null,
+    [tableData?.columns, editingColumnId],
+  )
+
+  const closeColumnModal = () => {
+    setShowTableAddColumn(false)
+    setEditingColumnId(null)
   }
 
-  const navItems = [
-    { id: 'cases', label: 'Дела', icon: FolderOpen, path: '/cases' },
-    { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: caseId ? `/cases/${caseId}/chat` : '/cases' },
-    { id: 'editor', label: 'Редактор', icon: FileEdit, path: caseId ? `/cases/${caseId}/editor` : '/cases' },
-    { id: 'playbooks', label: 'Playbooks', icon: BookOpen, path: caseId ? `/cases/${caseId}/playbooks` : '/cases' },
-  ]
+  const navItems = useMemo(
+    () => (caseId ? buildCaseNavItems(caseId, user?.email) : [{ id: 'cases', label: 'Дела', icon: FolderOpen, path: '/cases' }]),
+    [caseId, user?.email],
+  )
+
+  const columnIds = useMemo(
+    () => tableData?.columns.map((col) => col.id) ?? [],
+    [tableData?.columns],
+  )
+
+  const mainGridColumns = useMemo(() => {
+    const cols = ['minmax(0, 1fr)']
+    if (selectedDocument) cols.push('minmax(300px, min(42%, 900px))')
+    else if (showTableChat && reviewId && tableData) cols.push('380px')
+    return cols.join(' ')
+  }, [selectedDocument, showTableChat, reviewId, tableData])
+
+  const handleNavigateSidePanelColumn = useCallback(
+    async (columnId: string) => {
+      if (!selectedDocument || !reviewId || !tableData) return
+      const row = tableData.rows.find((r) => r.file_id === selectedDocument.fileId)
+      const column = tableData.columns.find((col) => col.id === columnId)
+      if (!row || !column) return
+
+      const cell = row.cells?.[columnId]
+      let details = null
+      try {
+        details = await tabularReviewApi.getCellDetails(reviewId, selectedDocument.fileId, columnId)
+      } catch (err) {
+        console.error('Error loading cell details:', err)
+      }
+
+      const clickPayload: TabularCellClickPayload = {
+        verbatimExtract: cell?.verbatim_extract ?? details?.verbatim_extract ?? null,
+        sourcePage: cell?.source_page ?? details?.source_page ?? null,
+        sourceSection: cell?.source_section ?? details?.source_section ?? null,
+        columnType: column.column_type,
+        sourceReferences: cell?.source_references,
+      }
+
+      setSelectedDocument({
+        fileId: selectedDocument.fileId,
+        fileType: row.file_type || undefined,
+        fileName: row.file_name || undefined,
+        columnId,
+        columnLabel: column.column_label,
+        reasoning: details?.reasoning ?? cell?.reasoning ?? null,
+        confidence: details?.confidence_score ?? cell?.confidence_score ?? null,
+        sourceReferenceIndex: 0,
+        hideDetailPanel: selectedDocument.hideDetailPanel,
+        cellData: buildTabularViewerCellData({
+          details,
+          click: clickPayload,
+          fileId: selectedDocument.fileId,
+        }),
+      })
+    },
+    [reviewId, selectedDocument, tableData],
+  )
 
   if (loading && !tableData) {
     return (
-      <div className="h-screen bg-bg-primary flex">
+      <div className="ws-shell h-screen flex">
         <UnifiedSidebar navItems={navItems} title="Legal AI" showBackButton={false} />
         <div className="flex-1 flex items-center justify-center">
           <Spinner size="lg" />
@@ -558,7 +577,7 @@ const TabularReviewPage: React.FC = () => {
 
   if (error && !tableData) {
     return (
-      <div className="h-screen bg-bg-primary flex">
+      <div className="ws-shell h-screen flex">
         <UnifiedSidebar navItems={navItems} title="Legal AI" showBackButton={false} />
         <div className="flex-1 flex items-center justify-center p-6 bg-bg-primary">
           <Card className="p-6 hoverable">
@@ -580,7 +599,7 @@ const TabularReviewPage: React.FC = () => {
 
   if (!reviewId && caseId) {
     return (
-      <div className="h-screen bg-bg-primary flex">
+      <div className="ws-shell h-screen flex">
         <UnifiedSidebar navItems={navItems} title="Legal AI" showBackButton={false} />
         <div className="flex-1 flex items-center justify-center">
           {loadingReviews && <Spinner size="lg" />}
@@ -606,7 +625,7 @@ const TabularReviewPage: React.FC = () => {
     // Show loading only if we're actually loading
     if (loading) {
       return (
-        <div className="h-screen bg-bg-primary flex">
+        <div className="ws-shell h-screen flex">
           <UnifiedSidebar navItems={navItems} title="Legal AI" showBackButton={false} />
           <div className="flex-1 flex items-center justify-center">
             <Spinner size="lg" />
@@ -617,10 +636,10 @@ const TabularReviewPage: React.FC = () => {
     // If not loading but no data, show error or empty state
     if (error) {
       return (
-        <div className="h-screen bg-bg-primary flex">
+        <div className="ws-shell h-screen flex">
           <UnifiedSidebar navItems={navItems} title="Legal AI" showBackButton={false} />
-          <div className="flex-1 flex items-center justify-center p-6 bg-bg-primary">
-            <Card className="p-6 hoverable">
+          <div className="ws-main flex items-center justify-center p-6">
+            <Card className="p-6 ws-card">
               <div className="text-center">
                 <h2 className="font-display text-h2 text-text-primary mb-2">Ошибка</h2>
                 <p className="text-body text-text-secondary mb-4">{error}</p>
@@ -646,7 +665,7 @@ const TabularReviewPage: React.FC = () => {
     }
     // If no error but no data, show empty state
     return (
-      <div className="h-screen bg-bg-primary flex">
+      <div className="ws-shell h-screen flex">
         <UnifiedSidebar navItems={navItems} title="Legal AI" showBackButton={false} />
         <div className="flex-1 flex items-center justify-center p-6 bg-bg-primary">
           <Card className="p-6 hoverable">
@@ -666,100 +685,57 @@ const TabularReviewPage: React.FC = () => {
   }
 
   return (
-    <div className="h-screen bg-bg-primary flex">
-      <UnifiedSidebar navItems={navItems} title="Legal AI" showBackButton={false} />
-      <div className="flex flex-col h-full flex-1 min-h-0 overflow-hidden bg-bg-primary">
-        {/* Header */}
-        <div className="border-b border-border px-6 pt-5 pb-5" style={{ backgroundColor: 'var(--color-bg-primary)' }}>
-          {/* Breadcrumb */}
-          <div className="flex items-center gap-1.5 text-sm mb-3" style={{ color: 'var(--color-text-muted)' }}>
-            <button
-              onClick={() => navigate('/cases')}
-              className="hover:underline transition-colors"
-              style={{ color: 'var(--color-text-muted)' }}
-            >
-              Дела
-            </button>
-            <span>/</span>
-            <button
-              onClick={() => navigate(`/cases/${caseId}`)}
-              className="hover:underline transition-colors"
-              style={{ color: 'var(--color-text-muted)' }}
-            >
-              {caseName || "..."}
-            </button>
-            <span>/</span>
-            <span>{tableData.review.name}</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="flex items-center gap-2">
-                {isEditingName ? (
-                  <>
-                    <input
-                      autoFocus
-                      value={editNameValue}
-                      onChange={(e) => setEditNameValue(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') { e.preventDefault(); handleSaveRename() }
-                        if (e.key === 'Escape') setIsEditingName(false)
-                      }}
-                      className="text-2xl font-semibold tracking-tight bg-transparent border-b-2 outline-none"
-                      style={{ color: 'var(--color-text-primary)', borderColor: 'var(--color-accent)', minWidth: 200 }}
-                    />
-                    <button
-                      onMouseDown={(e) => { e.preventDefault(); handleSaveRename() }}
-                      className="p-1.5 rounded-md transition-colors"
-                      style={{ color: 'white', backgroundColor: 'var(--color-accent)' }}
-                      title="Сохранить (Enter)"
-                    >
-                      <Check className="w-4 h-4" />
-                    </button>
-                    <button
-                      onMouseDown={(e) => { e.preventDefault(); setIsEditingName(false) }}
-                      className="p-1.5 rounded-md transition-colors hover:bg-[var(--color-bg-hover)]"
-                      style={{ color: 'var(--color-text-muted)' }}
-                      title="Отмена (Esc)"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <h1 className="text-2xl font-semibold tracking-tight" style={{ color: 'var(--color-text-primary)' }}>
-                      {tableData.review.name}
-                    </h1>
-                    <button
-                      onClick={handleStartRename}
-                      className="p-1 rounded transition-colors hover:bg-[var(--color-bg-hover)]"
-                      style={{ color: 'var(--color-text-muted)' }}
-                      title="Редактировать название"
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                    </button>
-                  </>
-                )}
-              </div>
-              <p className="text-sm mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
-                {tableData.rows.length} документов
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Toolbar */}
-        <TabularReviewToolbar
-          onOpenHelp={() => setShowHelpPanel(true)}
+    <div className="ws-shell ws-tabular-shell flex">
+      <UnifiedSidebar navItems={navItems} title="Legal AI" showBackButton={false} variant="tabular" />
+      <div className="ws-tabular-page">
+        <TabularReviewHeader
+          caseName={caseName}
+          reviewName={tableData.review.name}
+          processing={processing}
+          showTableChat={showTableChat}
+          isEditingName={isEditingName}
+          editNameValue={editNameValue}
+          documentSearch={documentSearch}
+          onDocumentSearchChange={setDocumentSearch}
+          onNavigateCases={() => navigate('/cases')}
+          onNavigateCase={() => navigate(`/cases/${caseId}`)}
+          onStartRename={handleStartRename}
+          onSaveRename={handleSaveRename}
+          onCancelRename={() => setIsEditingName(false)}
+          onEditNameChange={setEditNameValue}
           onToggleChat={() => setShowTableChat((v) => !v)}
-          chatOpen={showTableChat}
+          onExport={() => setShowExportDialog(true)}
+          onOpenHelp={() => setShowHelpPanel(true)}
           onOpenFilter={(el) => {
             setFilterAnchorEl(el)
             setFilterPopoverOpen(true)
           }}
+        />
+
+        <TabularReviewToolbar
           onUpdateDocuments={reviewId ? () => setShowDocumentSelector(true) : undefined}
           onAddColumns={() => setShowTableAddColumn(true)}
-          onExport={reviewId ? () => setShowExportDialog(true) : undefined}
           processing={processing}
+          selectedCount={selectedTableDocIds.length}
+          onDeleteSelected={
+            reviewId && selectedTableDocIds.length > 0
+              ? async () => {
+                  try {
+                    const remaining = (tableData?.rows ?? [])
+                      .map((row) => row.file_id)
+                      .filter((id) => !selectedTableDocIds.includes(id))
+                    await tabularReviewApi.updateSelectedFiles(reviewId, remaining)
+                    setSelectedFileIds((prev) => prev.filter((id) => !selectedTableDocIds.includes(id)))
+                    setSelectedTableDocIds([])
+                    toast.success('Документы удалены из таблицы')
+                    await loadReviewData()
+                  } catch (err: unknown) {
+                    const message = err instanceof Error ? err.message : 'Неизвестная ошибка'
+                    toast.error('Не удалось удалить документы: ' + message)
+                  }
+                }
+              : undefined
+          }
         />
 
         <TabularReviewHelpPanel
@@ -767,65 +743,18 @@ const TabularReviewPage: React.FC = () => {
           onClose={() => setShowHelpPanel(false)}
         />
 
-        {/* Main Content Area */}
         <div
-          className="flex-1 min-h-0 overflow-hidden"
-          style={{
-            display: 'grid',
-            gridTemplateColumns: showTableChat && reviewId && tableData ? 'minmax(0, 1fr) 380px' : 'minmax(0, 1fr)',
-          }}
+          className="ws-tabular-body"
+          style={{ display: 'grid', gridTemplateColumns: mainGridColumns }}
         >
-          <div className="min-h-0 overflow-hidden flex flex-col">
-            <div className="overflow-hidden p-6 flex-1 bg-bg-primary min-h-0 flex flex-col">
-              {tableData.columns.length === 0 && (
-                <div
-                  className="mb-4 rounded-xl border p-5 shrink-0"
-                  style={{
-                    borderColor: 'var(--color-border)',
-                    backgroundColor: 'var(--color-bg-elevated)',
-                  }}
-                >
-                  <h3
-                    className="text-sm font-semibold mb-1"
-                    style={{ color: 'var(--color-text-primary)' }}
-                  >
-                    Добавьте первую колонку
-                  </h3>
-                  <p className="text-sm mb-4" style={{ color: 'var(--color-text-muted)' }}>
-                    Колонка — один вопрос ко всем документам. После создания нажмите ▶ у заголовка,
-                    чтобы ИИ заполнил ячейки. Или возьмите готовый шаблон для банкротства.
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setShowTableAddColumn(true)}
-                      className="px-4 py-2 text-sm font-medium rounded-lg"
-                      style={{
-                        backgroundColor: 'var(--color-text-primary)',
-                        color: 'var(--color-bg-primary)',
-                      }}
-                    >
-                      Добавить колонку
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowTemplatesModal(true)}
-                      className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border"
-                      style={{
-                        borderColor: 'var(--color-border)',
-                        color: 'var(--color-text-primary)',
-                        backgroundColor: 'var(--color-bg-primary)',
-                      }}
-                    >
-                      <LayoutTemplate className="w-4 h-4" />
-                      Готовые шаблоны
-                    </button>
-                  </div>
-                </div>
-              )}
+          <div className="ws-tabular-surface">
+            <div className="ws-tabular-table-wrap min-h-0 overflow-hidden flex flex-col flex-1">
               <TabularReviewTable
                   reviewId={reviewId}
                   tableData={tableData}
+                  documentSearch={documentSearch}
+                  selectedDocIds={selectedTableDocIds}
+                  onSelectionChange={setSelectedTableDocIds}
                   filterPopoverOpen={filterPopoverOpen}
                   filterAnchorEl={filterAnchorEl}
                   onCloseFilterPopover={() => {
@@ -833,19 +762,17 @@ const TabularReviewPage: React.FC = () => {
                     setFilterAnchorEl(null)
                   }}
                   onAddColumnClick={() => setShowTableAddColumn(true)}
-                  showAddColumnPopover={showTableAddColumn}
-                  onCloseAddColumnPopover={() => setShowTableAddColumn(false)}
-                  onSaveNewColumn={handleAddColumn}
+                  onAddDocumentsClick={reviewId ? () => setShowDocumentSelector(true) : undefined}
+                  onOpenTemplatesClick={() => setShowTemplatesModal(true)}
                   onTableDataUpdate={(updater) => {
                     if (tableData) {
                       setTableData(updater(tableData))
                     }
                   }}
-                  onCellEdit={(fileId: string, columnId: string, cell: any) => {
-                    setEditingCell({ fileId, columnId, cell })
-                    setHasUnsavedChanges(true)  // Начали редактирование
+                  onCellSave={async (fileId, columnId, value) => {
+                    await handleCellEditSave(fileId, columnId, value)
                   }}
-                  onColumnEdit={handleColumnEdit}
+                  onOpenEditColumn={setEditingColumnId}
                   onColumnDelete={handleColumnDelete}
                   onCellClick={async (fileId, columnId, cellData: TabularCellClickPayload) => {
                     const row = tableData.rows.find(r => r.file_id === fileId)
@@ -878,11 +805,18 @@ const TabularReviewPage: React.FC = () => {
                       fileId,
                     })
 
+                    const rowCell = row?.cells?.[columnId]
+
                     setSelectedDocument({
                       fileId,
                       fileType: row?.file_type || undefined,
                       fileName: row?.file_name || undefined,
+                      columnId,
+                      columnLabel: clickedColumn?.column_label,
+                      reasoning: details?.reasoning ?? rowCell?.reasoning ?? null,
+                      confidence: details?.confidence_score ?? rowCell?.confidence_score ?? null,
                       sourceReferenceIndex: cellData.sourceReferenceIndex ?? 0,
+                      hideDetailPanel: cellData.hideDetailPanel ?? false,
                       cellData: finalCellData,
                     })
                   }}
@@ -950,90 +884,39 @@ const TabularReviewPage: React.FC = () => {
             </div>
           </div>
 
-          {showTableChat && reviewId && tableData && (
-            <aside
-              className="min-h-0 h-full border-l flex flex-col overflow-hidden shadow-sm"
-              style={{
-                borderColor: 'var(--color-border)',
-                backgroundColor: 'var(--color-bg-elevated)',
-              }}
-            >
+          {showTableChat && reviewId && tableData && !selectedDocument && (
+            <aside className="ws-tabular-aside">
               <TabularReviewContextChat
                 reviewId={reviewId}
                 reviewName={tableData.review.name}
+                onClose={() => setShowTableChat(false)}
               />
             </aside>
           )}
+
+          {selectedDocument && caseId && (
+            <TabularSidePanel
+              embedded
+              selection={selectedDocument}
+              caseId={caseId}
+              columnIds={columnIds}
+              onClose={() => setSelectedDocument(null)}
+              onNavigateColumn={handleNavigateSidePanelColumn}
+            />
+          )}
         </div>
 
-        {/* Document viewer — slides in from the right, overlays the page */}
-        <Drawer
-          anchor="right"
-          open={!!selectedDocument}
-          onClose={() => setSelectedDocument(null)}
-          slotProps={{ paper: { sx: { width: 680, display: 'flex', flexDirection: 'column' } } }}
-        >
-          {selectedDocument && (
-            <>
-              <div
-                className="flex items-center justify-between px-4 py-3 border-b shrink-0"
-                style={{ borderBottomColor: 'var(--color-border)', backgroundColor: 'var(--color-bg-elevated)' }}
-              >
-                <span className="font-medium text-sm truncate max-w-xs" style={{ color: 'var(--color-text-primary)' }}>
-                  {selectedDocument.fileName || 'Документ'}
-                </span>
-                <button
-                  onClick={() => setSelectedDocument(null)}
-                  className="p-1.5 rounded-lg transition-colors ml-3 shrink-0 hover:bg-[var(--color-bg-hover)]"
-                  style={{ color: 'var(--color-text-muted)' }}
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-              <div className="flex-1 overflow-hidden">
-                <TabularDocumentViewer
-                  key={`${selectedDocument.fileId}:${selectedDocument.sourceReferenceIndex ?? 0}:${selectedDocument.cellData.verbatimExtract?.slice(0, 40) ?? ''}`}
-                  fileId={selectedDocument.fileId}
-                  caseId={caseId || ""}
-                  fileType={selectedDocument.fileType}
-                  fileName={selectedDocument.fileName}
-                  cellData={selectedDocument.cellData}
-                  onClose={() => setSelectedDocument(null)}
-                />
-              </div>
-            </>
-          )}
-        </Drawer>
-
-        {showTableAddColumn && reviewId && (
-          <ColumnBuilder
-            isOpen
-            mode="modal"
-            onClose={() => setShowTableAddColumn(false)}
-            onSave={async (column) => {
-              await handleAddColumn(column)
-              setShowTableAddColumn(false)
-            }}
-          />
-        )}
-
-        {/* Edit column: single-column wizard (2-step, anchored to column header) */}
-        {editingColumn != null && (
-          <ColumnBuilder
-            isOpen={true}
-            onClose={() => {
-              setEditingColumn(null)
-              setEditColumnAnchorEl(null)
-            }}
-            onSave={async (column) => {
-              await handleUpdateColumn(column)
-              setEditColumnAnchorEl(null)
-            }}
+        {reviewId && (showTableAddColumn || editingColumnId) && (
+          <MikeAddColumnModal
+            open
+            onClose={closeColumnModal}
             editingColumn={editingColumn}
-            anchorEl={editColumnAnchorEl}
-            mode="popover"
+            onAdd={handleAddColumns}
+            onSave={handleColumnSave}
+            onDelete={handleColumnDelete}
           />
         )}
+
         {/* Column builder: bulk generate from questions (toolbar button or empty table) */}
         {showColumnBuilder && reviewId && (
           <BulkColumnBuilder
@@ -1084,13 +967,13 @@ const TabularReviewPage: React.FC = () => {
 
         {/* Document Selector Modal */}
         {caseId && (
-          <DocumentSelector
-            isOpen={showDocumentSelector}
+          <MikeAddDocumentsModal
+            open={showDocumentSelector}
             onClose={() => setShowDocumentSelector(false)}
             onConfirm={handleUpdateDocuments}
             reviewId={reviewId || ""}
-            initialSelectedIds={selectedFileIds}
             caseId={caseId}
+            initialSelectedIds={selectedFileIds}
           />
         )}
 
@@ -1112,23 +995,6 @@ const TabularReviewPage: React.FC = () => {
             reviewId={reviewId}
             onTemplateApplied={loadReviewData}
           />
-        )}
-
-        {/* Cell Editor Modal */}
-        {editingCell && tableData && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setEditingCell(null)}>
-            <div className="bg-bg-elevated rounded-lg p-6 max-w-2xl w-full mx-4" onClick={(e) => e.stopPropagation()}>
-              <h3 className="text-lg font-semibold mb-4">Редактировать ячейку</h3>
-              <InlineCellEditor
-                cell={editingCell.cell}
-                column={tableData.columns.find(c => c.id === editingCell.columnId)!}
-                onSave={async (value) => {
-                  await handleCellEditSave(editingCell.fileId, editingCell.columnId, value)
-                }}
-                onCancel={() => setEditingCell(null)}
-              />
-            </div>
-          </div>
         )}
 
       </div>

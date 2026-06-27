@@ -1,109 +1,99 @@
-import {
-  FileText,
-  Filter,
-  FolderOpen,
-  Download,
-  HelpCircle,
-  MessageSquare,
-} from "lucide-react"
+"use client"
+
+import { useEffect, useRef, useState } from 'react'
+import { ChevronDown, Plus, Upload } from 'lucide-react'
+import { MikeTableToolbar } from './mike/MikeTableToolbar'
 
 interface TabularReviewToolbarProps {
-  onOpenFilter?: (anchorEl: HTMLElement) => void
-  onAddColumns?: () => void
+  onAddColumns: () => void
   onUpdateDocuments?: () => void
-  onExport?: () => void
-  onOpenHelp?: () => void
-  onToggleChat?: () => void
-  chatOpen?: boolean
   processing?: boolean
+  selectedCount?: number
+  onDeleteSelected?: () => void
 }
 
 export function TabularReviewToolbar({
-  onOpenFilter,
   onAddColumns,
   onUpdateDocuments,
-  onExport,
-  onOpenHelp,
-  onToggleChat,
-  chatOpen = false,
   processing = false,
+  selectedCount = 0,
+  onDeleteSelected,
 }: TabularReviewToolbarProps) {
+  const [actionsOpen, setActionsOpen] = useState(false)
+  const actionsRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!actionsOpen) return
+    function handleClickOutside(event: MouseEvent) {
+      if (actionsRef.current && !actionsRef.current.contains(event.target as Node)) {
+        setActionsOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [actionsOpen])
 
   return (
-    <div className="flex items-center justify-between py-4 px-6 border-b border-[#E5E7EB] bg-white/80 backdrop-blur-sm">
-      <div className="flex items-center gap-3">
-        {onOpenHelp && (
-          <button
-            type="button"
-            onClick={onOpenHelp}
-            disabled={processing}
-            className="px-3 py-2 bg-white border border-[#E5E7EB] text-[#6B7280] text-sm font-medium rounded-lg hover:bg-[#F3F4F6] hover:text-[#1F2937] transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-            aria-label="Как пользоваться таблицей"
-          >
-            <HelpCircle className="w-4 h-4" />
-            Справка
-          </button>
-        )}
-        {onOpenFilter && (
-          <button
-            type="button"
-            onClick={(e) => onOpenFilter(e.currentTarget as HTMLElement)}
-            disabled={processing}
-            className="px-4 py-2 bg-white border border-[#E5E7EB] text-[#6B7280] text-sm font-medium rounded-lg hover:bg-[#F3F4F6] hover:text-[#1F2937] transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-            aria-label="Фильтр"
-          >
-            <Filter className="w-4 h-4" />
-            Фильтр
-          </button>
-        )}
-        {onUpdateDocuments && (
-          <button
-            onClick={onUpdateDocuments}
-            disabled={processing}
-            className="px-4 py-2 bg-white border border-[#E5E7EB] text-[#6B7280] text-sm font-medium rounded-lg hover:bg-[#F3F4F6] hover:text-[#1F2937] transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-          >
-            <FolderOpen className="w-4 h-4" />
-            Добавить файлы
-          </button>
-        )}
-        <button
-          onClick={onAddColumns}
-          disabled={processing}
-          className="px-4 py-2 bg-white border border-[#3B82F6] text-[#3B82F6] text-sm font-medium rounded-lg hover:bg-[#EFF6FF] transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-        >
-          <FileText className="w-4 h-4" />
-          Добавить колонку
-        </button>
-      </div>
+    <MikeTableToolbar
+      actions={
+        <>
+          {selectedCount > 0 && onDeleteSelected && (
+            <div ref={actionsRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setActionsOpen((value) => !value)}
+                className="flex items-center gap-1 text-xs font-medium text-gray-600 hover:text-gray-900 transition-colors"
+              >
+                Действия
+                <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+              </button>
+              {actionsOpen && (
+                <div className="absolute top-full right-0 mt-1 w-36 rounded-lg border border-gray-100 bg-white shadow-lg z-50 overflow-hidden">
+                  <button
+                    type="button"
+                    className="w-full px-3 py-1.5 text-left text-xs text-red-600 hover:bg-red-50 transition-colors"
+                    onClick={() => {
+                      setActionsOpen(false)
+                      onDeleteSelected()
+                    }}
+                  >
+                    Удалить
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
-      <div className="flex items-center gap-2">
-        {onToggleChat && (
+          {onUpdateDocuments && (
+            <button
+              type="button"
+              onClick={onUpdateDocuments}
+              disabled={processing}
+              className={`flex items-center gap-1 text-xs font-medium transition-colors ${
+                processing
+                  ? 'text-gray-300 cursor-default'
+                  : 'text-gray-700 hover:text-gray-900'
+              }`}
+            >
+              <Upload className="h-3.5 w-3.5" aria-hidden />
+              Добавить документы
+            </button>
+          )}
           <button
             type="button"
-            onClick={onToggleChat}
+            onClick={onAddColumns}
             disabled={processing}
-            className={`px-4 py-2 text-sm font-medium rounded-lg transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 border ${
-              chatOpen
-                ? 'bg-[#EFF6FF] border-[#3B82F6] text-[#3B82F6]'
-                : 'bg-white border-[#E5E7EB] text-[#6B7280] hover:bg-[#F3F4F6] hover:text-[#1F2937]'
+            className={`flex items-center gap-1 text-xs font-medium transition-colors ${
+              processing
+                ? 'text-gray-300 cursor-default'
+                : 'text-gray-700 hover:text-gray-900'
             }`}
-            aria-pressed={chatOpen}
           >
-            <MessageSquare className="w-4 h-4" />
-            Чат
+            <Plus className="h-3.5 w-3.5" aria-hidden />
+            Добавить колонки
           </button>
-        )}
-        {onExport && (
-          <button
-            onClick={onExport}
-            disabled={processing}
-            className="px-4 py-2 bg-white border border-[#E5E7EB] text-[#6B7280] text-sm font-medium rounded-lg hover:bg-[#F3F4F6] hover:text-[#1F2937] transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-          >
-            <Download className="w-4 h-4" />
-            Экспорт
-          </button>
-        )}
-      </div>
-    </div>
+        </>
+      }
+    />
   )
 }

@@ -1,10 +1,11 @@
 import { useState, useRef, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FolderOpen, MessageSquare, Upload, Loader } from 'lucide-react'
+import { FolderOpen, MessageSquare, Upload, Loader, Clock } from 'lucide-react'
 import { createCase } from '../services/api'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import { GoogleDriveImportButton } from '../components/Documents/GoogleDriveImportButton'
 import { CaseFileStagingList } from '../components/Documents/CaseFileStagingList'
+import { NewCasePageHeader } from '../components/Cases/NewCasePageHeader'
 import {
   type StagedCaseFile,
   type StagedDriveFile,
@@ -14,6 +15,7 @@ import {
   drivePicksToStaged,
 } from '../lib/caseFileStaging'
 import type { CaseOverviewLocationState } from '../lib/casePostCreateUpload'
+import { cn } from '@/lib/utils'
 
 const MAX_FILE_SIZE_MB = 30
 const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
@@ -21,6 +23,7 @@ const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 const mainNavItems = [
   { id: 'cases', label: 'Дела', icon: FolderOpen, path: '/cases' },
   { id: 'assistant', label: 'Ассистент', icon: MessageSquare, path: '/assistant' },
+  { id: 'history', label: 'История', icon: Clock, path: '/history' },
 ]
 
 const NewCasePage = () => {
@@ -130,219 +133,139 @@ const NewCasePage = () => {
   }
 
   return (
-    <div
-      className="h-screen flex overflow-hidden"
-      style={{ backgroundColor: 'var(--color-bg-primary)' }}
-    >
-      <UnifiedSidebar navItems={mainNavItems} title="Legal AI" />
+    <div className="ws-shell ws-tabular-shell flex h-screen overflow-hidden">
+      <UnifiedSidebar navItems={mainNavItems} title="Legal AI" showBackButton={false} variant="tabular" />
 
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <div className="flex-1 overflow-auto">
-          <div className="px-8 pt-8 pb-8 max-w-2xl">
-            <div
-              className="flex items-center gap-1.5 text-sm mb-6"
-              style={{ color: 'var(--color-text-muted)' }}
-            >
-              <button
-                type="button"
-                onClick={() => navigate('/cases')}
-                className="hover:underline transition-colors"
-                style={{ color: 'var(--color-text-muted)' }}
-              >
-                Дела
-              </button>
-              <span>/</span>
-            </div>
+      <main className="ws-tabular-page flex min-h-0 flex-1 flex-col overflow-hidden">
+        <NewCasePageHeader onNavigateCases={() => navigate('/cases')} />
 
-            <h1
-              className="text-2xl font-semibold tracking-tight mb-1"
-              style={{ color: 'var(--color-text-primary)' }}
-            >
-              Новое дело
-            </h1>
-            <p className="text-sm mb-8" style={{ color: 'var(--color-text-secondary)' }}>
-              Каждое дело может содержать до 10 000 файлов
-            </p>
-
-            {error && (
-              <div
-                className="mb-5 p-3 rounded-lg text-sm"
-                style={{
-                  backgroundColor: 'var(--color-bg-elevated)',
-                  border: '1px solid var(--color-error, #dc2626)',
-                  color: 'var(--color-error, #dc2626)',
-                }}
-              >
-                {error}
-              </div>
-            )}
-
-            <div className="mb-7">
-              <label
-                className="block text-sm font-medium mb-2"
-                style={{ color: 'var(--color-text-primary)' }}
-              >
-                Название дела
-              </label>
-              <input
-                type="text"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !isSubmitting) handleCreate()
-                }}
-                placeholder="Введите название дела"
-                autoFocus
-                disabled={isSubmitting}
-                className="w-full px-4 py-2.5 rounded-lg border text-sm focus:outline-none transition-colors disabled:opacity-50"
-                style={{
-                  backgroundColor: 'var(--color-bg-elevated)',
-                  borderColor: 'var(--color-border)',
-                  color: 'var(--color-text-primary)',
-                }}
-              />
-            </div>
-
-            <div>
-              <label
-                className="block text-sm font-medium mb-1"
-                style={{ color: 'var(--color-text-primary)' }}
-              >
-                Файлы{' '}
-                <span style={{ color: 'var(--color-text-muted)', fontWeight: 400 }}>
-                  (необязательно)
-                </span>
-              </label>
-              <p
-                className="text-xs mb-3 leading-relaxed"
-                style={{ color: 'var(--color-text-muted)' }}
-              >
-                Добавьте файлы с компьютера или Google Drive. Удалите лишние в списке ниже. На
-                сервер всё уйдёт только после «Создать дело» — обработка одинакова для всех
-                источников.
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden border-t border-gray-200">
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="mx-auto w-full max-w-2xl px-4 py-6 md:px-10 md:py-8">
+              <p className="mb-6 text-sm text-gray-500">
+                Каждое дело может содержать до 10 000 файлов
               </p>
 
-              <div
-                className="rounded-lg border transition-colors"
-                style={{
-                  borderColor: dragActive ? 'var(--color-accent, #6366f1)' : 'var(--color-border)',
-                  backgroundColor: dragActive
-                    ? 'var(--color-bg-hover)'
-                    : 'var(--color-bg-elevated)',
-                  padding: '20px 24px',
-                }}
-                onDragEnter={handleDrag}
-                onDragLeave={handleDrag}
-                onDragOver={handleDrag}
-                onDrop={handleDrop}
-              >
+              {error && (
+                <p className="mb-5 text-sm text-red-500" role="alert">
+                  {error}
+                </p>
+              )}
+
+              <div className="mb-8">
+                <label htmlFor="new-case-title" className="sr-only">
+                  Название дела
+                </label>
                 <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  accept=".pdf,.docx,.txt,.xlsx,.csv,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,.gif"
-                  className="hidden"
-                  onChange={handleFileInput}
+                  id="new-case-title"
+                  type="text"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !isSubmitting) void handleCreate()
+                  }}
+                  placeholder="Название дела"
+                  autoFocus
+                  disabled={isSubmitting}
+                  className="w-full bg-transparent font-serif text-2xl font-light text-gray-900 placeholder:text-gray-300 focus:outline-none disabled:opacity-50"
                 />
-                <div className="flex flex-wrap items-center justify-between gap-4">
-                  <div className="flex items-center gap-3">
-                    <Upload
-                      className="w-4 h-4 flex-shrink-0"
-                      style={{ color: 'var(--color-text-muted)' }}
-                    />
-                    <div>
-                      <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-                        Перетащите файлы сюда
-                      </p>
-                      <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
-                        или выберите на компьютере
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={isSubmitting}
-                      className="flex-shrink-0 px-4 py-2 rounded-lg text-sm font-medium border transition-colors hover:bg-[var(--color-bg-hover)] disabled:opacity-50"
-                      style={{
-                        borderColor: 'var(--color-border)',
-                        color: 'var(--color-text-primary)',
-                        backgroundColor: 'var(--color-bg-primary)',
-                      }}
-                    >
-                      Выбрать файлы
-                    </button>
-                    <GoogleDriveImportButton
-                      disabled={isSubmitting}
-                      onPicked={handleDrivePicked}
-                      loadingLabel="Выбор…"
-                    />
-                  </div>
-                </div>
               </div>
 
-              {hasStaged && (
-                <CaseFileStagingList
-                  staged={staged}
-                  onRemoveStaged={removeStaged}
-                  canRemove={!isSubmitting}
-                  formatFileSize={formatFileSize}
-                  title="Файлы к загрузке"
-                />
-              )}
+              <div>
+                <p className="text-xs font-medium text-gray-700">Файлы</p>
+                <p className="mt-1 mb-3 text-xs leading-relaxed text-gray-500">
+                  Необязательно. Добавьте с компьютера или Google Drive — на сервер всё уйдёт после
+                  «Создать дело».
+                </p>
+
+                <div
+                  className={cn(
+                    'rounded-xl border bg-white/60 p-5 transition-colors',
+                    dragActive ? 'border-blue-400 bg-blue-50/40' : 'border-gray-200',
+                  )}
+                  onDragEnter={handleDrag}
+                  onDragLeave={handleDrag}
+                  onDragOver={handleDrag}
+                  onDrop={handleDrop}
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    accept=".pdf,.docx,.txt,.xlsx,.csv,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,.gif"
+                    className="hidden"
+                    onChange={handleFileInput}
+                  />
+                  <div className="flex flex-wrap items-center justify-between gap-4">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <Upload className="h-4 w-4 shrink-0 text-gray-400" aria-hidden />
+                      <div>
+                        <p className="text-sm text-gray-700">Перетащите файлы сюда</p>
+                        <p className="mt-0.5 text-xs text-gray-400">или выберите на компьютере</p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={isSubmitting}
+                        className="ws-mike-table-empty-btn-secondary disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Выбрать файлы
+                      </button>
+                      <GoogleDriveImportButton
+                        disabled={isSubmitting}
+                        onPicked={handleDrivePicked}
+                        loadingLabel="Выбор…"
+                        variant="pill"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {hasStaged && (
+                  <CaseFileStagingList
+                    staged={staged}
+                    onRemoveStaged={removeStaged}
+                    canRemove={!isSubmitting}
+                    formatFileSize={formatFileSize}
+                    title="Файлы к загрузке"
+                  />
+                )}
+              </div>
             </div>
           </div>
-        </div>
 
-        <div
-          className="border-t flex items-center justify-end gap-3 px-8 py-4"
-          style={{ borderTopColor: 'var(--color-border)' }}
-        >
-          {isSubmitting && (
-            <span
-              className="text-xs mr-auto flex items-center gap-1.5"
-              style={{ color: 'var(--color-text-muted)' }}
+          <div className="flex shrink-0 items-center justify-end gap-3 border-t border-gray-200 px-4 py-4 md:px-10">
+            {isSubmitting && (
+              <span className="mr-auto flex items-center gap-1.5 text-xs text-gray-500">
+                <Loader className="h-3 w-3 animate-spin" />
+                Создание дела…
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => navigate('/cases')}
+              disabled={isSubmitting}
+              className="ws-mike-modal-btn-cancel disabled:opacity-50"
             >
-              <Loader className="w-3 h-3 animate-spin" />
-              Создание дела…
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={() => navigate('/cases')}
-            disabled={isSubmitting}
-            className="px-4 py-2 text-sm font-medium rounded-lg border transition-colors hover:bg-[var(--color-bg-hover)] disabled:opacity-50"
-            style={{
-              borderColor: 'var(--color-border)',
-              color: 'var(--color-text-primary)',
-              backgroundColor: 'transparent',
-            }}
-          >
-            Отмена
-          </button>
-          <button
-            type="button"
-            onClick={handleCreate}
-            disabled={isSubmitting || !title.trim()}
-            className="px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
-            style={{
-              backgroundColor:
-                isSubmitting || !title.trim()
-                  ? 'var(--color-text-muted)'
-                  : 'var(--color-text-primary)',
-              color: 'var(--color-bg-primary)',
-              cursor: isSubmitting || !title.trim() ? 'not-allowed' : 'pointer',
-            }}
-          >
-            {isSubmitting
-              ? 'Создание…'
-              : hasStaged
-                ? `Создать дело (${staged.length} файл.)`
-                : 'Создать дело'}
-          </button>
+              Отмена
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleCreate()}
+              disabled={isSubmitting || !title.trim()}
+              className="ws-mike-modal-btn-primary"
+            >
+              {isSubmitting
+                ? 'Создание…'
+                : hasStaged
+                  ? `Создать дело (${staged.length})`
+                  : 'Создать дело'}
+            </button>
+          </div>
         </div>
-      </div>
+      </main>
     </div>
   )
 }

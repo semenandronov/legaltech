@@ -7,7 +7,15 @@ import {
   createEditorChatSession,
 } from "@/services/documentEditorApi"
 import type { StructuredEdit } from "@/services/documentEditorApi"
+import { EditSuggestionsList } from "./EditSuggestionCard"
 import { buildEditorContextForChat } from "@/utils/editorContextWindow"
+import {
+  instructionIsDialogueContinuation,
+  instructionTargetsBroaderDocument,
+  instructionTargetsMultipleLocations,
+  shouldScopeRequestToSelection,
+  truncateSelectionPreview,
+} from "@/utils/editorSelectionScope"
 import { applyHybridEditWithFeedback } from "@/utils/applyHybridEdit"
 import { getCaseFiles, UploadedFile } from "@/services/api"
 import { toast } from "sonner"
@@ -150,132 +158,90 @@ const renderMarkdown = (text: string): React.ReactNode => {
   })
 }
 
-// ==================== INLINE DIFF HELPERS ====================
-type DiffPart = { t: 'eq' | 'del' | 'ins'; s: string }
-
-function computeDiff(oldTxt: string, newTxt: string): DiffPart[] {
-  if (!oldTxt && !newTxt) return []
-  if (!oldTxt) return [{ t: 'ins', s: newTxt }]
-  if (!newTxt) return [{ t: 'del', s: oldTxt }]
-  let i = 0
-  while (i < oldTxt.length && i < newTxt.length && oldTxt[i] === newTxt[i]) i++
-  let j = 0
-  while (j < oldTxt.length - i && j < newTxt.length - i &&
-         oldTxt[oldTxt.length - 1 - j] === newTxt[newTxt.length - 1 - j]) j++
-  const parts: DiffPart[] = []
-  if (i > 0) parts.push({ t: 'eq', s: oldTxt.slice(0, i) })
-  const om = oldTxt.slice(i, j > 0 ? oldTxt.length - j : undefined)
-  const nm = newTxt.slice(i, j > 0 ? newTxt.length - j : undefined)
-  if (om) parts.push({ t: 'del', s: om })
-  if (nm) parts.push({ t: 'ins', s: nm })
-  if (j > 0) parts.push({ t: 'eq', s: oldTxt.slice(oldTxt.length - j) })
-  return parts
-}
-
-function renderInlineDiff(original: string, newText: string) {
-  const diff = computeDiff(original, newText)
-  return (
-    <span className="text-xs leading-relaxed break-words">
-      {diff.map((p, pi) =>
-        p.t === 'eq'
-          ? <span key={pi} style={{ color: '#374151' }}>{p.s}</span>
-          : p.t === 'del'
-          ? <del key={pi} style={{ color: '#dc2626', textDecorationColor: '#dc2626' }}>{p.s}</del>
-          : <span key={pi} style={{ color: '#2563eb', fontWeight: 500 }}>{p.s}</span>
-      )}
-    </span>
-  )
-}
-
-// ==================== STRUCTURED EDITS CARD ====================
 type EditStatus = 'accepted' | 'rejected'
 
-/** Extract plain text from HTML, decode common entities */
-function htmlToPlain(html: string): string {
-  return html
-    .replace(/<[^>]+>/g, '')
-    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"')
-}
-
-/** Find all occurrences of searchText in documentContent, returning context snippets */
-function findOccurrencesWithContext(
-  searchText: string,
-  documentContent: string,
-  contextLen = 55
-): Array<{ before: string; after: string }> {
-  if (!searchText || !documentContent) return []
-  const plain = htmlToPlain(documentContent)
-  const results: Array<{ before: string; after: string }> = []
-  let start = 0
-  while (true) {
-    const idx = plain.indexOf(searchText, start)
-    if (idx === -1) break
-    const before = plain.slice(Math.max(0, idx - contextLen), idx)
-    const after = plain.slice(idx + searchText.length, idx + searchText.length + contextLen)
-    results.push({ before, after })
-    start = idx + searchText.length
+function editStatusSets(messageId: string, editStatuses: Record<string, Record<string, EditStatus>>) {
+  const row = editStatuses[messageId] || {}
+  const appliedIds = new Set<string>()
+  const skippedIds = new Set<string>()
+  for (const [editId, status] of Object.entries(row)) {
+    if (status === 'accepted') appliedIds.add(editId)
+    if (status === 'rejected') skippedIds.add(editId)
   }
-  return results
+  return { appliedIds, skippedIds }
 }
 
-// Reusable accept/dismiss button pair
-const EditActionButtons: React.FC<{
-  onAccept: () => void
-  onDismiss: () => void
-  isFound?: boolean
-}> = ({ onAccept, onDismiss, isFound = true }) => (
-  <>
-    <button
-      onClick={onDismiss}
-      className="text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors"
-      style={{ borderColor: '#e5e7eb', color: '#9ca3af', background: 'transparent' }}
-      onMouseEnter={e => { const el = e.currentTarget; el.style.borderColor = '#fca5a5'; el.style.color = '#ef4444'; el.style.background = 'rgba(239,68,68,0.05)' }}
-      onMouseLeave={e => { const el = e.currentTarget; el.style.borderColor = '#e5e7eb'; el.style.color = '#9ca3af'; el.style.background = 'transparent' }}
-    >
-      Отклонить
-    </button>
-    {isFound && (
-      <button
-        onClick={onAccept}
-        className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg border transition-colors"
-        style={{ borderColor: '#d1d5db', color: '#374151', background: 'transparent' }}
-        onMouseEnter={e => { const el = e.currentTarget; el.style.borderColor = '#10b981'; el.style.color = '#10b981'; el.style.background = 'rgba(16,185,129,0.07)' }}
-        onMouseLeave={e => { const el = e.currentTarget; el.style.borderColor = '#d1d5db'; el.style.color = '#374151'; el.style.background = 'transparent' }}
+const SelectionFocusBanner: React.FC<{
+  mode: EditorMode
+  selectionPreview: string
+  draftInput?: string
+  hasDialogueHistory?: boolean
+  onClear: () => void
+}> = ({ mode, selectionPreview, draftInput, hasDialogueHistory = false, onClear }) => {
+  const draft = draftInput || ''
+  const usesWholeDocument =
+    instructionTargetsBroaderDocument(draft) ||
+    instructionTargetsMultipleLocations(draft) ||
+    (hasDialogueHistory && instructionIsDialogueContinuation(draft))
+  const isEdit = mode === 'edit'
+
+  if (usesWholeDocument) {
+    return (
+      <div
+        className="mx-3 mb-2 flex items-start gap-2 px-3 py-2.5 rounded-xl border"
+        style={{ background: '#fffbeb', borderColor: '#fcd34d' }}
       >
-        <Check className="w-3 h-3" />
-        Принять
+        <HelpCircle className="w-4 h-4 shrink-0 mt-0.5" style={{ color: '#d97706' }} />
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-semibold" style={{ color: '#92400e' }}>
+            Запрос затрагивает документ шире выделения — поиск по всему тексту
+          </p>
+          <p className="text-[11px] mt-0.5 leading-snug" style={{ color: '#b45309' }}>
+            Выделение используется как подсказка; ИИ может предложить несколько правок.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onClear}
+          className="shrink-0 text-[11px] font-medium px-2 py-1 rounded-lg border transition-colors hover:bg-amber-100"
+          style={{ borderColor: '#fcd34d', color: '#92400e' }}
+        >
+          Снять
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div
+      className="mx-3 mb-2 flex items-start gap-2 px-3 py-2.5 rounded-xl border"
+      style={{ background: isEdit ? '#eef2ff' : '#f0f9ff', borderColor: isEdit ? '#c7d2fe' : '#bae6fd' }}
+    >
+      <Edit3 className="w-4 h-4 shrink-0 mt-0.5" style={{ color: isEdit ? '#4f46e5' : '#0284c7' }} />
+      <div className="flex-1 min-w-0">
+        <p className="text-xs font-semibold" style={{ color: isEdit ? '#3730a3' : '#0369a1' }}>
+          {isEdit
+            ? 'Выделение — подсказка фокуса; при необходимости ИИ предложит правки в других местах'
+            : 'Вопрос с учётом выделенного фрагмента'}
+        </p>
+        <p className="text-[11px] mt-1 leading-snug text-gray-600 line-clamp-2">
+          «{truncateSelectionPreview(selectionPreview)}»
+        </p>
+        <p className="text-[10px] mt-1" style={{ color: '#6b7280' }}>
+          Нужен другой раздел? Снимите выделение или укажите его в запросе (пункт, раздел).
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={onClear}
+        className="shrink-0 p-1 rounded-md text-gray-400 hover:text-gray-600 hover:bg-white/80"
+        title="Снять выделение"
+        aria-label="Снять выделение"
+      >
+        <X className="w-3.5 h-3.5" />
       </button>
-    )}
-  </>
-)
-
-const StatusBadge: React.FC<{ status: EditStatus }> = ({ status }) =>
-  status === 'accepted'
-    ? <div className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border" style={{ borderColor: '#d1fae5', color: '#10b981', background: 'rgba(16,185,129,0.07)' }}><Check className="w-3 h-3" />Принято</div>
-    : <div className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border" style={{ borderColor: '#fee2e2', color: '#ef4444', background: 'rgba(239,68,68,0.05)' }}><X className="w-3 h-3" />Отклонено</div>
-
-type Item =
-  | { kind: 'single'; edit: StructuredEdit }
-  | { kind: 'virtual'; edit: StructuredEdit; occ: { before: string; after: string }; virtualId: string; occIdx: number }
-
-function buildItems(edits: StructuredEdit[], docContent: string | undefined): Item[] {
-  return edits.flatMap((edit): Item[] => {
-    const isFound = edit.found_in_document !== false
-    const occs = (edit.replace_all && isFound && docContent && edit.original_text?.trim())
-      ? findOccurrencesWithContext(edit.original_text, docContent)
-      : []
-    if (occs.length > 1) {
-      return occs.map((occ, i) => ({
-        kind: 'virtual' as const,
-        edit,
-        occ,
-        virtualId: `${edit.id}-${i}`,
-        occIdx: i,
-      }))
-    }
-    return [{ kind: 'single' as const, edit }]
-  })
+    </div>
+  )
 }
 
 const DraftCard: React.FC<{
@@ -339,158 +305,6 @@ const DraftCard: React.FC<{
           </button>
         </div>
       )}
-    </div>
-  )
-}
-
-const StructuredEditsBlock: React.FC<{
-  edits: StructuredEdit[]
-  statuses: Record<string, EditStatus>
-  documentContent?: string
-  onAccept: (edit: StructuredEdit) => void
-  onAcceptAll: () => void
-  onDismiss: (editId: string) => void
-  onScrollToText?: (text: string, nthOccurrence?: number) => boolean
-}> = ({ edits, statuses, documentContent, onAccept, onAcceptAll, onDismiss, onScrollToText }) => {
-  // Local state for virtual per-occurrence cards (keyed by `${editId}-${occIdx}`)
-  const [occStatuses, setOccStatuses] = useState<Record<string, EditStatus>>({})
-
-  // Compute items ONCE when edits change — NOT when documentContent changes.
-  // This prevents re-indexing occurrences after each replacement (which would
-  // shift IDs and incorrectly mark remaining occurrences as already accepted).
-  const [items, setItems] = useState<Item[]>(() => buildItems(edits, documentContent))
-  const prevEditsRef = useRef(edits)
-  if (edits !== prevEditsRef.current) {
-    prevEditsRef.current = edits
-    setItems(buildItems(edits, documentContent))
-    setOccStatuses({})
-  }
-
-  const pendingCount = items.filter(item =>
-    item.kind === 'virtual'
-      ? !occStatuses[item.virtualId]
-      : item.edit.found_in_document !== false && !statuses[item.edit.id]
-  ).length
-
-  return (
-    <div className="space-y-2 mt-2 max-w-[92%]">
-      {/* Header bar */}
-      <div className="flex items-center justify-between px-3 py-2 rounded-lg border" style={{ borderColor: '#e5e7eb', background: '#fafafa' }}>
-        <span className="text-xs font-semibold text-gray-500">Правки ({items.length})</span>
-        {pendingCount > 1 && (
-          <button
-            onClick={onAcceptAll}
-            className="flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg border transition-colors"
-            style={{ borderColor: '#d1d5db', color: '#374151', background: 'transparent' }}
-            onMouseEnter={e => { const el = e.currentTarget; el.style.borderColor = '#10b981'; el.style.color = '#10b981'; el.style.background = 'rgba(16,185,129,0.06)' }}
-            onMouseLeave={e => { const el = e.currentTarget; el.style.borderColor = '#d1d5db'; el.style.color = '#374151'; el.style.background = 'transparent' }}
-          >
-            <Check className="w-3 h-3" />
-            Принять все
-          </button>
-        )}
-      </div>
-
-      {/* Cards */}
-      {items.map((item) => {
-        if (item.kind === 'virtual') {
-          const { edit, occ, virtualId, occIdx } = item
-          const status = occStatuses[virtualId]
-          return (
-            <div key={virtualId} className="rounded-xl border overflow-hidden" style={{ borderColor: '#e5e7eb', background: '#f5f5f5' }}>
-              <div className="px-3 pt-2.5 pb-1.5">
-                <div className="px-2 py-2 rounded-md text-xs leading-relaxed break-words" style={{ background: 'rgba(0,0,0,0.03)', lineHeight: '1.7' }}>
-                  {occ.before && <span style={{ color: '#9ca3af' }}>…{occ.before}</span>}
-                  <del style={{ color: '#dc2626', textDecorationColor: '#dc2626' }}>{edit.original_text}</del>
-                  <span style={{ color: '#2563eb', fontWeight: 500 }}>{edit.new_text}</span>
-                  {occ.after && <span style={{ color: '#9ca3af' }}>{occ.after}…</span>}
-                </div>
-              </div>
-              <div className="flex items-center justify-between gap-2 px-3 pb-2.5 pt-1 border-t" style={{ borderColor: '#ebebeb' }}>
-                {/* Left: scroll to text */}
-                {onScrollToText && edit.original_text && !status && (
-                  <button
-                    onClick={() => onScrollToText(edit.original_text!, occIdx)}
-                    className="flex items-center gap-1 text-xs transition-opacity hover:opacity-70"
-                    style={{ color: 'var(--color-text-tertiary, #9ca3af)' }}
-                  >
-                    <ArrowRight className="w-3 h-3" />
-                    Перейти
-                  </button>
-                )}
-                {/* Right: status or action buttons */}
-                <div className="flex items-center gap-2 ml-auto">
-                  {status
-                    ? <StatusBadge status={status} />
-                    : <EditActionButtons
-                        onAccept={() => {
-                          setOccStatuses(prev => ({ ...prev, [virtualId]: 'accepted' }))
-                          onAccept({ ...edit, replace_all: false })
-                        }}
-                        onDismiss={() => setOccStatuses(prev => ({ ...prev, [virtualId]: 'rejected' }))}
-                      />
-                  }
-                </div>
-              </div>
-            </div>
-          )
-        }
-
-        // Single-occurrence card
-        const { edit } = item
-        const isFound = edit.found_in_document !== false
-        const status = statuses[edit.id]
-        const singleCtx = (isFound && documentContent && edit.original_text)
-          ? findOccurrencesWithContext(edit.original_text, documentContent)[0]
-          : undefined
-        return (
-          <div key={edit.id} className="rounded-xl border overflow-hidden" style={{ borderColor: '#e5e7eb', background: '#f5f5f5' }}>
-            <div className="px-3 pt-2.5 pb-1.5">
-              {edit.node_id && (
-                <div className="mb-1.5">
-                  <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 border border-indigo-100">
-                    блок {edit.node_id.slice(0, 12)}{edit.node_id.length > 12 ? '…' : ''}
-                  </span>
-                </div>
-              )}
-              <div className="px-2 py-2 rounded-md text-xs leading-relaxed break-words" style={{ background: 'rgba(0,0,0,0.03)', lineHeight: '1.7' }}>
-                {singleCtx?.before && <span style={{ color: '#9ca3af' }}>…{singleCtx.before}</span>}
-                {edit.original_text
-                  ? renderInlineDiff(edit.original_text, edit.new_text)
-                  : <span style={{ color: '#2563eb', fontWeight: 500 }}>{edit.new_text}</span>}
-                {singleCtx?.after && <span style={{ color: '#9ca3af' }}>{singleCtx.after}…</span>}
-              </div>
-              {!isFound && !status && (
-                <div className="text-xs text-amber-600 mt-1.5">
-                  {edit.node_id ? '⚠ Блок не найден в документе' : '⚠ Фрагмент не найден в документе'}
-                </div>
-              )}
-            </div>
-            <div className="flex items-center justify-between gap-2 px-3 pb-2.5 pt-1 border-t" style={{ borderColor: '#ebebeb' }}>
-              {onScrollToText && isFound && edit.original_text && !status && (
-                <button
-                  onClick={() => onScrollToText(edit.original_text!, 0)}
-                  className="flex items-center gap-1 text-xs transition-opacity hover:opacity-70"
-                  style={{ color: 'var(--color-text-tertiary, #9ca3af)' }}
-                >
-                  <ArrowRight className="w-3 h-3" />
-                  Перейти
-                </button>
-              )}
-              <div className="flex items-center gap-2 ml-auto">
-                {status
-                  ? <StatusBadge status={status} />
-                  : <EditActionButtons
-                      isFound={isFound}
-                      onAccept={() => onAccept(edit)}
-                      onDismiss={() => onDismiss(edit.id)}
-                    />
-                }
-              </div>
-            </div>
-          </div>
-        )
-      })}
     </div>
   )
 }
@@ -936,7 +750,14 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
       selectionRange: selectionRangeSnapshot || undefined,
     }])
 
-    const contextHtml = selectionSnapshot.trim()
+    const scopeToSelection = shouldScopeRequestToSelection(
+      text.trim(),
+      mode,
+      selectionSnapshot,
+      messages.length > 0,
+    )
+
+    const contextHtml = scopeToSelection
       ? buildEditorContextForChat(documentContent || '', {
           selectedText: selectionSnapshot,
         }).html
@@ -950,8 +771,8 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
         {
           currentContent: contextHtml,
           mode,
-          selectedText: selectionSnapshot || undefined,
-          selectionRange: selectionRangeSnapshot ?? undefined,
+          selectedText: scopeToSelection ? selectionSnapshot : undefined,
+          selectionRange: scopeToSelection ? (selectionRangeSnapshot ?? undefined) : undefined,
           attachedFileIds: attachedFileIds.length ? attachedFileIds : undefined,
           sessionId: editorSessionId,
         },
@@ -1143,6 +964,15 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
     setStatus(messageId, editId, 'rejected')
   }
 
+  const handleSkipAllEdits = (messageId: string, edits: StructuredEdit[]) => {
+    const { appliedIds, skippedIds } = editStatusSets(messageId, editStatuses)
+    edits.forEach((edit) => {
+      if (!appliedIds.has(edit.id) && !skippedIds.has(edit.id)) {
+        setStatus(messageId, edit.id, 'rejected')
+      }
+    })
+  }
+
   const currentMode = MODE_CONFIG[mode]
   const hasMessages = messages.length > 0
 
@@ -1221,16 +1051,19 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
                   </div>
                 )}
 
-                {/* Structured edits */}
+                {/* Structured edits — тот же UI, что в основном чате сервиса */}
                 {allEdits.length > 0 && (
-                  <StructuredEditsBlock
+                  <EditSuggestionsList
                     edits={allEdits}
-                    statuses={editStatuses[message.id] || {}}
-                    documentContent={documentContent}
-                    onAccept={(edit) => handleAcceptEdit(message.id, edit)}
-                    onAcceptAll={() => handleAcceptAllEdits(message.id, allEdits)}
-                    onDismiss={(editId) => handleDismissEdit(message.id, editId)}
-                    onScrollToText={onScrollToText}
+                    onApply={(edit) => void handleAcceptEdit(message.id, edit)}
+                    onSkip={(edit) => handleDismissEdit(message.id, edit.id)}
+                    onNavigate={(text) => {
+                      if (onScrollToText) onScrollToText(text, 0)
+                    }}
+                    onApplyAll={() => void handleAcceptAllEdits(message.id, allEdits)}
+                    onSkipAll={() => handleSkipAllEdits(message.id, allEdits)}
+                    appliedIds={editStatusSets(message.id, editStatuses).appliedIds}
+                    skippedIds={editStatusSets(message.id, editStatuses).skippedIds}
                   />
                 )}
 
@@ -1342,7 +1175,29 @@ export const DocumentEditorContextChat: React.FC<DocumentEditorContextChatProps>
           </div>
         )}
 
-        {/* Selection chip hidden — activeSelection is kept in state for prompt context */}
+        {/* Плашка: выделенный фрагмент влияет на запрос */}
+        {activeSelection && (mode === 'edit' || mode === 'ask') && (
+          <SelectionFocusBanner
+            mode={mode}
+            selectionPreview={activeSelection}
+            draftInput={inputValue}
+            hasDialogueHistory={messages.length > 0}
+            onClear={clearActiveSelection}
+          />
+        )}
+
+        {/* Без выделения в Edit — поиск по всему документу */}
+        {!activeSelection && mode === 'edit' && (
+          <div
+            className="mx-3 mb-2 flex items-center gap-2 px-3 py-2 rounded-xl border border-dashed"
+            style={{ borderColor: '#e5e7eb', background: '#fafafa' }}
+          >
+            <Sparkles className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+            <span className="text-[11px] text-gray-500 leading-snug">
+              Выделения нет — ИИ найдёт нужный фрагмент по всему документу
+            </span>
+          </div>
+        )}
 
         {attachedFileIds.length > 0 && (
           <div className="mx-3 mb-2 flex flex-wrap gap-1.5">

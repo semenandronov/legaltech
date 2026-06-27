@@ -106,6 +106,11 @@ class DocumentProcessor:
                                 loader_did_ocr = True
                                 loader_native_text = False
                                 break
+                            if md.get("docling_scan_preflight") is True:
+                                # Legacy ingest path: OCR text without re-running Docling in chunker.
+                                loader_did_ocr = True
+                                loader_native_text = False
+                                break
                             if str(md.get("extraction_source") or "").strip() == "native_text":
                                 loader_native_text = True
                         except Exception:

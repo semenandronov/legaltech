@@ -1,10 +1,9 @@
 "use client"
 
-import { Box, Typography } from "@mui/material"
+import { Box } from "@mui/material"
 import {
-  UnfoldMore as UnfoldMoreIcon,
-  ArrowUpward as ArrowUpwardIcon,
   ArrowDownward as ArrowDownwardIcon,
+  ArrowUpward as ArrowUpwardIcon,
 } from "@mui/icons-material"
 
 interface SortableColumnHeaderProps {
@@ -20,6 +19,7 @@ export function SortableColumnHeader({
 }: SortableColumnHeaderProps) {
   return (
     <Box
+      component="span"
       role="button"
       tabIndex={0}
       onClick={(e) => {
@@ -33,38 +33,41 @@ export function SortableColumnHeader({
           onToggleSort()
         }
       }}
+      className="ws-tabular-col-header-label"
       sx={{
-        display: "flex",
-        alignItems: "center",
-        gap: 0.5,
+        display: 'block',
         flex: 1,
         minWidth: 0,
-        cursor: "pointer",
-        userSelect: "none",
-        "&:hover": { opacity: 0.85 },
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+        cursor: 'pointer',
+        userSelect: 'none',
       }}
       aria-label={`Сортировать: ${label}`}
     >
-      <Typography
-        noWrap
-        sx={{
-          fontWeight: 600,
-          fontSize: "0.75rem",
-          letterSpacing: "0.04em",
-          textTransform: "uppercase",
-          color: "var(--text-secondary, #6B7280)",
-        }}
-      >
-        {label}
-      </Typography>
+      {label}
       {sortDirection === "asc" && (
-        <ArrowUpwardIcon sx={{ fontSize: 16, color: "#6B7280", flexShrink: 0 }} />
+        <ArrowUpwardIcon
+          sx={{
+            fontSize: 12,
+            color: '#9CA3AF',
+            flexShrink: 0,
+            ml: 0.25,
+            verticalAlign: 'middle',
+          }}
+        />
       )}
       {sortDirection === "desc" && (
-        <ArrowDownwardIcon sx={{ fontSize: 16, color: "#6B7280", flexShrink: 0 }} />
-      )}
-      {sortDirection === false && (
-        <UnfoldMoreIcon sx={{ fontSize: 16, color: "#9CA3AF", flexShrink: 0 }} />
+        <ArrowDownwardIcon
+          sx={{
+            fontSize: 12,
+            color: '#9CA3AF',
+            flexShrink: 0,
+            ml: 0.25,
+            verticalAlign: 'middle',
+          }}
+        />
       )}
     </Box>
   )
