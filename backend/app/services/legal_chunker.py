@@ -240,7 +240,29 @@ class LegalChunkerV2:
         if not segments:
             raise ValueError(f"LegalChunkerV2: empty segment list for {filename}")
 
-        macros = _build_macro_chunks(segments, profile, base_metadata)
+        return self.chunk_from_segments(
+            segments=segments,
+            full_text=full_text,
+            preseg_strategy=preseg_strategy,
+            profile=profile,
+            base_metadata=base_metadata,
+            filename=filename,
+        )
+
+    def chunk_from_segments(
+        self,
+        *,
+        segments: Sequence[_Segment],
+        full_text: str,
+        preseg_strategy: str,
+        profile: _Profile,
+        base_metadata: Dict[str, Any],
+        filename: str,
+    ) -> List[Document]:
+        if not isinstance(base_metadata, dict):
+            base_metadata = dict(base_metadata or {})
+
+        macros = _build_macro_chunks(list(segments), profile, base_metadata)
         if not macros:
             raise ValueError(f"LegalChunkerV2: macro layer is empty for {filename}")
 
@@ -606,6 +628,7 @@ def _collect_legal_segments(
     loader_did_ocr: bool,
     loader_native_text: bool,
     loader_documents: Optional[List[Document]],
+    apply_segment_normalization: bool = True,
 ) -> Tuple[List[_Segment], str, str, _Profile]:
     """Общий pre-segmentation pipeline для macro/micro и norm chunking."""
     profile = _select_profile(case_id=case_id, doc_type=doc_type)
@@ -664,7 +687,8 @@ def _collect_legal_segments(
     if not segments:
         return [], "", preseg_strategy, profile
 
-    segments = _normalize_docling_segments(list(segments), profile)
+    if apply_segment_normalization:
+        segments = _normalize_docling_segments(list(segments), profile)
     full_text = _join_segments_text(segments)
     return segments, full_text, preseg_strategy, profile
 

@@ -576,6 +576,18 @@ class Config:
         os.getenv("LEGAL_CHUNKING_DEFAULT_PROFILE", "contracts").strip().lower()
     )
 
+    # Structured table indexing (bank statements, registers) — contract structured-table-v1.
+    STRUCTURED_TABLE_INDEXING_ENABLED: bool = (
+        os.getenv("STRUCTURED_TABLE_INDEXING_ENABLED", "true").strip().lower() == "true"
+    )
+    STRUCTURED_TABLE_MIN_CHAR_RATIO: float = float(
+        os.getenv("STRUCTURED_TABLE_MIN_CHAR_RATIO", "0.45") or "0.45"
+    )
+    STRUCTURED_TABLE_MIN_ROWS: int = int(os.getenv("STRUCTURED_TABLE_MIN_ROWS", "8") or "8")
+    STRUCTURED_TABLE_MIN_TABLE_SEGMENTS: int = int(
+        os.getenv("STRUCTURED_TABLE_MIN_TABLE_SEGMENTS", "1") or "1"
+    )
+
     # Docling pipeline limits (используются document_converter_service и legal_chunker).
     # 2000 страниц закрывает крупные кодексы (ГК РФ ~1.2k стр., НК РФ ~1.5k стр.).
     DOCLING_MAX_PAGES_PER_DOC: int = int(

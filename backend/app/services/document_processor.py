@@ -92,7 +92,7 @@ class DocumentProcessor:
         dual_enabled = bool(getattr(config, "LEGAL_CHUNKING_DUAL_ENABLED", True))
         if dual_enabled:
             try:
-                from app.services.legal_chunker import LegalChunkerV2
+                from app.services.document_indexing import build_index_chunks
 
                 # Скан → loader OCR (Yandex): skip Docling, chunk OCR markdown/text.
                 # Native PDF text (PyPDF) → Docling AST with do_ocr=False (structure only).
@@ -127,23 +127,22 @@ class DocumentProcessor:
                     if md_parts:
                         fallback_for_chunker = "\n\n".join(md_parts)
 
-                chunker = LegalChunkerV2()
                 case_id_val = str(doc_metadata.get("case_id") or "").strip()
                 use_norm_corpus = (
                     case_id_val == "GLOBAL_LEGAL_CORPUS"
                     and bool(getattr(config, "LEGAL_CORPUS_NORM_CHUNKING_ENABLED", True))
                 )
-                chunk_fn = chunker.chunk_corpus_norms if use_norm_corpus else chunker.chunk
-                v2_documents = chunk_fn(
+                v2_documents = build_index_chunks(
                     content_bytes=content_bytes,
                     filename=filename,
                     base_metadata=doc_metadata,
                     doc_type=str(doc_metadata.get("doc_type") or "").strip(),
-                    case_id=str(doc_metadata.get("case_id") or "").strip() or None,
+                    case_id=case_id_val or None,
                     fallback_text=fallback_for_chunker,
                     loader_did_ocr=loader_did_ocr,
                     loader_native_text=loader_native_text and not loader_did_ocr,
                     loader_documents=langchain_docs if loader_did_ocr else None,
+                    use_norm_corpus=use_norm_corpus,
                 )
                 if v2_documents:
                     if use_norm_corpus:
@@ -160,13 +159,26 @@ class DocumentProcessor:
                     else:
                         macro_n = sum(1 for d in v2_documents if d.metadata.get("chunk_level") == "macro")
                         micro_n = sum(1 for d in v2_documents if d.metadata.get("chunk_level") == "micro")
+                        preamble_n = sum(
+                            1 for d in v2_documents if d.metadata.get("chunk_level") == "preamble"
+                        )
+                        row_n = sum(1 for d in v2_documents if d.metadata.get("chunk_level") == "row")
+                        profile_label = (
+                            v2_documents[0].metadata.get("index_profile")
+                            or v2_documents[0].metadata.get("chunk_profile")
+                            if v2_documents
+                            else "?"
+                        )
                         logger.info(
-                            "[LegalChunkerV2] %s: produced %s chunks (macro=%s, micro=%s, profile=%s, preseg=%s)",
+                            "[document_indexing] %s: produced %s chunks "
+                            "(macro=%s, micro=%s, preamble=%s, row=%s, profile=%s, preseg=%s)",
                             filename,
                             len(v2_documents),
                             macro_n,
                             micro_n,
-                            v2_documents[0].metadata.get("chunk_profile") if v2_documents else "?",
+                            preamble_n,
+                            row_n,
+                            profile_label,
                             v2_documents[0].metadata.get("preseg_strategy") if v2_documents else "?",
                         )
                     documents = v2_documents
@@ -680,6 +692,28 @@ class DocumentProcessor:
             )
 
     @staticmethod
+    def _expand_chunk_levels(levels: List[str]) -> List[str]:
+        """Map narrative levels to structured-table equivalents for hybrid search."""
+        expanded: List[str] = []
+        seen: set[str] = set()
+        for level in levels:
+            normalized = str(level).strip().lower()
+            if not normalized:
+                continue
+            aliases: List[str]
+            if normalized == "macro":
+                aliases = ["macro", "preamble"]
+            elif normalized == "micro":
+                aliases = ["micro", "row"]
+            else:
+                aliases = [normalized]
+            for alias in aliases:
+                if alias not in seen:
+                    seen.add(alias)
+                    expanded.append(alias)
+        return expanded
+
+    @staticmethod
     def _build_search_filter(
         chunk_levels: Optional[List[str]],
         metadata_filter: Optional[Dict[str, Any]],
@@ -687,7 +721,9 @@ class DocumentProcessor:
         result: Dict[str, Any] = dict(metadata_filter or {})
         if not chunk_levels:
             return result or None
-        normalized = [str(level).strip().lower() for level in chunk_levels if str(level).strip()]
+        normalized = DocumentProcessor._expand_chunk_levels(
+            [str(level).strip().lower() for level in chunk_levels if str(level).strip()]
+        )
         if not normalized:
             return result or None
         if len(normalized) == 1:
