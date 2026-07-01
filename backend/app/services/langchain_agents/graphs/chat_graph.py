@@ -775,6 +775,16 @@ class ChatGraphState(TypedDict):
     message_summary: Optional[str]  # Summary старых сообщений
     session_context_prompt: Optional[str]  # Always-on in-dialog thread (Session Context Service)
     session_context_meta: Optional[Dict[str, Any]]  # retrieval_query + resolver (one assembly per turn)
+
+    # Structured data (SQL / hybrid / RAG router)
+    structured_data_plane: Optional[str]
+    statement_scope_file_ids: Optional[List[str]]
+    hybrid_rag_file_ids: Optional[List[str]]
+    structured_data_router_meta: Optional[Dict[str, Any]]
+    transaction_agent_resolved: Optional[bool]
+    hybrid_agent_resolved: Optional[bool]
+    outbound_turn_state: Optional[Dict[str, Any]]
+    statement_sql_meta: Optional[Dict[str, Any]]
     
     # Результат
     response: Optional[str]
@@ -846,6 +856,10 @@ def create_initial_chat_state(
     court_practice: Optional[bool] = None,
     session_context_prompt: Optional[str] = None,
     session_context_meta: Optional[Dict[str, Any]] = None,
+    structured_data_plane: Optional[str] = None,
+    statement_scope_file_ids: Optional[List[str]] = None,
+    hybrid_rag_file_ids: Optional[List[str]] = None,
+    structured_data_router_meta: Optional[Dict[str, Any]] = None,
 ) -> ChatGraphState:
     """
     Создать начальное состояние для графа чата.
@@ -925,6 +939,14 @@ def create_initial_chat_state(
         message_summary=None,
         session_context_prompt=(session_context_prompt or "").strip() or None,
         session_context_meta=session_context_meta,
+        structured_data_plane=structured_data_plane,
+        statement_scope_file_ids=list(statement_scope_file_ids) if statement_scope_file_ids else None,
+        hybrid_rag_file_ids=list(hybrid_rag_file_ids) if hybrid_rag_file_ids else None,
+        structured_data_router_meta=structured_data_router_meta,
+        transaction_agent_resolved=None,
+        hybrid_agent_resolved=None,
+        outbound_turn_state=None,
+        statement_sql_meta=None,
         response=None,
         citations=None,
         answer_blocks=None,
@@ -1936,11 +1958,14 @@ def extract_retrieval_task_node(
     anchor_file_ids = bp.get("anchor_file_ids") or []
     retrieval_path = str(bp.get("retrieval_path") or "")
     turn_context = bp.get("turn_context") if isinstance(bp.get("turn_context"), dict) else {}
-    inherited_file_ids = (
-        turn_context.get("inherited_file_ids")
-        or bp.get("inherited_file_ids")
-        or anchor_file_ids
-    )
+    referential_kind = str(turn_context.get("referential_kind") or "none").strip().lower()
+    inherited_from_context = turn_context.get("inherited_file_ids") or bp.get("inherited_file_ids")
+    if inherited_from_context:
+        inherited_file_ids = inherited_from_context
+    elif referential_kind not in ("", "none"):
+        inherited_file_ids = anchor_file_ids if isinstance(anchor_file_ids, list) else []
+    else:
+        inherited_file_ids = []
 
     if primary_intent and retrieval_path in {"scoped_deep_read", "chunk_hybrid"}:
         from app.services.chat.case_file_catalog_cache import get_case_file_catalog_cached
@@ -2437,6 +2462,11 @@ def generate_response_node(
     logger.info(f"[GenerateResponse] Generating response in mode: {mode}")
     
     new_state = dict(state)
+
+    if (state.get("transaction_agent_resolved") or state.get("hybrid_agent_resolved")) and (
+        state.get("response") or ""
+    ).strip():
+        return new_state
 
     from app.services.chat.session_context_retrieval import (
         MEMORY_ONLY_SYSTEM_PROMPT,
@@ -3495,6 +3525,9 @@ def generate_response_node(
             except Exception:
                 pass
     
+    from app.services.chat.outbound_turn_state import attach_outbound_turn_state
+
+    attach_outbound_turn_state(new_state)
     return new_state
 
 
@@ -3844,6 +3877,9 @@ def create_chat_graph(
         route_after_grade_retrieval,
         sync_execution_tier_node,
     )
+    from app.config import config as app_config
+
+    legacy_pipeline = bool(getattr(app_config, "CASE_ASSISTANT_LEGACY_PIPELINE_ENABLED", False))
 
     graph.add_node("sync_execution_tier", sync_execution_tier_node)
     graph.add_node("clarify_response", clarify_response_node)
@@ -3858,6 +3894,34 @@ def create_chat_graph(
     graph.add_node("rerank_context", lambda state, config=None: rerank_context_node(state, rag_service, db))
     graph.add_node("rag_quality_gate", rag_quality_gate_node)  # Quality gate после retrieval
     graph.add_node("generate_response", generate_response_wrapper)
+
+    if not legacy_pipeline:
+        from app.services.chat.structured_data_graph import (
+            route_after_structured_data_router,
+            route_after_sync_tier,
+            structured_data_router_node,
+        )
+        from app.services.chat.case_transaction_graph import (
+            case_transaction_agent_node,
+            route_after_case_transaction_agent,
+        )
+        from app.services.chat.hybrid_structured_graph import (
+            hybrid_structured_agent_node,
+            route_after_hybrid_structured_agent,
+        )
+
+        graph.add_node(
+            "structured_data_router",
+            lambda state, config=None: structured_data_router_node(state, db),
+        )
+        graph.add_node(
+            "case_transaction_agent",
+            lambda state, config=None: case_transaction_agent_node(state, db),
+        )
+        graph.add_node(
+            "hybrid_structured_agent",
+            lambda state, config=None: hybrid_structured_agent_node(state, db),
+        )
 
     graph.add_node("editor_enrich_context", editor_enrich_context_wrapper)
     graph.add_node("analyze_document", analyze_document_wrapper)
@@ -3901,15 +3965,56 @@ def create_chat_graph(
         }
     )
 
-    graph.add_conditional_edges(
-        "sync_execution_tier",
-        route_after_execution_tier,
-        {
-            "clarify_response": "clarify_response",
-            "generate_response": "generate_response",
-            "extract_retrieval_task": "extract_retrieval_task",
-        },
-    )
+    if legacy_pipeline:
+        graph.add_conditional_edges(
+            "sync_execution_tier",
+            route_after_execution_tier,
+            {
+                "clarify_response": "clarify_response",
+                "generate_response": "generate_response",
+                "extract_retrieval_task": "extract_retrieval_task",
+            },
+        )
+    else:
+        graph.add_conditional_edges(
+            "sync_execution_tier",
+            route_after_sync_tier,
+            {
+                "clarify_response": "clarify_response",
+                "generate_response": "generate_response",
+                "extract_retrieval_task": "extract_retrieval_task",
+                "structured_data_router": "structured_data_router",
+            },
+        )
+        graph.add_conditional_edges(
+            "structured_data_router",
+            route_after_structured_data_router,
+            {
+                "case_transaction_agent": "case_transaction_agent",
+                "hybrid_structured_agent": "hybrid_structured_agent",
+                "extract_retrieval_task": "extract_retrieval_task",
+            },
+        )
+        graph.add_conditional_edges(
+            "case_transaction_agent",
+            route_after_case_transaction_agent,
+            {
+                END: END,
+                "clarify_response": "clarify_response",
+                "generate_response": "generate_response",
+                "extract_retrieval_task": "extract_retrieval_task",
+            },
+        )
+        graph.add_conditional_edges(
+            "hybrid_structured_agent",
+            route_after_hybrid_structured_agent,
+            {
+                END: END,
+                "clarify_response": "clarify_response",
+                "generate_response": "generate_response",
+                "extract_retrieval_task": "extract_retrieval_task",
+            },
+        )
     graph.add_edge("clarify_response", END)
 
     graph.add_edge("extract_retrieval_task", "parallel_retrieval")

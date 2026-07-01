@@ -2,8 +2,8 @@ import { useState, useEffect } from 'react'
 import { getCasesList, deleteCase, CasesListResponse } from '../services/api'
 import { MikeCasesOverview } from '../components/Cases/MikeCasesOverview'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
-import { FolderOpen, MessageSquare, Clock } from 'lucide-react'
 import { toast } from 'sonner'
+import { buildMainNavItems } from '../lib/mainNavItems'
 
 const PAGE_SIZE = 50
 
@@ -14,11 +14,7 @@ const CasesListPage = () => {
   const [currentPage, setCurrentPage] = useState(1)
   const [reviewCounts, setReviewCounts] = useState<Record<string, number>>({})
 
-  const mainNavItems = [
-    { id: 'cases', label: 'Дела', icon: FolderOpen, path: '/cases' },
-    { id: 'assistant', label: 'Ассистент', icon: MessageSquare, path: '/assistant' },
-    { id: 'history', label: 'История', icon: Clock, path: '/history' },
-  ]
+  const mainNavItems = buildMainNavItems()
 
   useEffect(() => {
     loadCases()

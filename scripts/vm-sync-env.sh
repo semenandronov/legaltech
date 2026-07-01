@@ -32,7 +32,7 @@ grep -v '^UPLOAD_DIR=' "${LOCAL_ENV}" \
   | grep -v '^CORS_ORIGINS=' \
   | grep -v '^DATABASE_URL=' \
   > "${TMP}" || true
-VM_PUBLIC_URL="${VM_PUBLIC_URL:-https://158.160.212.167}"
+VM_PUBLIC_URL="${VM_PUBLIC_URL:-https://158.160.148.240}"
 {
   cat "${TMP}"
   echo ""
@@ -49,9 +49,9 @@ VM_PUBLIC_URL="${VM_PUBLIC_URL:-https://158.160.212.167}"
 } > "${LOCAL_ENV}.vm.tmp"
 mv "${LOCAL_ENV}.vm.tmp" "${TMP}"
 
-yc compute ssh --id "$VM_ID" -- "mkdir -p '${REMOTE_DIR}' '${REMOTE_DIR}/uploads' && chmod 755 '${REMOTE_DIR}/uploads'"
+vm_ssh "mkdir -p '${REMOTE_DIR}' '${REMOTE_DIR}/uploads' && chmod 755 '${REMOTE_DIR}/uploads'"
 
 echo "==> Upload .env -> ${REMOTE_ENV}"
-yc compute ssh --id "$VM_ID" -- "cat > '${REMOTE_ENV}' && chmod 600 '${REMOTE_ENV}'" < "${TMP}"
+vm_ssh "cat > '${REMOTE_ENV}' && chmod 600 '${REMOTE_ENV}'" < "${TMP}"
 
 echo "==> Done. Restart app: ./scripts/vm-restart-legal-ai.sh"

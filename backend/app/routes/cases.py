@@ -19,7 +19,6 @@ from app.models.user import User
 from app.config import config
 from fastapi.responses import Response, StreamingResponse, JSONResponse
 from app.services.langchain_loaders import DocumentLoaderService
-from app.services.document_classifier_service import DocumentClassifierService
 from app.services.document_processor import DocumentProcessor, get_document_processor
 from app.services.chat.entity_index_service import merge_case_entity_index
 from app.services.case_file_bytes import case_file_content_for_db
@@ -1178,6 +1177,17 @@ async def delete_file_from_case(
         ).all()
         for classification in classifications:
             db.delete(classification)
+
+        try:
+            from app.services.case_file_transaction_service import (
+                CaseFileTransactionService,
+                feature_enabled,
+            )
+
+            if feature_enabled():
+                CaseFileTransactionService.delete_for_file(db, file_id)
+        except Exception as tx_del_err:
+            logger.warning("Failed to delete case file transactions file=%s: %s", file_id, tx_del_err)
         
         # Delete file from database (CASCADE will handle related records)
         db.delete(file)

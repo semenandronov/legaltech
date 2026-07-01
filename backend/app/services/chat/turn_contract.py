@@ -27,6 +27,17 @@ EDITOR_FINAL_RESPONSE_NODES = frozenset(
     }
 )
 
+# Case assistant nodes that finish a turn without generate_response (SQL/hybrid/clarify/gate).
+CASE_FINAL_RESPONSE_NODES = frozenset(
+    {
+        "generate_response",
+        "case_transaction_agent",
+        "hybrid_structured_agent",
+        "clarify_response",
+        "rag_quality_gate",
+    }
+)
+
 
 def normalize_editor_intent(editor_mode_hint: Optional[str]) -> EditorTurnIntent:
     raw = (editor_mode_hint or "ask").strip().lower()

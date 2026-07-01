@@ -94,6 +94,8 @@ def build_index_chunks(
             base_metadata=base_metadata,
             preseg_strategy=preseg_strategy,
             filename=filename,
+            profile=profile,
+            doc_type=doc_type,
         )
 
     normalized = _normalize_docling_segments(list(segments), profile)

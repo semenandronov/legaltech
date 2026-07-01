@@ -38,7 +38,7 @@ const LEGAL_CORPUS_UPLOADER_CACHE_KEY = 'legal-corpus-is-uploader'
 const UnifiedSidebar = ({
   navItems,
   title = 'Legal AI',
-  showBackButton = true,
+  showBackButton: _showBackButton = true,
   forceCollapsed = false,
   variant: _variant = 'default',
 }: UnifiedSidebarProps) => {
@@ -67,8 +67,13 @@ const UnifiedSidebar = ({
     return location.pathname === path || location.pathname.startsWith(path + '/')
   }
 
-  const shouldShowBackButton =
-    showBackButton && location.pathname.includes('/cases/') && location.pathname !== '/cases'
+  const isInsideCase =
+    /^\/cases\/[^/]+/.test(location.pathname) &&
+    !location.pathname.startsWith('/cases/new')
+
+  /** «Дела» — назад к списку внутри дела; не дублировать, если уже есть в navItems. */
+  const shouldShowCasesBackLink =
+    isInsideCase && !navItems.some((item) => item.path === '/cases')
 
   type SidebarLink = { id: string; label: string; icon: LucideIcon; path: string }
 
@@ -89,7 +94,7 @@ const UnifiedSidebar = ({
   }
 
   const allLinks: SidebarLink[] = [
-    ...(shouldShowBackButton
+    ...(shouldShowCasesBackLink
       ? [{ id: 'back-cases', label: 'Дела', icon: FolderOpen, path: '/cases' }]
       : []),
     ...navItems,
@@ -103,7 +108,7 @@ const UnifiedSidebar = ({
   }, [userCollapsed, forceCollapsed])
 
   useEffect(() => {
-    if (!isOpen) setShouldAnimate(true)
+    if (isOpen) setShouldAnimate(true)
   }, [isOpen])
 
   useEffect(() => {
@@ -163,52 +168,53 @@ const UnifiedSidebar = ({
   return (
     <div
       className={cn(
-        'unified-sidebar shrink-0 flex flex-col transition-all duration-300 z-[99] relative',
-        isOpen
-          ? 'w-64 h-[calc(100dvh-1rem)] md:h-[calc(100dvh-1.5rem)]'
-          : forceCollapsed
-            ? 'w-14 h-[calc(100dvh-1rem)] md:h-[calc(100dvh-1.5rem)]'
-            : 'max-md:hidden w-14 md:h-[calc(100dvh-1.5rem)] h-auto',
-        'my-2 ml-2 md:my-3 md:ml-3 mr-0 rounded-2xl overflow-visible',
+        'unified-sidebar shrink-0 flex flex-col z-[99] relative',
+        isOpen ? 'unified-sidebar--expanded' : 'unified-sidebar--collapsed',
+        'h-[calc(100dvh-1rem)] md:h-[calc(100dvh-1.5rem)]',
+        !isOpen && !forceCollapsed && 'max-md:hidden',
+        'my-2 ml-2 md:my-3 md:ml-3 mr-0 rounded-2xl',
         isTabular && isOpen && 'md:mr-1',
         glassPanelClass,
       )}
     >
       <div
         className={cn(
-          'items-center justify-between px-2.5 py-3 min-h-[3.25rem]',
-          !isOpen ? 'hidden md:flex' : 'flex',
+          'flex items-center min-h-[3.25rem] px-2.5 py-3',
+          isOpen ? 'justify-between' : 'justify-start',
+          !isOpen && !forceCollapsed && 'hidden md:flex',
         )}
       >
-        {isOpen && (
-          <div className="px-2 min-w-0 flex-1">
-            <button
-              type="button"
-              onClick={() => navigate('/cases')}
-              className="flex items-center gap-1.5 hover:opacity-80 transition-opacity border-0 bg-transparent p-0 cursor-pointer max-w-full"
+        <div
+          className={cn(
+            'flex items-center gap-1.5 min-w-0',
+            !isOpen && 'sr-only',
+          )}
+          aria-hidden={!isOpen}
+        >
+          <span className="text-xl leading-none shrink-0">⚖️</span>
+          <button
+            type="button"
+            onClick={() => navigate('/cases')}
+            className={cn(
+              'border-0 bg-transparent p-0 cursor-pointer text-left min-w-0',
+              'hover:opacity-80 transition-opacity',
+            )}
+          >
+            <span
+              className={cn(
+                'unified-sidebar-label block text-2xl font-light font-serif text-gray-900 truncate',
+                shouldAnimate && isOpen && 'unified-sidebar-fade-in',
+              )}
             >
-              <span className="text-xl leading-none shrink-0" aria-hidden>
-                ⚖️
-              </span>
-              <span
-                className={cn(
-                  'text-2xl font-light font-serif text-gray-900 truncate',
-                  shouldAnimate && 'unified-sidebar-fade-in',
-                )}
-              >
-                {title}
-              </span>
-            </button>
-          </div>
-        )}
+              {title}
+            </span>
+          </button>
+        </div>
         {!forceCollapsed && (
           <button
             type="button"
             onClick={toggleCollapse}
-            className={cn(
-              'h-9 w-9 p-2.5 flex items-center justify-center rounded-md hover:bg-gray-100 transition-colors text-gray-700 shrink-0',
-              !isOpen && 'mx-auto',
-            )}
+            className="h-9 w-9 p-2.5 flex items-center justify-center rounded-md hover:bg-gray-100 transition-colors text-gray-700 shrink-0"
             aria-label={isOpen ? 'Свернуть меню' : 'Развернуть меню'}
           >
             <PanelLeft className="h-4 w-4" />
@@ -230,7 +236,7 @@ const UnifiedSidebar = ({
                 className={cn(
                   'w-full h-9 flex items-center gap-3 px-2.5 py-2 rounded-md transition-colors text-left border-0 cursor-pointer',
                   active ? 'bg-gray-200/60 text-gray-900' : 'text-gray-700 hover:bg-gray-100',
-                  !isOpen ? (forceCollapsed ? 'flex justify-center' : 'hidden md:flex justify-center') : 'flex',
+                  !isOpen && !forceCollapsed && 'hidden md:flex',
                 )}
               >
                 <Icon
@@ -240,16 +246,14 @@ const UnifiedSidebar = ({
                   )}
                   aria-hidden
                 />
-                {isOpen && (
-                  <span
-                    className={cn(
-                      'text-sm font-medium truncate',
-                      shouldAnimate && 'unified-sidebar-fade-in-2',
-                    )}
-                  >
-                    {item.label}
-                  </span>
-                )}
+                <span
+                  className={cn(
+                    'unified-sidebar-label text-sm font-medium truncate',
+                    shouldAnimate && isOpen && 'unified-sidebar-fade-in-2',
+                  )}
+                >
+                  {item.label}
+                </span>
               </button>
             </div>
           )
@@ -266,9 +270,9 @@ const UnifiedSidebar = ({
                 setIsUserMenuOpen((open) => !open)
               }}
               className={cn(
-                'flex items-center transition-colors w-full px-2.5 py-3 border-t border-white/60 rounded-xl cursor-pointer',
+                'flex items-center transition-colors w-full px-2.5 py-3 border-t border-white/60 rounded-xl cursor-pointer gap-3',
                 isUserMenuOpen ? 'bg-gray-200/60' : 'hover:bg-gray-100',
-                !isOpen ? (forceCollapsed ? 'justify-center' : 'hidden md:flex justify-center') : 'gap-3',
+                !isOpen && !forceCollapsed && 'hidden md:flex',
               )}
               aria-label={!isOpen ? getDisplayName() || user.email : undefined}
             >
@@ -278,29 +282,31 @@ const UnifiedSidebar = ({
               >
                 {getUserInitials()}
               </span>
-              {isOpen && (
-                <>
-                  <span className="min-w-0 flex-1 text-left">
-                    <span
-                      className={cn(
-                        'block truncate text-sm font-medium text-gray-900',
-                        shouldAnimate && 'unified-sidebar-fade-in',
-                      )}
-                    >
-                      {getDisplayName()}
-                    </span>
-                    <span
-                      className={cn(
-                        'block truncate text-xs text-gray-500',
-                        shouldAnimate && 'unified-sidebar-fade-in-2',
-                      )}
-                    >
-                      {user.email}
-                    </span>
-                  </span>
-                  <ChevronsUpDown className="h-4 w-4 shrink-0 text-gray-400" aria-hidden />
-                </>
-              )}
+              <span className="min-w-0 flex-1 text-left unified-sidebar-label">
+                <span
+                  className={cn(
+                    'block truncate text-sm font-medium text-gray-900',
+                    shouldAnimate && isOpen && 'unified-sidebar-fade-in',
+                  )}
+                >
+                  {getDisplayName()}
+                </span>
+                <span
+                  className={cn(
+                    'block truncate text-xs text-gray-500',
+                    shouldAnimate && isOpen && 'unified-sidebar-fade-in-2',
+                  )}
+                >
+                  {user.email}
+                </span>
+              </span>
+              <ChevronsUpDown
+                className={cn(
+                  'h-4 w-4 shrink-0 text-gray-400 unified-sidebar-label',
+                  shouldAnimate && isOpen && 'unified-sidebar-fade-in-2',
+                )}
+                aria-hidden
+              />
             </button>
 
             {isUserMenuOpen && isOpen && (

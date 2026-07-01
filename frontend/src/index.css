@@ -9,6 +9,9 @@
 /* Workspace pages (assistant, case, tabular) */
 @import './styles/workspace-pages.css';
 
+/* Auth pages (login, register) */
+@import './components/Auth/Auth.css';
+
 /* Import typography */
 @import './styles/typography.css';
 

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { FolderOpen, MessageSquare, Clock, Scale, Upload, Trash2, Loader2 } from 'lucide-react'
+import { Scale, Upload, Trash2, Loader2 } from 'lucide-react'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
+import { buildMainNavItems } from '../lib/mainNavItems'
 import {
   fetchLegalCorpusStatus,
   fetchLegalCorpusFiles,
@@ -15,12 +16,6 @@ import {
   type LegalCorpusInstrument,
   extractErrorMessage,
 } from '../services/api'
-
-const navItems = [
-  { id: 'cases', label: 'Дела', icon: FolderOpen, path: '/cases' },
-  { id: 'assistant', label: 'Ассистент', icon: MessageSquare, path: '/assistant' },
-  { id: 'history', label: 'История', icon: Clock, path: '/history' },
-]
 
 const LegalCorpusManagePage = () => {
   const [status, setStatus] = useState<LegalCorpusStatus | null>(null)
@@ -170,7 +165,7 @@ const LegalCorpusManagePage = () => {
 
   return (
     <div className="h-screen flex overflow-hidden" style={{ backgroundColor: 'var(--color-bg-primary)' }}>
-      <UnifiedSidebar navItems={navItems} title="Legal AI" />
+      <UnifiedSidebar navItems={buildMainNavItems()} title="Legal AI" />
 
       <div className="flex-1 flex flex-col overflow-hidden">
         <div className="flex-1 overflow-y-auto">

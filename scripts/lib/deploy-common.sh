@@ -13,7 +13,7 @@ deploy_resolve_vm_public_url() {
     return 0
   fi
   if [[ -z "${YC_VM_ID:-}" ]]; then
-    VM_PUBLIC_URL="${VM_PUBLIC_URL:-https://158.160.212.167}"
+    VM_PUBLIC_URL="${VM_PUBLIC_URL:-https://158.160.148.240}"
     export VM_PUBLIC_URL
     return 0
   fi
@@ -24,51 +24,27 @@ deploy_resolve_vm_public_url() {
   export VM_PUBLIC_URL
 }
 
-# Writes ${ROOT}/.env.vite-build from VITE_* lines in root .env (Docker COPY + Vite envDir).
+# Writes ${ROOT}/.env.vite-build (Docker + Vite). Delegates to scripts/ci/prepare-vite-build-env.sh.
 deploy_prepare_vite_build_env() {
   local root="${1:?root}"
-  local snip="${root}/.env.vite-build"
   local env_file="${root}/.env"
 
-  if [[ ! -f "${env_file}" ]]; then
-    echo "Local .env not found: ${env_file}" >&2
-    return 1
+  if [[ -f "${env_file}" ]]; then
+    if [[ -z "${VITE_GOOGLE_CLIENT_ID:-}" ]]; then
+      VITE_GOOGLE_CLIENT_ID="$(
+        grep -E '^VITE_GOOGLE_CLIENT_ID=' "${env_file}" | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+      )"
+      export VITE_GOOGLE_CLIENT_ID
+    fi
+    if [[ -z "${VITE_GOOGLE_API_KEY:-}" ]]; then
+      VITE_GOOGLE_API_KEY="$(
+        grep -E '^VITE_GOOGLE_API_KEY=' "${env_file}" | head -1 | cut -d= -f2- | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+      )"
+      export VITE_GOOGLE_API_KEY
+    fi
   fi
-  grep -E '^VITE_' "${env_file}" | sed 's/\r$//' > "${snip}" || true
-  local vm_ui="${root}/.env.vm-ui"
-  if [[ -f "${vm_ui}" ]]; then
-    echo "" >> "${snip}"
-    echo "# VM production UI surface (from .env.vm-ui)" >> "${snip}"
-    grep -E '^VITE_' "${vm_ui}" | sed 's/\r$//' >> "${snip}" || true
-    python3 - "${snip}" <<'PY'
-from pathlib import Path
-import sys
-path = Path(sys.argv[1])
-merged: dict[str, str] = {}
-prefix: list[str] = []
-for line in path.read_text(encoding="utf-8").splitlines():
-    stripped = line.strip()
-    if stripped.startswith("VITE_") and "=" in stripped:
-        merged[stripped.split("=", 1)[0]] = line
-    else:
-        prefix.append(line)
-path.write_text("\n".join(prefix + list(merged.values())).rstrip() + "\n", encoding="utf-8")
-PY
-    echo "==> Merged VM UI flags from .env.vm-ui"
-  fi
-  # Production UI must use same-origin API (relative /api/...). Dev VITE_API_URL breaks login in browser.
-  sed -i.bak '/^VITE_API_URL=/d' "${snip}" 2>/dev/null || sed -i '' '/^VITE_API_URL=/d' "${snip}"
-  if [[ -n "${VM_PUBLIC_URL:-}" ]]; then
-    echo "# VITE_API_URL omitted — browser calls ${VM_PUBLIC_URL} via relative paths" >> "${snip}"
-  fi
-  if ! grep -qE '^VITE_GOOGLE_CLIENT_ID=.+' "${snip}" \
-    || ! grep -qE '^VITE_GOOGLE_API_KEY=.+' "${snip}"; then
-    echo "Production build requires VITE_GOOGLE_CLIENT_ID and VITE_GOOGLE_API_KEY in ${env_file}" >&2
-    echo "  (Google Drive import button is baked into the frontend at build time)" >&2
-    return 1
-  fi
-  echo "==> Vite build env: $(wc -l < "${snip}" | tr -d ' ') VITE_* variable(s), Google Drive OK"
-  return 0
+
+  "${root}/scripts/ci/prepare-vite-build-env.sh"
 }
 
 deploy_load_google_build_args() {

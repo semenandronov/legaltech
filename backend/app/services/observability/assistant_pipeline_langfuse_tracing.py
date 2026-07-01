@@ -102,6 +102,12 @@ def assistant_step_span(
         wall_ms = int((time.monotonic() - t0) * 1000)
         if parent_token is not None:
             reset_trace_span_parent(parent_token)
+        try:
+            from app.services.observability.case_assistant_timeline import maybe_record_from_span
+
+            maybe_record_from_span(full_name, wall_ms, {**out_holder, "latency_ms": wall_ms})
+        except Exception:
+            pass
         if ctx and assistant_pipeline_tracing_enabled():
             merged_out = {**out_holder, "latency_ms": wall_ms}
             status = "error" if exc else "success"

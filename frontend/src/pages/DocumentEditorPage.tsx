@@ -3,9 +3,8 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { Download, ArrowLeft, FileText, History, ChevronDown, BookOpen } from 'lucide-react'
 import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
-import { buildCaseNavItems } from '@/lib/caseNavItems'
+import { buildMainNavItems } from '@/lib/mainNavItems'
 import { productFeatures } from '@/lib/productFeatures'
-import { useAuth } from '@/contexts/AuthContext'
 import { DocumentEditor, DocumentEditorRef } from '../components/Editor/DocumentEditor'
 import { DocumentEditorContextChat } from '../components/Editor/DocumentEditorContextChat'
 import { VersionHistory } from '../components/Editor/VersionHistory'
@@ -30,7 +29,6 @@ interface DocumentData {
 const DocumentEditorPage = ({ embedded = false }: { embedded?: boolean }) => {
   const { caseId, documentId } = useParams<{ caseId: string; documentId?: string }>()
   const navigate = useNavigate()
-  const { user } = useAuth()
   const [searchParams] = useSearchParams()
   const returnTo = searchParams.get('returnTo')
   const [document, setDocument] = useState<DocumentData | null>(null)
@@ -425,10 +423,7 @@ const DocumentEditorPage = ({ embedded = false }: { embedded?: boolean }) => {
 
   // Load comments effect removed — CommentsPanel was removed
 
-  const navItems = useMemo(
-    () => (caseId ? buildCaseNavItems(caseId, user?.email) : []),
-    [caseId, user?.email],
-  )
+  const navItems = useMemo(() => buildMainNavItems(), [])
 
   // Show loading state
   if (loading || loadingDocuments) {

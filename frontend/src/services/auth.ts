@@ -3,13 +3,6 @@ import { logger } from '../lib/logger'
 
 const BASE_URL = import.meta.env.VITE_API_URL || ''
 
-export interface RegisterRequest {
-  email: string
-  password: string
-  full_name?: string
-  company?: string
-}
-
 export interface LoginRequest {
   email: string
   password: string
@@ -40,11 +33,6 @@ export interface UserResponse {
 const getApiUrl = (path: string) => {
   const prefix = BASE_URL.endsWith('/') ? BASE_URL.slice(0, -1) : BASE_URL
   return `${prefix}${path}`
-}
-
-export const register = async (data: RegisterRequest): Promise<TokenResponse> => {
-  const response = await axios.post(getApiUrl('/api/auth/register'), data)
-  return response.data
 }
 
 export const login = async (data: LoginRequest): Promise<TokenResponse> => {

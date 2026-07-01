@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
-import { FolderOpen, MessageSquare, Clock, Scissors } from 'lucide-react'
+import { Scissors } from 'lucide-react'
+import { buildMainNavItems } from '../lib/mainNavItems'
 import api, { getApiUrl } from '../services/api'
 
 type ChunkPreviewRow = {
@@ -32,12 +33,10 @@ const ChunkPreviewPage = () => {
 
   const navItems = useMemo(
     () => [
-      { id: 'cases', label: 'Дела', icon: FolderOpen, path: '/cases' },
-      { id: 'assistant', label: 'Ассистент', icon: MessageSquare, path: '/assistant' },
-      { id: 'history', label: 'История', icon: Clock, path: '/history' },
+      ...buildMainNavItems(),
       { id: 'chunk-preview', label: 'Chunk Preview', icon: Scissors, path: '/chunk-preview' },
     ],
-    []
+    [],
   )
 
   const onSubmit = async (e: React.FormEvent) => {

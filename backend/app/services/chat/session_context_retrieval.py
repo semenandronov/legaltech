@@ -187,10 +187,14 @@ def is_memory_only_turn(meta: Optional[Mapping[str, Any]]) -> bool:
     """
     Answer from in-chat memory without fresh document/corpus retrieval.
 
-    memory_synthesis (turn context) or clarify_prior without retrieval may bypass RAG.
+    Primary signal: TurnMemoryContract.execution_mode == chat_replay.
+    Legacy fallbacks preserved for older checkpoints / meta shapes.
     """
     if not isinstance(meta, dict):
         return False
+    mode = str(meta.get("execution_mode") or "").strip().lower()
+    if mode == "chat_replay":
+        return bool(meta.get("prior_answer_available"))
     if meta.get("replay_short_circuit"):
         return True
     if str(meta.get("referential_kind") or "") == "memory_synthesis":

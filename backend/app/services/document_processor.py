@@ -331,6 +331,44 @@ class DocumentProcessor:
             ids = self.vector_store.add_documents(documents, case_id=case_id)
             logger.info(f"✅ Stored {len(ids)} documents in PGVector for case {case_id}")
 
+            # Structured-table rows → SQL for deterministic transaction queries (optional).
+            try:
+                from app.config import config as app_config
+                if getattr(app_config, "CASE_FILE_TRANSACTIONS_ENABLED", False):
+                    from app.services.case_file_transaction_service import (
+                        CaseFileTransactionService,
+                        feature_enabled,
+                    )
+
+                    if feature_enabled():
+                        by_file: Dict[str, List[Document]] = {}
+                        names: Dict[str, str] = {}
+                        for doc in documents:
+                            fid = str(doc.metadata.get("file_id") or "")
+                            if not fid:
+                                continue
+                            by_file.setdefault(fid, []).append(doc)
+                            names[fid] = str(
+                                doc.metadata.get("source_file")
+                                or doc.metadata.get("filename")
+                                or fid
+                            )
+                        for fid, file_docs in by_file.items():
+                            CaseFileTransactionService.sync_from_documents(
+                                db,
+                                case_id=case_id,
+                                file_id=fid,
+                                filename=names.get(fid, fid),
+                                documents=file_docs,
+                            )
+            except Exception as tx_exc:
+                logger.warning(
+                    "Case file transaction sync failed case=%s: %s",
+                    case_id,
+                    tx_exc,
+                    exc_info=True,
+                )
+
             if getattr(config, "CASE_BM25_PREWARM_ENABLED", True):
                 try:
                     from app.services.bm25_case_prewarm import invalidate_bm25_index, schedule_bm25_prewarm

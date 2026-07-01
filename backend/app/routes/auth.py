@@ -104,7 +104,13 @@ async def register(
     request: RegisterRequest,
     db: Session = Depends(get_db)
 ):
-    """Register a new user"""
+    """Register a new user (disabled unless AUTH_PUBLIC_REGISTRATION_ENABLED=true)."""
+    if not bool(getattr(config, "AUTH_PUBLIC_REGISTRATION_ENABLED", False)):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Регистрация отключена. Обратитесь к администратору.",
+        )
+
     logger.info(f"Registration attempt for email: {request.email}")
     
     # Check if user already exists

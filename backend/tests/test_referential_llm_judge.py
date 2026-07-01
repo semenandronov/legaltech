@@ -91,52 +91,56 @@ def test_llm_judge_fallback_to_regex_when_llm_unavailable(llm_judge_enabled):
     assert result.resolver == "regex_fallback"
 
 
-def test_regex_safety_when_llm_uncertain_on_memory_synthesis(llm_judge_enabled):
+def test_regex_wins_for_short_memory_synthesis_without_llm(llm_judge_enabled):
+    """Deterministic classifier handles «итог?» — LLM is not consulted."""
     prior = load_prior_turn_evidence_from_turns(_prior_turn())
-    decision = ReferentialJudgeDecision(
-        referential_kind="none",
-        needs_document_retrieval=True,
-        confidence=0.55,
-        rationale="uncertain",
-    )
     with patch(
         "app.services.chat.referential_llm_judge._invoke_llm_judge",
-        return_value=decision,
-    ):
+    ) as mock_llm:
         result = classify_referential_kind_judge(
             question="итог?",
             has_prior=True,
             prior_evidence=prior,
             turns=_prior_turn(),
         )
+    mock_llm.assert_not_called()
     assert result.referential_kind == "memory_synthesis"
-    assert result.resolver == "regex_safety"
+    assert result.resolver == "regex_fallback"
 
 
-def test_resolve_turn_context_uses_judge_standalone_query(llm_judge_enabled):
+def test_resolve_turn_context_scoped_deep_read_from_regex(llm_judge_enabled):
+    """Deictic pointer resolved deterministically when structural regex matches."""
     prior = load_prior_turn_evidence_from_turns(_prior_turn())
-    decision = ReferentialJudgeDecision(
-        referential_kind="scoped_deep_read",
-        needs_document_retrieval=True,
-        confidence=0.88,
-        rationale="deictic sum pointer",
-        standalone_query="какая сумма указана в пункте 2 возражений ШАК",
-    )
-
     with patch(
         "app.services.chat.referential_llm_judge._invoke_llm_judge",
-        return_value=decision,
-    ):
+    ) as mock_llm:
         resolution = resolve_turn_context(
             question="А эта сумма в п. 2?",
             prior_evidence=prior,
             turns=_prior_turn(),
         )
-
+    mock_llm.assert_not_called()
     assert resolution.referential_kind == "scoped_deep_read"
-    assert "сумма" in resolution.standalone_query.lower()
-    assert resolution.query_resolver == "llm_judge"
-    assert resolution.routing_resolver in {"llm", "llm_regex_agree"}
+    assert resolution.needs_document_retrieval is True
+    assert resolution.routing_resolver == "regex_fallback"
+
+
+def test_drill_down_resolved_deterministically(llm_judge_enabled):
+    """«подробнее про возражение» must open scoped RAG without LLM override."""
+    prior = load_prior_turn_evidence_from_turns(_prior_turn())
+    with patch(
+        "app.services.chat.referential_llm_judge._invoke_llm_judge",
+    ) as mock_llm:
+        result = classify_referential_kind_judge(
+            question="подробнее про возражение",
+            has_prior=True,
+            prior_evidence=prior,
+            turns=_prior_turn(),
+        )
+    mock_llm.assert_not_called()
+    assert result.referential_kind == "scoped_deep_read"
+    assert result.needs_document_retrieval is True
+    assert result.resolver == "regex_fallback"
 
 
 @pytest.fixture

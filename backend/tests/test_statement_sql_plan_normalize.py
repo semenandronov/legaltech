@@ -1,0 +1,79 @@
+"""Tests for statement SQL plan normalization."""
+
+from datetime import date
+
+from app.services.chat.statement_sql_plan_normalize import (
+    effective_query_dates,
+    infer_period_from_question,
+    normalize_statement_sql_plan,
+)
+from app.services.chat.statement_sql_models import StatementSqlPlan
+
+
+def test_infer_calendar_month_from_question():
+    hint = infer_period_from_question("кол-во операций в мае по банковской выписке?")
+    assert hint.kind == "calendar_month"
+    assert hint.date_from == date(2026, 5, 1)
+    assert hint.date_to == date(2026, 5, 31)
+
+
+def test_infer_single_day_from_dmy():
+    hint = infer_period_from_question("операция 11.06.2026 в 19:28")
+    assert hint.kind == "single_day"
+    assert hint.on_date == date(2026, 6, 11)
+
+
+def test_normalize_clears_on_date_when_llm_set_month_range_and_first_day():
+    """Reproduces production bug: on_date=01.05 + range May → only 4 ops on May 1."""
+    raw = StatementSqlPlan(
+        operation="count",
+        on_date="01.05.2026",
+        date_from="01.05.2026",
+        date_to="31.05.2026",
+        statement_file_id="f1",
+        confidence=1.0,
+    )
+    plan = normalize_statement_sql_plan(
+        raw,
+        "кол-во операций в мае по банковской выписке?",
+    )
+    on_d, d_from, d_to = effective_query_dates(plan)
+    assert on_d is None
+    assert d_from == date(2026, 5, 1)
+    assert d_to == date(2026, 5, 31)
+    assert plan.on_date == ""
+
+
+def test_normalize_keeps_single_day_for_explicit_date_question():
+    plan = normalize_statement_sql_plan(
+        StatementSqlPlan(
+            operation="find",
+            on_date="11.06.2026",
+            date_from="01.06.2026",
+            date_to="30.06.2026",
+            time_hint="19:28",
+            statement_file_id="f1",
+            confidence=0.9,
+        ),
+        "что было 11.06.2026 в 19:28",
+    )
+    on_d, d_from, d_to = effective_query_dates(plan)
+    assert on_d == date(2026, 6, 11)
+    assert d_from is None
+    assert d_to is None
+
+
+def test_executor_query_dates_multi_day_range_no_on_date():
+    plan = StatementSqlPlan(
+        operation="count",
+        on_date="01.05.2026",
+        date_from="01.05.2026",
+        date_to="31.05.2026",
+        statement_file_id="f1",
+        confidence=1.0,
+    )
+    plan = normalize_statement_sql_plan(plan, "сколько операций за май 2026")
+    on_d, d_from, d_to = effective_query_dates(plan)
+    assert on_d is None
+    assert d_from == date(2026, 5, 1)
+    assert d_to == date(2026, 5, 31)

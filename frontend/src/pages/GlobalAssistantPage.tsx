@@ -2,10 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { toast } from 'sonner'
 import { useLocation, useNavigate } from 'react-router-dom'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
-import {
-  FolderOpen, MessageSquare, FileText, X,
-  Loader2, Download, Clock,
-} from 'lucide-react'
+import { FileText, X, Loader2, Download } from 'lucide-react'
 import {
   getApiUrl,
   getGlobalAssistantSession,
@@ -31,6 +28,7 @@ import { GlobalAssistantPageHeader } from '../components/assistant/GlobalAssista
 import { MikeAssistantDisclaimer, MikeAssistantGreeting } from '../components/assistant/MikeAssistantGreeting'
 import { MikeUserMessage } from '../components/assistant/MikeUserMessage'
 import { productFeatures } from '../lib/productFeatures'
+import { buildMainNavItems } from '../lib/mainNavItems'
 import { useChatInstrumentSettings } from '../hooks/useChatInstrumentSettings'
 
 function inlineFmt(text: string): string {
@@ -96,12 +94,6 @@ interface DraftDocument {
   title: string
   content: string
 }
-
-const navItems = [
-  { id: 'cases', label: 'Дела', icon: FolderOpen, path: '/cases' },
-  { id: 'assistant', label: 'Ассистент', icon: MessageSquare, path: '/assistant' },
-  { id: 'history', label: 'История', icon: Clock, path: '/history' },
-]
 
 // ─────────────────────────────────────────────────────────
 // Main component
@@ -531,7 +523,7 @@ const GlobalAssistantPage = () => {
 
   return (
     <div className="ws-shell ws-tabular-shell flex h-screen overflow-hidden">
-      <UnifiedSidebar navItems={navItems} title="Legal AI" showBackButton={false} variant="tabular" />
+      <UnifiedSidebar navItems={buildMainNavItems()} title="Legal AI" showBackButton={false} variant="tabular" />
 
       {showCasePicker && (
         <CaseDocumentPickerModal

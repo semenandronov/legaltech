@@ -12,7 +12,7 @@ cd "${ROOT}"
 # shellcheck source=lib/deploy-common.sh
 source "${ROOT}/scripts/lib/deploy-common.sh"
 
-VM_ID="${YC_VM_ID:-fv4qdpndf1f3c70ugkd3}"
+VM_ID="${YC_VM_ID:-fv4jkhc0aojn5r870h3h}"
 REGISTRY_IMAGE="${REGISTRY_IMAGE:-cr.yandex/crpllsmk62iiorpelole/legal-ai}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 IMAGE="${REGISTRY_IMAGE}:${IMAGE_TAG}"

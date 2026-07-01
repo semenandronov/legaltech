@@ -143,12 +143,12 @@ def _build_judge_prompt(
         "Ты маршрутизатор юридического case-assistant. По транскрипту чата и новому вопросу реши, "
         "как обрабатывать turn ДО поиска по документам дела.\n\n"
         "referential_kind (выбери один):\n"
-        "- memory_synthesis: пересказ/выводы/итог/резюме/уточнение формулировки прошлого ответа "
-        "ассистента; факты УЖЕ есть в переписке.\n"
+        "- memory_synthesis: пересказ/выводы/итог/резюме прошлого ответа без новых фактов из документов.\n"
         "- citation_expand: «где написано», «покажи цитату/абзац», «откуда взял» — нужен источник "
         "из документов, уже связанных с прошлым ответом.\n"
-        "- scoped_deep_read: deictic/указатель («эта сумма», «пункт 3», «там», «этот риск») — "
-        "нужна деталь из документов прошлого ответа, не пересказ.\n"
+        "- scoped_deep_read: «подробнее», «детальнее», «разверни» про документ/тему из прошлого ответа; "
+        "deictic/указатель («эта сумма», «пункт 3», «там») — нужны дополнительные фрагменты документа, "
+        "не пересказ чата.\n"
         "- none: новая тема, другой документ/период, сравнение с материалами которых не было в чате, "
         "или нужен полный поиск по делу.\n\n"
         "needs_document_retrieval:\n"
@@ -159,8 +159,10 @@ def _build_judge_prompt(
         "Правила:\n"
         "1) Если ответ уже в последнем ответе ассистента — не отправляй в полный RAG.\n"
         "2) «Ключевые выводы / итог / кратко» после substantive ответа → memory_synthesis.\n"
-        "3) При сомнении и отсутствии фактов в чате → none + needs_document_retrieval=true.\n"
-        "4) Не выдумывай факты — опирайся только на транскрипт и блок prior answer.\n"
+        "3) «Подробнее / детальнее / разверни» про документ или тему из прошлого ответа → "
+        "scoped_deep_read + needs_document_retrieval=true.\n"
+        "4) При сомнении и отсутствии фактов в чате → none + needs_document_retrieval=true.\n"
+        "5) Не выдумывай факты — опирайся только на транскрипт и блок prior answer.\n"
         f"{repeat_hint}\n"
         f"Сводка сессии:\n{summary or '[нет]'}\n\n"
         f"Файлы из прошлых цитат:\n{files or '[нет]'}\n\n"
@@ -264,6 +266,10 @@ def classify_referential_kind_judge(
     if not has_prior:
         return regex_result
 
+    # Structural classifier matched — deterministic routing wins (no LLM override).
+    if regex_result.referential_kind != "none":
+        return regex_result
+
     prompt = _build_judge_prompt(
         question=q,
         turns=turns,
@@ -288,6 +294,21 @@ def classify_referential_kind_judge(
     standalone = re.sub(r"\s+", " ", (decision.standalone_query or "").strip())
 
     min_conf = _judge_min_confidence()
+
+    # Drill-down: structural classifier treats deictic «подробнее» as scoped_deep_read;
+    # LLM must not collapse that into memory_synthesis (chat has summary, not full doc).
+    if (
+        llm_kind == "memory_synthesis"
+        and regex_result.referential_kind in {"scoped_deep_read", "citation_expand"}
+    ):
+        return ReferentialJudgeResult(
+            referential_kind=regex_result.referential_kind,
+            needs_document_retrieval=True,
+            confidence=max(regex_result.confidence, llm_conf),
+            reason=f"regex_drill_down_overrides_memory;{llm_reason[:200]}",
+            resolver="regex_safety",
+            standalone_query=standalone or regex_result.standalone_query,
+        )
 
     # High-confidence LLM wins — including long-form memory_synthesis questions regex misses.
     if llm_conf >= min_conf:

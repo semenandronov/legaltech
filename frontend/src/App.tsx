@@ -4,10 +4,8 @@ import { Box, CircularProgress } from '@mui/material'
 import ProtectedRoute from './components/ProtectedRoute'
 import { InternalDevToolsRoute } from './components/InternalDevToolsRoute'
 import { FeatureRoute } from './components/FeatureRoute'
-import { useAuth } from './contexts/AuthContext'
-import { buildCaseNavItems } from './lib/caseNavItems'
+import { buildMainNavItems } from './lib/mainNavItems'
 import LoginPage from './pages/LoginPage'
-import RegisterPage from './pages/RegisterPage'
 import UnifiedSidebar from './components/Layout/UnifiedSidebar'
 const AssistantChatPage = lazy(() => import('./pages/AssistantChatPage'))
 
@@ -47,7 +45,7 @@ function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
-      <Route path="/register" element={<RegisterPage />} />
+      <Route path="/register" element={<Navigate to="/login" replace />} />
       <Route
         path="/"
         element={
@@ -70,9 +68,11 @@ function App() {
         path="/assistant"
         element={
           <ProtectedRoute>
-            <Suspense fallback={<PageLoader />}>
-              <GlobalAssistantPage />
-            </Suspense>
+            <FeatureRoute feature="globalAssistant" redirectTo="/cases">
+              <Suspense fallback={<PageLoader />}>
+                <GlobalAssistantPage />
+              </Suspense>
+            </FeatureRoute>
           </ProtectedRoute>
         }
       />
@@ -268,13 +268,7 @@ const ChunkLabRouteGate = () => {
 }
 
 const CaseChatPage = () => {
-  const { caseId } = useParams<{ caseId: string }>()
-  const { user } = useAuth()
-
-  const navItems = useMemo(
-    () => (caseId ? buildCaseNavItems(caseId, user?.email) : []),
-    [caseId, user?.email],
-  )
+  const navItems = useMemo(() => buildMainNavItems(), [])
 
   return (
     <Suspense fallback={<PageLoader />}>

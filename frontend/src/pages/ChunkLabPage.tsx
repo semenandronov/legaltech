@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
-import { FolderOpen, MessageSquare, Clock, Scissors, Upload, RefreshCw } from 'lucide-react'
+import { Upload, RefreshCw } from 'lucide-react'
 import api, { getApiUrl } from '../services/api'
 import { TabularDocumentViewer } from '../components/TabularReview/TabularDocumentViewer'
 import { buildChunkLabViewerCellData } from '../utils/chunkLabViewerCellData'
+import { buildMainNavItems } from '../lib/mainNavItems'
 
 type CitationPayload = {
   citation_id?: string
@@ -53,15 +54,7 @@ const ChunkLabPage = () => {
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const navItems = useMemo(
-    () => [
-      { id: 'cases', label: 'Дела', icon: FolderOpen, path: '/cases' },
-      { id: 'chat', label: 'Ассистент', icon: MessageSquare, path: `/cases/${caseId}/chat` },
-      { id: 'chunk-lab', label: 'Чанки', icon: Scissors, path: `/cases/${caseId}/chunk-lab` },
-      { id: 'history', label: 'История', icon: Clock, path: '/history' },
-    ],
-    [caseId],
-  )
+  const navItems = useMemo(() => buildMainNavItems(), [])
 
   const loadFiles = useCallback(async () => {
     if (!caseId) return

@@ -199,6 +199,11 @@ class ChatRequest:
     # Session Context Service (case + global): prompt + meta for LangGraph state
     session_context_prompt: Optional[str] = None
     session_context_meta: Optional[Dict[str, Any]] = None
+    # Structured data router (HTTP prep → graph)
+    structured_data_plane: Optional[str] = None
+    statement_scope_file_ids: Optional[List[str]] = None
+    hybrid_rag_file_ids: Optional[List[str]] = None
+    structured_data_router_meta: Optional[Dict[str, Any]] = None
     # Явное действие UI: одобрить / отклонить план без двусмысленного текста в чате
     draft_action: Optional[str] = None
 
@@ -474,6 +479,7 @@ class ChatOrchestrator:
             draft_document_created: Optional[dict] = None
             citations_data = []
             answer_blocks_data: list = []
+            turn_state_data: Optional[dict] = None
             route_started_at = time.monotonic()
             route_finished_at = route_started_at
             save_latency_ms = 0
@@ -500,6 +506,9 @@ class ChatOrchestrator:
                         extracted_ab = self._extract_answer_blocks_from_event(event)
                         if extracted_ab:
                             answer_blocks_data = extracted_ab
+                        extracted_ts = self._extract_turn_state_from_event(event)
+                        if extracted_ts:
+                            turn_state_data = extracted_ts
                     route_finished_at = time.monotonic()
                     if route_span:
                         route_span.update(
@@ -597,10 +606,21 @@ class ChatOrchestrator:
                                 }
                             elif citations_data:
                                 refs_save = citations_data
+                            from app.services.chat.assistant_persist_payload import (
+                                build_case_assistant_evidence,
+                            )
+
+                            evidence_save = build_case_assistant_evidence(
+                                citations=citations_data or [],
+                                turn_state=turn_state_data,
+                            )
+                            if answer_blocks_data:
+                                evidence_save["answer_blocks"] = answer_blocks_data
                             self.history_service.update_assistant_message(
                                 message_id=assistant_placeholder.id,
                                 content=full_response,
                                 source_references=refs_save,
+                                evidence=evidence_save,
                             )
                             orch_save_out["content_chars"] = len(full_response)
                             orch_save_out["citations_count"] = len(citations_data or [])
@@ -905,6 +925,10 @@ class ChatOrchestrator:
                 scoped_doc_type=request.scoped_doc_type,
                 session_context_prompt=request.session_context_prompt,
                 session_context_meta=request.session_context_meta,
+                structured_data_plane=request.structured_data_plane,
+                statement_scope_file_ids=request.statement_scope_file_ids,
+                hybrid_rag_file_ids=request.hybrid_rag_file_ids,
+                structured_data_router_meta=request.structured_data_router_meta,
             ):
                 yield event
             return
@@ -1459,6 +1483,21 @@ class ChatOrchestrator:
         except Exception:
             pass
         return []
+
+    def _extract_turn_state_from_event(self, event: str) -> Optional[dict]:
+        """Извлечь turn_state из SSE для persistence follow-up turns."""
+        import json
+
+        if "turn_state" not in event:
+            return None
+
+        try:
+            data = json.loads(event.replace("data: ", "").strip())
+            if data.get("type") == "turn_state" and isinstance(data.get("turn_state"), dict):
+                return data["turn_state"]
+        except Exception:
+            pass
+        return None
     
     @observe_span("case_chat_verify_case_access_internal")
     def _verify_case_access(self, case_id: str, user: User) -> Optional[Case]:

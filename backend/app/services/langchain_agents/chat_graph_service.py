@@ -167,6 +167,31 @@ def _reasoning_delta_from_chunk(msg_chunk) -> str:
         return ""
 
 
+def _merge_stream_turn_persist_ctx(
+    ctx: Dict[str, Any],
+    node_data: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Accumulate graph fields needed to rebuild outbound turn_state at save time."""
+    outbound: Optional[Dict[str, Any]] = None
+    for key in (
+        "structured_data_plane",
+        "statement_scope_file_ids",
+        "hybrid_rag_file_ids",
+        "scoped_file_ids",
+        "statement_sql_meta",
+    ):
+        val = node_data.get(key)
+        if val is not None:
+            ctx[key] = val
+    if node_data.get("citations"):
+        ctx["citations"] = node_data["citations"]
+    ots = node_data.get("outbound_turn_state")
+    if isinstance(ots, dict) and str(ots.get("domain") or "").strip().lower() not in {"", "none"}:
+        ctx["outbound_turn_state"] = ots
+        outbound = ots
+    return outbound
+
+
 class ChatGraphService:
     """
     Сервис для работы с ChatGraph.
@@ -536,9 +561,25 @@ class ChatGraphService:
         session_id: str,
         citations: List[Dict] = None,
         answer_blocks: List[Dict] = None,
+        turn_state: Optional[Dict[str, Any]] = None,
+        persist_ctx: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Сохранить ответ ассистента в БД."""
+        from app.services.chat.assistant_persist_payload import build_case_assistant_evidence
+        from app.services.chat.outbound_turn_state import build_outbound_turn_state
+
         message_id = str(uuid.uuid4())
+        resolved_turn_state = turn_state
+        if not resolved_turn_state and isinstance(persist_ctx, dict):
+            resolved_turn_state = build_outbound_turn_state(persist_ctx)
+
+        evidence = build_case_assistant_evidence(
+            citations=list(citations or []),
+            turn_state=resolved_turn_state if isinstance(resolved_turn_state, dict) else None,
+        )
+        if answer_blocks:
+            evidence["answer_blocks"] = answer_blocks
+
         try:
             refs_payload = None
             if answer_blocks:
@@ -551,6 +592,7 @@ class ChatGraphService:
                 role="assistant",
                 content=content,
                 source_references=json.dumps(refs_payload, ensure_ascii=False) if refs_payload else None,
+                evidence=evidence,
                 session_id=session_id
             )
             self.db.add(assistant_message)
@@ -636,9 +678,13 @@ class ChatGraphService:
         retrieval_task: Optional[Dict[str, Any]] = None,
         scoped_file_ids: Optional[List[str]] = None,
         scoped_doc_type: Optional[str] = None,
-        session_context_prompt: Optional[str] = None,
-        session_context_meta: Optional[Dict[str, Any]] = None,
-    ) -> AsyncGenerator[str, None]:
+    session_context_prompt: Optional[str] = None,
+    session_context_meta: Optional[Dict[str, Any]] = None,
+    structured_data_plane: Optional[str] = None,
+    statement_scope_file_ids: Optional[List[str]] = None,
+    hybrid_rag_file_ids: Optional[List[str]] = None,
+    structured_data_router_meta: Optional[Dict[str, Any]] = None,
+) -> AsyncGenerator[str, None]:
         """
         Streaming ответ через ChatGraph.
         
@@ -888,6 +934,19 @@ class ChatGraphService:
                     current_state["session_context_prompt"] = session_context_prompt
                 if session_context_meta:
                     current_state["session_context_meta"] = session_context_meta
+                if structured_data_plane is not None:
+                    current_state["structured_data_plane"] = structured_data_plane
+                if statement_scope_file_ids is not None:
+                    current_state["statement_scope_file_ids"] = statement_scope_file_ids
+                if hybrid_rag_file_ids is not None:
+                    current_state["hybrid_rag_file_ids"] = hybrid_rag_file_ids
+                if structured_data_router_meta is not None:
+                    current_state["structured_data_router_meta"] = structured_data_router_meta
+                current_state["transaction_agent_resolved"] = None
+                current_state["hybrid_agent_resolved"] = None
+                current_state["outbound_turn_state"] = None
+                current_state["statement_sql_meta"] = None
+                current_state["response"] = None
                 self._apply_new_turn_state(
                     current_state,
                     is_editor_chat=is_editor_chat,
@@ -938,6 +997,10 @@ class ChatGraphService:
                     court_practice=court_practice,
                     session_context_prompt=session_context_prompt,
                     session_context_meta=session_context_meta,
+                    structured_data_plane=structured_data_plane,
+                    statement_scope_file_ids=statement_scope_file_ids,
+                    hybrid_rag_file_ids=hybrid_rag_file_ids,
+                    structured_data_router_meta=structured_data_router_meta,
                 )
                 if is_editor_chat and active_turn_id:
                     self._apply_new_turn_state(
@@ -986,6 +1049,12 @@ class ChatGraphService:
                 scoped_doc_type=scoped_doc_type,
                 legal_research=legal_research,
                 court_practice=court_practice,
+                session_context_prompt=session_context_prompt,
+                session_context_meta=session_context_meta,
+                structured_data_plane=structured_data_plane,
+                statement_scope_file_ids=statement_scope_file_ids,
+                hybrid_rag_file_ids=hybrid_rag_file_ids,
+                structured_data_router_meta=structured_data_router_meta,
             )
             if is_editor_chat and active_turn_id:
                 self._apply_new_turn_state(
@@ -1042,6 +1111,14 @@ class ChatGraphService:
         answer_after_reasoning_buffer = ""
         native_reasoning_phase = False
         last_citations_json: Optional[str] = None
+        outbound_turn_state_snapshot: Optional[Dict[str, Any]] = None
+        stream_turn_persist_ctx: Dict[str, Any] = {}
+        if structured_data_plane:
+            stream_turn_persist_ctx["structured_data_plane"] = structured_data_plane
+        if statement_scope_file_ids:
+            stream_turn_persist_ctx["statement_scope_file_ids"] = list(statement_scope_file_ids)
+        if hybrid_rag_file_ids:
+            stream_turn_persist_ctx["hybrid_rag_file_ids"] = list(hybrid_rag_file_ids)
         text_streamed_live = False
         stream_reasoning_ui = bool(getattr(config, "CASE_ASSISTANT_STREAM_REASONING_UI", False))
         stream_activity_ui = bool(getattr(config, "CASE_ASSISTANT_STREAM_ACTIVITY_UI", True))
@@ -1288,20 +1365,22 @@ class ChatGraphService:
                                     answer_after_reasoning_buffer = ""
                                     native_reasoning_phase = False
 
-                                # Финальный response (generate_response, apply_edits, draft snippet).
-                                from app.services.chat.turn_contract import EDITOR_FINAL_RESPONSE_NODES
+                                # Финальный response (RAG, SQL, hybrid, clarify, quality gate).
+                                from app.services.chat.turn_contract import (
+                                    CASE_FINAL_RESPONSE_NODES,
+                                    EDITOR_FINAL_RESPONSE_NODES,
+                                )
 
+                                final_nodes = (
+                                    EDITOR_FINAL_RESPONSE_NODES
+                                    if is_editor_chat
+                                    else CASE_FINAL_RESPONSE_NODES
+                                )
                                 response = node_data.get("response")
                                 if (
                                     isinstance(response, str)
                                     and response.strip()
-                                    and (
-                                        node_name == "generate_response"
-                                        or (
-                                            is_editor_chat
-                                            and node_name in EDITOR_FINAL_RESPONSE_NODES
-                                        )
-                                    )
+                                    and node_name in final_nodes
                                 ):
                                     full_response, sync_events = _finalize_generate_response_text(
                                         resp=response,
@@ -1313,6 +1392,13 @@ class ChatGraphService:
                                         text_streamed_live = True
                                     for sse in sync_events:
                                         yield sse
+
+                                ots = _merge_stream_turn_persist_ctx(stream_turn_persist_ctx, node_data)
+                                if ots is not None:
+                                    outbound_turn_state_snapshot = ots
+                                    yield (
+                                        f"data: {json.dumps({'type': 'turn_state', 'turn_state': ots}, ensure_ascii=False, default=str)}\n\n"
+                                    )
 
                                 # Citations сразу при появлении в графе (RAG → обогащение в generate_response), чтобы UI линковал сноски с первого символа ответа.
                                 node_citations = node_data.get("citations")
@@ -1463,6 +1549,13 @@ class ChatGraphService:
                             if node_ab is not None:
                                 answer_blocks = node_ab
 
+                            ots_fb = _merge_stream_turn_persist_ctx(stream_turn_persist_ctx, node_data)
+                            if ots_fb is not None:
+                                outbound_turn_state_snapshot = ots_fb
+                                yield (
+                                    f"data: {json.dumps({'type': 'turn_state', 'turn_state': ots_fb}, ensure_ascii=False, default=str)}\n\n"
+                                )
+
                             doc_created = node_data.get("document_created")
                             if doc_created:
                                 document_created = doc_created
@@ -1577,7 +1670,13 @@ class ChatGraphService:
                     metadata={"case_id": case_id, "session_id": session_id},
                 ) as save_out:
                     self._save_assistant_message(
-                        case_id, full_response, session_id, citations, answer_blocks=answer_blocks
+                        case_id,
+                        full_response,
+                        session_id,
+                        citations,
+                        answer_blocks=answer_blocks,
+                        turn_state=outbound_turn_state_snapshot,
+                        persist_ctx=stream_turn_persist_ctx,
                     )
                     save_out["response_chars"] = len(full_response or "")
 

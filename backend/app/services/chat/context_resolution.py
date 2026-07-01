@@ -33,11 +33,11 @@ def chunk_level(doc: Document) -> str:
 
 
 def is_micro_chunk(doc: Document) -> bool:
-    return chunk_level(doc) in ("micro", "row")
+    return chunk_level(doc) == "micro"
 
 
 def is_macro_chunk(doc: Document) -> bool:
-    return chunk_level(doc) in ("macro", "preamble")
+    return chunk_level(doc) == "macro"
 
 
 def parent_macro_id(doc: Document) -> str:
@@ -64,9 +64,9 @@ def filter_rerank_pool_to_micro(docs: List[Document]) -> List[Document]:
     out: List[Document] = []
     for d in docs:
         level = chunk_level(d)
-        if level in ("micro", "row", "docling", ""):
+        if level in ("micro", "docling", ""):
             out.append(d)
-        elif level in ("macro", "preamble"):
+        elif level == "macro":
             continue
         else:
             out.append(d)

@@ -1,0 +1,49 @@
+# Production stack on Yandex VM: Postgres (pgvector) + legal-ai API.
+# Managed by scripts/vm-restart-legal-ai.sh and scripts/vm-postgres.sh
+#
+# DATABASE_URL in .env must use host "postgres" (Docker service name):
+#   postgresql://user:password@postgres:5432/legal_ai
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: legal-ai-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: legal_ai
+    volumes:
+      - legal_ai_pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-user} -d legal_ai"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - legal-ai-internal
+
+  legal-ai:
+    image: ${LEGAL_AI_IMAGE:-cr.yandex/crpllsmk62iiorpelole/legal-ai:latest}
+    container_name: legal-ai
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      # Bind mount host disk — persists across image updates; never use a named volume here.
+      - /home/andronovsemen04/legal-ai/uploads:/app/backend/uploads
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - legal-ai-internal
+
+networks:
+  legal-ai-internal:
+    name: legal-ai-internal
+
+volumes:
+  legal_ai_pgdata:

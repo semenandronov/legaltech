@@ -27,7 +27,10 @@ from app.services.chat.case_context_pipeline import (
     run_hybrid_recall,
 )
 from app.services.chat.retrieval_router import create_case_retrieval_router
-from app.services.tabular_cell_verification import CellVerificationOutcome
+from app.services.tabular_cell_verification import (
+    CellVerificationOutcome,
+    apply_evidence_first_policy,
+)
 from app.services.tabular_extraction_schemas import (
     cell_value_field_description,
     extraction_schema_for_column,
@@ -623,6 +626,229 @@ class TabularCellPipelineResult:
     verification: CellVerificationOutcome
 
 
+def tabular_cell_data_router_enabled() -> bool:
+    from app.services.tabular_cell_data_router import tabular_cell_data_router_enabled as _enabled
+
+    return _enabled()
+
+
+def format_routed_cell_context(*, sql_block: str = "", rag_block: str = "") -> str:
+    sections: List[str] = []
+    if (sql_block or "").strip():
+        sections.append("[SQL — структурированные данные выписки]\n" + sql_block.strip())
+    if (rag_block or "").strip():
+        sections.append("[RAG — фрагменты документа]\n" + rag_block.strip())
+    return "\n\n".join(sections)
+
+
+def enrich_extraction_from_routed_context(
+    extraction: TabularCellExtractionModel,
+    *,
+    data_plane: str,
+    file: File,
+    included_docs: List[Document],
+    transaction_rows: Optional[List[Any]] = None,
+) -> TabularCellExtractionModel:
+    """Merge SQL/RAG provenance after routed tabular extraction."""
+    plane = (data_plane or "rag").strip().lower()
+    extraction.extraction_method = f"tabular_routed_{plane}"
+    if not extraction.reasoning.strip():
+        extraction.reasoning = (
+            f"Извлечено через {plane.upper()} из документа '{file.filename}'."
+        )
+
+    rows = transaction_rows or []
+    if rows and not extraction.source_references:
+        refs: List[Dict[str, Any]] = []
+        for row in rows[:5]:
+            quote = (getattr(row, "description", None) or getattr(row, "operation_datetime_text", None) or "").strip()
+            amount_raw = getattr(row, "amount_raw", None)
+            if amount_raw:
+                quote = f"{amount_raw} — {quote}".strip(" —")
+            refs.append(
+                {
+                    "text": quote[:500],
+                    "page": getattr(row, "page_start", None),
+                    "section": None,
+                }
+            )
+        extraction.source_references = refs
+        first_page = getattr(rows[0], "page_start", None)
+        if not extraction.source_page and first_page:
+            extraction.source_page = first_page
+        if not extraction.verbatim_extract and refs:
+            extraction.verbatim_extract = refs[0].get("text")
+
+    extraction = enrich_source_from_documents(extraction, included_docs)
+    return extraction
+
+
+def _build_sql_routed_failure_result(
+    *,
+    file: File,
+    column: TabularColumn,
+    reason: str,
+) -> TabularCellPipelineResult:
+    extraction = TabularCellExtractionModel(
+        cell_value="N/A",
+        reasoning=f"SQL-запрос не выполнен для '{file.filename}': {reason}",
+        column_type=str(column.column_type or "text"),
+        extraction_method="tabular_routed_sql",
+    )
+    prepared = PreparedCellContext(file_chunks=[], context_text="", included_docs=[])
+    verification = CellVerificationOutcome(
+        result=extraction,
+        needs_review=True,
+        issues=["sql_fetch_failed"],
+    )
+    return TabularCellPipelineResult(
+        extraction=extraction,
+        prepared=prepared,
+        verification=verification,
+    )
+
+
+async def _run_routed_sql_flag_cell_extraction(
+    llm,
+    *,
+    rag_service,
+    db,
+    file: File,
+    column: TabularColumn,
+    normalize_fn: Callable[[Dict[str, Any], TabularColumn, File], Dict[str, Any]],
+    column_run=None,
+) -> Optional[TabularCellPipelineResult]:
+    """Routed SQL/RAG/hybrid path for files with ingested statement rows."""
+    import asyncio
+
+    from app.services.chat.file_scoped_agent_tools import scoped_files_have_transactions
+    from app.services.tabular_cell_data_router import route_tabular_cell_data_plane
+    from app.services.tabular_cell_sql_fetch import fetch_tabular_cell_sql_context
+
+    if not tabular_cell_data_router_enabled():
+        return None
+    if not scoped_files_have_transactions(db, str(file.case_id), [str(file.id)]):
+        return None
+
+    question = (column.prompt or column.column_label or "").strip()
+    if not question:
+        return None
+
+    route = await asyncio.to_thread(
+        route_tabular_cell_data_plane,
+        db,
+        case_id=str(file.case_id),
+        file_id=str(file.id),
+        column=column,
+    )
+    plane = route.data_plane
+
+    async def _fetch_sql():
+        if plane not in {"sql", "hybrid"}:
+            return None
+        return await asyncio.to_thread(
+            fetch_tabular_cell_sql_context,
+            db,
+            case_id=str(file.case_id),
+            file_id=str(file.id),
+            question=question,
+        )
+
+    async def _fetch_rag():
+        if plane not in {"rag", "hybrid"}:
+            return None
+        retrieval_params = cell_retrieval_params_from_models(file, column, column_run=column_run)
+        return await asyncio.to_thread(
+            prepare_cell_retrieval_sync,
+            rag_service,
+            params=retrieval_params,
+        )
+
+    sql_ctx, rag_prepared = await asyncio.gather(_fetch_sql(), _fetch_rag())
+
+    if plane == "sql":
+        if not sql_ctx or not sql_ctx.ok:
+            reason = (sql_ctx.reason if sql_ctx else "") or "no_sql_context"
+            return _build_sql_routed_failure_result(file=file, column=column, reason=reason)
+
+    rag_block = ""
+    included_docs: List[Document] = []
+    recall_pool: List[Document] = []
+    if rag_prepared is not None:
+        if rag_prepared.error == "No text content":
+            raise ValueError("No text content")
+        if rag_prepared.error == "No chunks available for extraction":
+            raise ValueError("No chunks available for extraction")
+        rag_block = augment_context_for_column(
+            rag_prepared.context_text,
+            column_type=str(column.column_type or "text"),
+            original_text=str(file.original_text or ""),
+        )
+        included_docs = list(rag_prepared.included_docs)
+        recall_pool = list(rag_prepared.file_chunks)
+
+    if plane == "rag" and not rag_block.strip():
+        return None
+
+    if plane == "hybrid" and not rag_block.strip() and (not sql_ctx or not sql_ctx.ok):
+        reason = (sql_ctx.reason if sql_ctx else "") or "hybrid_no_context"
+        return _build_sql_routed_failure_result(file=file, column=column, reason=reason)
+
+    sql_block = sql_ctx.context_text if sql_ctx and sql_ctx.ok else ""
+    if plane == "hybrid" and not sql_block.strip() and not rag_block.strip():
+        return _build_sql_routed_failure_result(file=file, column=column, reason="hybrid_empty")
+
+    context_text = format_routed_cell_context(sql_block=sql_block, rag_block=rag_block)
+    if not context_text.strip():
+        return None
+
+    extraction = await invoke_structured_cell_extraction(
+        llm,
+        column=column,
+        context_text=context_text,
+        normalize_fn=normalize_fn,
+        file=file,
+    )
+    transaction_rows = list(sql_ctx.rows) if sql_ctx and sql_ctx.ok else []
+    extraction = enrich_extraction_from_routed_context(
+        extraction,
+        data_plane=plane,
+        file=file,
+        included_docs=included_docs,
+        transaction_rows=transaction_rows,
+    )
+
+    prepared = PreparedCellContext(
+        file_chunks=recall_pool or included_docs,
+        context_text=context_text,
+        included_docs=included_docs,
+    )
+
+    verification = apply_evidence_first_policy(
+        extraction,
+        column=column,
+        file=file,
+        included_docs=included_docs,
+    )
+    if plane == "hybrid" and sql_ctx and not sql_ctx.ok:
+        verification.needs_review = True
+        verification.issues.append("sql_partial_in_hybrid")
+
+    logger.info(
+        "[TabularRoutedCell] file=%s column=%s plane=%s sql_ok=%s rag_docs=%s",
+        file.id,
+        column.id,
+        plane,
+        bool(sql_ctx and sql_ctx.ok),
+        len(included_docs),
+    )
+    return TabularCellPipelineResult(
+        extraction=verification.result,
+        prepared=prepared,
+        verification=verification,
+    )
+
+
 async def run_tabular_cell_extraction(
     llm,
     *,
@@ -631,12 +857,24 @@ async def run_tabular_cell_extraction(
     column: TabularColumn,
     normalize_fn: Callable[[Dict[str, Any], TabularColumn, File], Dict[str, Any]],
     column_run=None,
+    db=None,
 ) -> TabularCellPipelineResult:
     """
-    One cell = internal case-assistant RAG (single file) + typed structured extract.
-
-    Column type is enforced via extraction schema + strict_normalize only.
+    One cell = routed SQL/RAG/hybrid (SQL-flagged files) or case-assistant RAG + typed extract.
     """
+    if db is not None:
+        routed_result = await _run_routed_sql_flag_cell_extraction(
+            llm,
+            rag_service=rag_service,
+            db=db,
+            file=file,
+            column=column,
+            normalize_fn=normalize_fn,
+            column_run=column_run,
+        )
+        if routed_result is not None:
+            return routed_result
+
     import asyncio
 
     retrieval_params = cell_retrieval_params_from_models(file, column, column_run=column_run)
@@ -666,8 +904,6 @@ async def run_tabular_cell_extraction(
         file=file,
     )
     extraction = enrich_source_from_documents(extraction, prepared.included_docs)
-    from app.services.tabular_cell_verification import apply_evidence_first_policy
-
     verification = apply_evidence_first_policy(
         extraction,
         column=column,

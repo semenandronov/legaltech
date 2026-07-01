@@ -9,7 +9,7 @@ export interface CaseNavItem {
   path: string
 }
 
-/** Боковое меню внутри дела (чат, редактор, playbooks, chunk-lab). */
+/** @deprecated Боковое меню внутри дела использует buildMainNavItems(). Оставлено для внутренних маршрутов. */
 export function buildCaseNavItems(caseId: string, userEmail?: string | null): CaseNavItem[] {
   const items: CaseNavItem[] = [
     {

@@ -24,8 +24,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
-import { buildCaseNavItems } from '@/lib/caseNavItems'
-import { useAuth } from '@/contexts/AuthContext'
+import { buildMainNavItems } from '@/lib/mainNavItems'
 import * as playbooksApi from '../services/playbooksApi'
 import type { Playbook, PlaybookRule, PlaybookCheck } from '../services/playbooksApi'
 
@@ -718,7 +717,6 @@ function PlaybookCard({
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function PlaybooksPage({ embedded = false }: { embedded?: boolean } = {}) {
   const { caseId } = useParams<{ caseId: string }>()
-  const { user } = useAuth()
 
   const [playbooks, setPlaybooks] = useState<Playbook[]>([])
   const [checks, setChecks] = useState<PlaybookCheck[]>([])
@@ -728,10 +726,7 @@ export default function PlaybooksPage({ embedded = false }: { embedded?: boolean
   const [editingPlaybook, setEditingPlaybook] = useState<Partial<Playbook> | null>(null)
   const [isNewPlaybook, setIsNewPlaybook] = useState(false)
 
-  const navItems = useMemo(
-    () => (caseId ? buildCaseNavItems(caseId, user?.email) : []),
-    [caseId, user?.email],
-  )
+  const navItems = useMemo(() => buildMainNavItems(), [])
 
   useEffect(() => {
     if (!caseId) return

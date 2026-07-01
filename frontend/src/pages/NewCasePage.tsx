@@ -1,11 +1,13 @@
 import { useState, useRef, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FolderOpen, MessageSquare, Upload, Loader, Clock } from 'lucide-react'
+import { Upload, Loader } from 'lucide-react'
 import { createCase } from '../services/api'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import { GoogleDriveImportButton } from '../components/Documents/GoogleDriveImportButton'
 import { CaseFileStagingList } from '../components/Documents/CaseFileStagingList'
 import { NewCasePageHeader } from '../components/Cases/NewCasePageHeader'
+import { buildMainNavItems } from '../lib/mainNavItems'
+import { startCaseStagedUpload } from '../lib/caseStagedUploadCoordinator'
 import {
   type StagedCaseFile,
   type StagedDriveFile,
@@ -14,17 +16,10 @@ import {
   dedupeStagedLocal,
   drivePicksToStaged,
 } from '../lib/caseFileStaging'
-import type { CaseOverviewLocationState } from '../lib/casePostCreateUpload'
 import { cn } from '@/lib/utils'
 
 const MAX_FILE_SIZE_MB = 30
 const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
-
-const mainNavItems = [
-  { id: 'cases', label: 'Дела', icon: FolderOpen, path: '/cases' },
-  { id: 'assistant', label: 'Ассистент', icon: MessageSquare, path: '/assistant' },
-  { id: 'history', label: 'История', icon: Clock, path: '/history' },
-]
 
 const NewCasePage = () => {
   const navigate = useNavigate()
@@ -118,11 +113,11 @@ const NewCasePage = () => {
       const caseResponse = await createCase({ title: title.trim(), description: '' })
       const caseId = caseResponse.id
 
-      const navState: CaseOverviewLocationState | undefined = hasFiles
-        ? { postCreateUpload: { locals: localsToUpload, drives: drivesToUpload } }
-        : undefined
+      if (hasFiles) {
+        startCaseStagedUpload(caseId, { locals: localsToUpload, drives: drivesToUpload })
+      }
 
-      navigate(`/cases/${caseId}`, { replace: true, state: navState })
+      navigate(`/cases/${caseId}`, { replace: true })
     } catch (err: unknown) {
       const ax = err as { response?: { data?: { detail?: string } }; message?: string }
       setError(
@@ -134,7 +129,7 @@ const NewCasePage = () => {
 
   return (
     <div className="ws-shell ws-tabular-shell flex h-screen overflow-hidden">
-      <UnifiedSidebar navItems={mainNavItems} title="Legal AI" showBackButton={false} variant="tabular" />
+      <UnifiedSidebar navItems={buildMainNavItems()} title="Legal AI" showBackButton={false} variant="tabular" />
 
       <main className="ws-tabular-page flex min-h-0 flex-1 flex-col overflow-hidden">
         <NewCasePageHeader onNavigateCases={() => navigate('/cases')} />

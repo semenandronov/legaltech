@@ -1446,6 +1446,7 @@ class TabularReviewService:
                 column=column,
                 normalize_fn=self._normalize_extraction_result,
                 column_run=column_run,
+                db=self.db,
             )
 
             logger.info(

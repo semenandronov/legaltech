@@ -588,6 +588,102 @@ class Config:
         os.getenv("STRUCTURED_TABLE_MIN_TABLE_SEGMENTS", "1") or "1"
     )
 
+    # Temporary: case chat graph + HTTP prep exactly like commit 0018729 (no SQL/hybrid router).
+  # Set true to A/B test latency vs structured-data stack.
+    CASE_ASSISTANT_LEGACY_PIPELINE_ENABLED: bool = (
+        os.getenv("CASE_ASSISTANT_LEGACY_PIPELINE_ENABLED", "false").strip().lower()
+        in ("1", "true", "yes")
+    )
+    # Per-turn planner: scope shortcuts, draft generation, rerank policy, deadlines.
+    CASE_ASSISTANT_QUERY_PLANNER_ENABLED: bool = (
+        os.getenv("CASE_ASSISTANT_QUERY_PLANNER_ENABLED", "true").strip().lower()
+        in ("1", "true", "yes")
+    )
+    CASE_ASSISTANT_DRAFT_GENERATION_MODEL: str = os.getenv(
+        "CASE_ASSISTANT_DRAFT_GENERATION_MODEL",
+        "",
+    ).strip()
+    CASE_ASSISTANT_SCOPE_ROUTER_DEADLINE_MS: int = int(
+        os.getenv("CASE_ASSISTANT_SCOPE_ROUTER_DEADLINE_MS", "2500") or "2500"
+    )
+    CASE_ASSISTANT_RERANK_DEADLINE_MS: int = int(
+        os.getenv("CASE_ASSISTANT_RERANK_DEADLINE_MS", "1200") or "1200"
+    )
+    CASE_ASSISTANT_GENERATION_TTFT_BUDGET_MS: int = int(
+        os.getenv("CASE_ASSISTANT_GENERATION_TTFT_BUDGET_MS", "3000") or "3000"
+    )
+
+    # SQL store for structured-table rows (bank statements) — chat tools list/aggregate.
+    # Revert quickly: CASE_FILE_TRANSACTIONS_ENABLED=false
+    CASE_FILE_TRANSACTIONS_ENABLED: bool = (
+        os.getenv("CASE_FILE_TRANSACTIONS_ENABLED", "true").strip().lower() == "true"
+    )
+    # Tool-calling agent for statement queries (replaces regex fast-path).
+    CASE_TRANSACTION_AGENT_ENABLED: bool = (
+        os.getenv("CASE_TRANSACTION_AGENT_ENABLED", "true").strip().lower() == "true"
+    )
+    # LLM router: SQL transaction agent vs document RAG (same model as main assistant).
+    STRUCTURED_DATA_LLM_ROUTER_ENABLED: bool = (
+        os.getenv("STRUCTURED_DATA_LLM_ROUTER_ENABLED", "true").strip().lower() == "true"
+    )
+    STRUCTURED_DATA_LLM_ROUTER_MIN_CONF: float = float(
+        os.getenv("STRUCTURED_DATA_LLM_ROUTER_MIN_CONF", "0.65") or "0.65"
+    )
+    STRUCTURED_DATA_LLM_ROUTER_MAX_TOKENS: int = int(
+        os.getenv("STRUCTURED_DATA_LLM_ROUTER_MAX_TOKENS", "512") or "512"
+    )
+    STRUCTURED_DATA_LLM_ROUTER_MAX_FILES: int = int(
+        os.getenv("STRUCTURED_DATA_LLM_ROUTER_MAX_FILES", "40") or "40"
+    )
+    # Run router in HTTP prep (before session embeddings); graph reuses result.
+    STRUCTURED_DATA_HTTP_PREP_ROUTER_ENABLED: bool = (
+        os.getenv("STRUCTURED_DATA_HTTP_PREP_ROUTER_ENABLED", "true").strip().lower() == "true"
+    )
+    # Single LLM: turn context + SQL/RAG routing (replaces judge + structured router).
+    CASE_TURN_PREP_UNIFIED_PLANNER_ENABLED: bool = (
+        os.getenv("CASE_TURN_PREP_UNIFIED_PLANNER_ENABLED", "false").strip().lower() == "true"
+    )
+    CASE_TURN_PREP_UNIFIED_PLANNER_MODEL: str = clean_env_str(
+        os.getenv("CASE_TURN_PREP_UNIFIED_PLANNER_MODEL"), ""
+    )
+    CASE_TURN_PREP_UNIFIED_PLANNER_MAX_TOKENS: int = int(
+        os.getenv("CASE_TURN_PREP_UNIFIED_PLANNER_MAX_TOKENS", "640") or "640"
+    )
+    # Statement SQL: LLM planner → deterministic executor (count/sum/list/find).
+    STATEMENT_SQL_PLANNER_ENABLED: bool = (
+        os.getenv("STATEMENT_SQL_PLANNER_ENABLED", "true").strip().lower() == "true"
+    )
+    STATEMENT_SQL_PLANNER_MIN_CONF: float = float(
+        os.getenv("STATEMENT_SQL_PLANNER_MIN_CONF", "0.65") or "0.65"
+    )
+    STATEMENT_SQL_PLANNER_MAX_TOKENS: int = int(
+        os.getenv("STATEMENT_SQL_PLANNER_MAX_TOKENS", "512") or "512"
+    )
+    # LLM формулирует ответ по структурированным фактам SQL (fallback — краткий детерминированный текст).
+    STATEMENT_SQL_SYNTHESIS_ENABLED: bool = (
+        os.getenv("STATEMENT_SQL_SYNTHESIS_ENABLED", "true").strip().lower() == "true"
+    )
+    STATEMENT_SQL_SYNTHESIS_MODEL: str = clean_env_str(
+        os.getenv("STATEMENT_SQL_SYNTHESIS_MODEL"), ""
+    )
+    STATEMENT_SQL_SYNTHESIS_MAX_TOKENS: int = int(
+        os.getenv("STATEMENT_SQL_SYNTHESIS_MAX_TOKENS", "1024") or "1024"
+    )
+    STATEMENT_SQL_SYNTHESIS_MAX_ROWS: int = int(
+        os.getenv("STATEMENT_SQL_SYNTHESIS_MAX_ROWS", "40") or "40"
+    )
+    # Shared file-scoped agent (SQL + RAG) for chat and tabular statement cells.
+    FILE_SCOPED_AGENT_ENABLED: bool = (
+        os.getenv("FILE_SCOPED_AGENT_ENABLED", "true").strip().lower() == "true"
+    )
+    TABULAR_STATEMENT_AGENT_ENABLED: bool = (
+        os.getenv("TABULAR_STATEMENT_AGENT_ENABLED", "true").strip().lower() == "true"
+    )
+    # Tabular cells on SQL-flagged files: router (rag/sql/hybrid) like case chat.
+    TABULAR_CELL_DATA_ROUTER_ENABLED: bool = (
+        os.getenv("TABULAR_CELL_DATA_ROUTER_ENABLED", "true").strip().lower() == "true"
+    )
+
     # Docling pipeline limits (используются document_converter_service и legal_chunker).
     # 2000 страниц закрывает крупные кодексы (ГК РФ ~1.2k стр., НК РФ ~1.5k стр.).
     DOCLING_MAX_PAGES_PER_DOC: int = int(
@@ -1311,6 +1407,10 @@ class Config:
     JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
     ALGORITHM: str = "HS256"  # Alias for JWT_ALGORITHM
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))  # 24 hours
+    # Public self-registration via POST /api/auth/register (off by default).
+    AUTH_PUBLIC_REGISTRATION_ENABLED: bool = (
+        os.getenv("AUTH_PUBLIC_REGISTRATION_ENABLED", "false").strip().lower() == "true"
+    )
     
     # Redis for Caching and Presence (Phase 4.1)
     REDIS_URL: Optional[str] = os.getenv("REDIS_URL", None)

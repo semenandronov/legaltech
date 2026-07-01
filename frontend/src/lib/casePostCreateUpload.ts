@@ -14,11 +14,6 @@ export type PostCreateUploadPayload = {
   drives: StagedDriveFile[]
 }
 
-/** React Router location.state после «Создать дело» на /cases/new */
-export type CaseOverviewLocationState = {
-  postCreateUpload?: PostCreateUploadPayload
-}
-
 export type UploadStagedFilesCallbacks = {
   onStep?: (message: string, progressPercent?: number) => void
 }

@@ -1,21 +1,16 @@
 import { useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { useAuth } from '@/contexts/AuthContext'
-import { buildCaseNavItems } from '@/lib/caseNavItems'
+import { buildMainNavItems } from '@/lib/mainNavItems'
 
 interface CaseNavigationProps {
   caseId: string
 }
 
-const CaseNavigation = ({ caseId }: CaseNavigationProps) => {
+const CaseNavigation = ({ caseId: _caseId }: CaseNavigationProps) => {
   const navigate = useNavigate()
   const location = useLocation()
-  const { user } = useAuth()
 
-  const navItems = useMemo(
-    () => buildCaseNavItems(caseId, user?.email),
-    [caseId, user?.email],
-  )
+  const navItems = useMemo(() => buildMainNavItems(), [])
 
   const isActive = (path: string) => {
     return location.pathname === path || location.pathname.startsWith(path + '/')

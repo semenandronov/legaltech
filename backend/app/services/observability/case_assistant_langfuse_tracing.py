@@ -2,17 +2,21 @@
 Детальная Langfuse-трассировка внутреннего ассистента по делу (case assistant).
 
 Иерархия (под активным trace запроса):
-  case_assistant.pipeline
-    ├── case_assistant.router
+  case_assistant.hybrid_recall
+    ├── case_assistant.router.data_plane      (structured_data_router: sql|rag|hybrid)
+    ├── case_assistant.document_scope_router  (CaseRouter: file_ids для RAG)
     ├── case_assistant.file_summary_scope
     ├── case_assistant.hybrid_recall
     │     ├── case_assistant.macro_micro_funnel
     │     │     ├── case_assistant.hybrid.macro | .micro | .scoped_micro | .docling
     │     │     └── (внутри hybrid_search: dense / fts / anchor / bm25 / rrf)
     ├── case_assistant.rerank
+    │     └── rerank_inference_ms в output
+    ├── case_assistant.context_resolution
     └── case_assistant.assemble_context
           └── case_assistant.fetch_originals
 
+Сводная шкала latency: case_assistant_timeline.finalize_case_assistant_timeline.
 Связанные шаги graph/stream/orchestrator — в assistant_pipeline_langfuse_tracing.
 """
 from __future__ import annotations
@@ -151,6 +155,12 @@ def case_assistant_span(
         wall_ms = int((time.monotonic() - t0) * 1000)
         if parent_token is not None:
             reset_trace_span_parent(parent_token)
+        try:
+            from app.services.observability.case_assistant_timeline import maybe_record_from_span
+
+            maybe_record_from_span(f"case_assistant.{step_name}", wall_ms, out_holder)
+        except Exception:
+            pass
         if ctx and case_assistant_detailed_tracing_enabled():
             merged_out = {**out_holder, "latency_ms": wall_ms}
             status = "error" if exc else "success"
@@ -201,9 +211,9 @@ def case_assistant_pipeline_trace(
         "rerank_enabled": rerank_enabled,
     }
     with case_assistant_span(
-        "pipeline",
+        "hybrid_recall",
         input_payload={"question": (question or "")[:800]},
-        metadata=meta,
+        metadata={**meta, "pipeline_stage": "recall"},
     ) as holder:
         yield holder
 
@@ -226,14 +236,15 @@ def trace_router_result(
         name="step_completed",
         metadata=normalize_observability_metadata(
             {
-                "case_assistant_step": "router",
+                "case_assistant_step": "document_scope_router",
+                "router_role": "document_scope",
                 "scope_mode": scope_mode,
                 "scoped_files_count": len(file_ids),
                 "doc_type": doc_type,
                 "confidence": confidence,
                 "latency_ms": latency_ms,
             },
-            step_name="router",
+            step_name="document_scope_router",
             status="success",
             latency_ms=latency_ms,
         ),

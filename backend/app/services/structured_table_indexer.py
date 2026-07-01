@@ -1,25 +1,33 @@
-"""Structured table indexer — one chunk per Docling table row (contract v1)."""
+"""Structured table indexer — hybrid narrative + one chunk per table row (contract v1)."""
 
 from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, List, Optional, Sequence
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from langchain_core.documents import Document
 
 from app.config import config
 from app.services.chunk_ids import generate_chunk_id
+from app.services.document_structure_classifier import _count_table_data_rows
 from app.services.legal_chunker import (
+    LegalChunkerV2,
+    _Profile,
     _Segment,
     _apply_hidden_embedding_context,
+    _join_segments_text,
+    _normalize_docling_segments,
     _parse_markdown_pipe_table,
+    _select_profile,
 )
 
 logger = logging.getLogger(__name__)
 
 _CONTRACT_VERSION = "structured-table-v1"
 _INDEX_PROFILE = "structured_table"
+_HYBRID_FILE_PROFILE_KEY = "hybrid_file_profile"
 
 _PIPE_ROW_SPLIT_RE = re.compile(r"(?<!\\)\|")
 
@@ -47,12 +55,102 @@ def _format_row_content(columns: Sequence[str], values: Sequence[str]) -> str:
     return "\n".join(pairs)
 
 
-def _preamble_text(segment: _Segment) -> str:
-    return (segment.text or "").strip()
+def _min_transaction_rows() -> int:
+    return max(1, int(getattr(config, "STRUCTURED_TABLE_MIN_ROWS", 8) or 8))
+
+
+def is_transaction_table_segment(segment: _Segment) -> bool:
+    """
+    True when a Docling table segment should be indexed as operation rows (SQL + row RAG).
+
+    Small layout tables (header metadata, ≤7 data rows) stay in the narrative path.
+    """
+    if not segment.is_table:
+        return False
+    return _count_table_data_rows(segment.text or "") >= _min_transaction_rows()
+
+
+@dataclass(frozen=True)
+class _IndexingCursor:
+    chunk_index: int = 0
+    char_offset: int = 0
+    global_row_index: int = 0
+    table_index: int = 0
+
+
+def _stamp_hybrid_file_profile(documents: Sequence[Document]) -> List[Document]:
+    out: List[Document] = []
+    for doc in documents:
+        md = dict(doc.metadata or {})
+        md[_HYBRID_FILE_PROFILE_KEY] = _INDEX_PROFILE
+        out.append(Document(page_content=doc.page_content, metadata=md))
+    return out
+
+
+def _renumber_documents(
+    documents: Sequence[Document],
+    *,
+    doc_id: str,
+    cursor: _IndexingCursor,
+) -> Tuple[List[Document], _IndexingCursor]:
+    """Assign sequential chunk_index / char offsets across hybrid narrative + row chunks."""
+    out: List[Document] = []
+    chunk_index = cursor.chunk_index
+    char_offset = cursor.char_offset
+
+    for doc in documents:
+        text = doc.page_content or ""
+        if not text:
+            continue
+        char_start = char_offset
+        char_end = char_start + len(text)
+        md = dict(doc.metadata or {})
+        md["chunk_index"] = chunk_index
+        md["char_start"] = int(char_start)
+        md["char_end"] = int(char_end)
+        md["chunk_id"] = generate_chunk_id(str(doc_id), chunk_index, int(char_start))
+        out.append(Document(page_content=text, metadata=md))
+        chunk_index += 1
+        char_offset = char_end
+
+    return out, _IndexingCursor(
+        chunk_index=chunk_index,
+        char_offset=char_offset,
+        global_row_index=cursor.global_row_index,
+        table_index=cursor.table_index,
+    )
+
+
+def _chunk_narrative_segments(
+    segments: Sequence[_Segment],
+    *,
+    profile: _Profile,
+    preseg_strategy: str,
+    base_metadata: Dict[str, Any],
+    filename: str,
+) -> List[Document]:
+    """Macro/micro chunking for non-transaction blocks (document header, footnotes, small tables)."""
+    if not segments:
+        return []
+
+    normalized = _normalize_docling_segments(list(segments), profile)
+    if not normalized:
+        return []
+
+    batch_text = _join_segments_text(normalized)
+    docs = LegalChunkerV2().chunk_from_segments(
+        segments=normalized,
+        full_text=batch_text,
+        preseg_strategy=preseg_strategy,
+        profile=profile,
+        base_metadata=base_metadata,
+        filename=filename,
+    )
+    return _stamp_hybrid_file_profile(docs)
 
 
 class StructuredTableIndexer:
-    """Build vector chunks from Docling AST for tabular-dominant documents."""
+    """Hybrid indexer: narrative blocks via LegalChunkerV2, transaction tables one row per chunk."""
 
     contract_version = _CONTRACT_VERSION
 
@@ -64,66 +162,75 @@ class StructuredTableIndexer:
         base_metadata: Dict[str, Any],
         preseg_strategy: str,
         filename: str,
+        profile: Optional[_Profile] = None,
+        doc_type: Optional[str] = None,
     ) -> List[Document]:
         if not segments:
             raise ValueError(f"StructuredTableIndexer: empty segments for {filename}")
 
         md_base = dict(base_metadata or {})
         doc_id = str(md_base.get("doc_id") or md_base.get("file_id") or filename)
+        case_id = str(md_base.get("case_id") or "")
+        chunk_profile = profile or _select_profile(
+            case_id=case_id or None,
+            doc_type=doc_type,
+        )
 
         documents: List[Document] = []
-        chunk_index = 0
-        char_offset = 0
-        global_row_index = 0
-        table_index = 0
+        cursor = _IndexingCursor()
+        narrative_batch: List[_Segment] = []
+
+        def flush_narrative() -> None:
+            nonlocal cursor, narrative_batch
+            if not narrative_batch:
+                return
+            narrative_docs = _chunk_narrative_segments(
+                narrative_batch,
+                profile=chunk_profile,
+                preseg_strategy=preseg_strategy,
+                base_metadata=md_base,
+                filename=filename,
+            )
+            renumbered, cursor = _renumber_documents(
+                narrative_docs,
+                doc_id=doc_id,
+                cursor=cursor,
+            )
+            documents.extend(renumbered)
+            narrative_batch = []
 
         for seg in segments:
-            if seg.is_table:
+            if is_transaction_table_segment(seg):
+                flush_narrative()
                 row_docs = self._index_table_segment(
                     seg=seg,
-                    table_index=table_index,
-                    global_row_index_start=global_row_index,
-                    chunk_index_start=chunk_index,
-                    char_offset_start=char_offset,
+                    table_index=cursor.table_index,
+                    global_row_index_start=cursor.global_row_index,
                     base_metadata=md_base,
                     preseg_strategy=preseg_strategy,
                     filename=filename,
                     doc_id=doc_id,
                 )
-                global_row_index += len(row_docs)
-                chunk_index += len(row_docs)
-                if row_docs:
-                    last = row_docs[-1]
-                    char_offset = int(last.metadata.get("char_end") or char_offset)
-                table_index += 1
-                documents.extend(row_docs)
+                row_docs = _stamp_hybrid_file_profile(row_docs)
+                renumbered, cursor = _renumber_documents(
+                    row_docs,
+                    doc_id=doc_id,
+                    cursor=cursor,
+                )
+                documents.extend(renumbered)
+                cursor = _IndexingCursor(
+                    chunk_index=cursor.chunk_index,
+                    char_offset=cursor.char_offset,
+                    global_row_index=cursor.global_row_index + len(row_docs),
+                    table_index=cursor.table_index + 1,
+                )
                 continue
 
-            text = _preamble_text(seg)
-            if not text:
-                continue
+            text = (seg.text or "").strip()
+            if text:
+                narrative_batch.append(seg)
 
-            chunk_text = text + "\n"
-            char_start = char_offset
-            char_end = char_start + len(chunk_text)
-            char_offset = char_end
-
-            metadata = self._build_metadata(
-                base_metadata=md_base,
-                preseg_strategy=preseg_strategy,
-                filename=filename,
-                doc_id=doc_id,
-                chunk_index=chunk_index,
-                chunk_level="preamble",
-                char_start=char_start,
-                char_end=char_end,
-                section_title=seg.section_title,
-                page_no=seg.page_no,
-                prov_items=seg.prov_items,
-                page_bbox=seg.page_bbox,
-            )
-            documents.append(Document(page_content=chunk_text, metadata=metadata))
-            chunk_index += 1
+        flush_narrative()
 
         if not documents:
             raise ValueError(f"StructuredTableIndexer: produced no chunks for {filename}")
@@ -133,13 +240,17 @@ class StructuredTableIndexer:
             enabled=bool(getattr(config, "LEGAL_CHUNK_EMBED_PREFIX_ENABLED", True)),
         )
 
+        macro_n = sum(1 for d in documents if d.metadata.get("chunk_level") == "macro")
+        micro_n = sum(1 for d in documents if d.metadata.get("chunk_level") == "micro")
+        row_n = sum(1 for d in documents if d.metadata.get("chunk_level") == "row")
         logger.info(
-            "[StructuredTableIndexer] %s: %s chunks (preamble=%s, rows=%s, tables=%s)",
+            "[StructuredTableIndexer] %s: %s chunks (macro=%s micro=%s rows=%s tables=%s)",
             filename,
             len(documents),
-            sum(1 for d in documents if d.metadata.get("chunk_level") == "preamble"),
-            sum(1 for d in documents if d.metadata.get("chunk_level") == "row"),
-            table_index,
+            macro_n,
+            micro_n,
+            row_n,
+            cursor.table_index,
         )
         return documents
 
@@ -149,8 +260,6 @@ class StructuredTableIndexer:
         seg: _Segment,
         table_index: int,
         global_row_index_start: int,
-        chunk_index_start: int,
-        char_offset_start: int,
         base_metadata: Dict[str, Any],
         preseg_strategy: str,
         filename: str,
@@ -167,8 +276,6 @@ class StructuredTableIndexer:
         header_line, _sep, data_lines = parsed
         columns = _parse_header_columns(header_line)
         documents: List[Document] = []
-        char_offset = char_offset_start
-        chunk_index = chunk_index_start
 
         for row_index, line in enumerate(data_lines):
             values = _split_pipe_row(line)
@@ -185,19 +292,11 @@ class StructuredTableIndexer:
                 continue
 
             chunk_text = body + "\n"
-            char_start = char_offset
-            char_end = char_start + len(chunk_text)
-            char_offset = char_end
-
-            metadata = self._build_metadata(
+            metadata = self._build_row_metadata(
                 base_metadata=base_metadata,
                 preseg_strategy=preseg_strategy,
                 filename=filename,
                 doc_id=doc_id,
-                chunk_index=chunk_index,
-                chunk_level="row",
-                char_start=char_start,
-                char_end=char_end,
                 section_title=seg.section_title,
                 page_no=seg.page_no,
                 prov_items=seg.prov_items,
@@ -208,42 +307,33 @@ class StructuredTableIndexer:
                 row_columns=row_columns,
             )
             documents.append(Document(page_content=chunk_text, metadata=metadata))
-            chunk_index += 1
 
         return documents
 
     @staticmethod
-    def _build_metadata(
+    def _build_row_metadata(
         *,
         base_metadata: Dict[str, Any],
         preseg_strategy: str,
         filename: str,
         doc_id: str,
-        chunk_index: int,
-        chunk_level: str,
-        char_start: int,
-        char_end: int,
         section_title: str,
         page_no: Optional[int],
         prov_items: Optional[List[Dict[str, Any]]],
         page_bbox: Optional[Dict[str, float]],
-        table_index: Optional[int] = None,
-        row_index: Optional[int] = None,
-        global_row_index: Optional[int] = None,
-        row_columns: Optional[Dict[str, str]] = None,
+        table_index: int,
+        row_index: int,
+        global_row_index: int,
+        row_columns: Dict[str, str],
     ) -> Dict[str, Any]:
         md: Dict[str, Any] = dict(base_metadata)
         md["source_file"] = filename
         md["doc_id"] = doc_id
-        md["chunk_index"] = int(chunk_index)
-        md["chunk_id"] = generate_chunk_id(str(doc_id), int(chunk_index), int(char_start))
-        md["chunk_level"] = chunk_level
+        md["chunk_level"] = "row"
         md["chunk_profile"] = _INDEX_PROFILE
         md["index_profile"] = _INDEX_PROFILE
         md["chunking_contract_version"] = _CONTRACT_VERSION
         md["preseg_strategy"] = preseg_strategy
-        md["char_start"] = int(char_start)
-        md["char_end"] = int(char_end)
         md["section_title"] = section_title or ""
         md["section_number"] = ""
         md["parent_path"] = []
@@ -252,20 +342,15 @@ class StructuredTableIndexer:
         md["macro_id"] = ""
         md["parent_macro_id"] = ""
         md["is_table_fragment"] = False
+        md["is_table_row"] = True
+        md["table_index"] = int(table_index)
+        md["row_index"] = int(row_index)
+        md["global_row_index"] = int(global_row_index)
+        md["row_columns"] = row_columns
 
         if page_no is not None:
             md["page_start"] = int(page_no)
             md["page_end"] = int(page_no)
-
-        if chunk_level == "row":
-            md["is_table_row"] = True
-            md["table_index"] = int(table_index if table_index is not None else 0)
-            md["row_index"] = int(row_index if row_index is not None else 0)
-            md["global_row_index"] = int(
-                global_row_index if global_row_index is not None else 0
-            )
-            if row_columns:
-                md["row_columns"] = row_columns
 
         if prov_items:
             dl_meta: Dict[str, Any] = {"doc_items": [{"prov": prov_items}]}
@@ -278,5 +363,7 @@ class StructuredTableIndexer:
 
 def is_structured_table_document(documents: Sequence[Document]) -> bool:
     return any(
-        (d.metadata or {}).get("index_profile") == _INDEX_PROFILE for d in documents
+        (d.metadata or {}).get("index_profile") == _INDEX_PROFILE
+        or (d.metadata or {}).get(_HYBRID_FILE_PROFILE_KEY) == _INDEX_PROFILE
+        for d in documents
     )

@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Production deploy to Yandex VM (legal-ai).
 #
-# Default (recommended): build linux/amd64 on Mac → push to CR → sync .env → restart.
+# Recommended: push to main → GitHub Actions (.github/workflows/deploy-prod.yml)
+#   builds image, pushes to Yandex CR, rolls out on VM (uploads/ on disk untouched).
+#
+# Manual fallback — build linux/amd64 on Mac → push to CR → sync .env → restart:
 #   ./scripts/deploy-prod.sh
 #
 # Fallback (slow first time, good if Mac push is unreliable): build on VM.
@@ -39,7 +42,7 @@ for arg in "$@"; do
   esac
 done
 
-export YC_VM_ID="${YC_VM_ID:-fv4qdpndf1f3c70ugkd3}"
+export YC_VM_ID="${YC_VM_ID:-fv4jkhc0aojn5r870h3h}"
 deploy_resolve_vm_public_url
 export VM_PUBLIC_URL
 

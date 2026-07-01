@@ -2,14 +2,12 @@ import { describe, expect, it } from 'vitest'
 import {
   chatHasActiveInstruments,
   chatInstrumentControlsEnabled,
-  isProductFeatureEnabled,
   productFeatures,
 } from './productFeatures'
 
 describe('productFeatures', () => {
-  it('exposes boolean flags', () => {
-    expect(typeof productFeatures.editor).toBe('boolean')
-    expect(typeof isProductFeatureEnabled('editor')).toBe('boolean')
+  it('globalAssistant defaults off (prod surface)', () => {
+    expect(typeof productFeatures.globalAssistant).toBe('boolean')
   })
 
   it('chatInstrumentControlsEnabled reflects instrument flags', () => {

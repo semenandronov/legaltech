@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
-import { FolderOpen } from "lucide-react"
 import UnifiedSidebar from "../components/Layout/UnifiedSidebar"
 import { TabularReviewTable } from "../components/TabularReview/TabularReviewTable"
 import { TabularReviewToolbar } from "../components/TabularReview/TabularReviewToolbar"
@@ -26,8 +25,7 @@ import {
 import { buildTabularViewerCellData, type TabularCellClickPayload } from "../utils/tabularCellViewerData"
 import { useTabularReviewWebSocket } from "../hooks/useTabularReviewWebSocket"
 import { getCase, getDocuments } from "../services/api"
-import { buildCaseNavItems } from "@/lib/caseNavItems"
-import { useAuth } from "@/contexts/AuthContext"
+import { buildMainNavItems } from "@/lib/mainNavItems"
 import { Card } from "../components/UI/Card"
 import Spinner from "../components/UI/Spinner"
 import { toast } from "sonner"
@@ -35,7 +33,6 @@ import { toast } from "sonner"
 const TabularReviewPage: React.FC = () => {
   const { reviewId, caseId } = useParams<{ reviewId?: string; caseId: string }>()
   const navigate = useNavigate()
-  const { user } = useAuth()
   const [searchParams] = useSearchParams()
   const returnTo = searchParams.get("returnTo")
 
@@ -504,10 +501,7 @@ const TabularReviewPage: React.FC = () => {
     setEditingColumnId(null)
   }
 
-  const navItems = useMemo(
-    () => (caseId ? buildCaseNavItems(caseId, user?.email) : [{ id: 'cases', label: 'Дела', icon: FolderOpen, path: '/cases' }]),
-    [caseId, user?.email],
-  )
+  const navItems = useMemo(() => buildMainNavItems(), [])
 
   const columnIds = useMemo(
     () => tableData?.columns.map((col) => col.id) ?? [],

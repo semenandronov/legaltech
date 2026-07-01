@@ -1,8 +1,8 @@
 /**
  * Product surface flags (build-time via VITE_FEATURE_*).
  *
- * Defaults keep local dev fully enabled. Production VM overlays via `.env.vm-ui`
- * merged at deploy (see scripts/lib/deploy-common.sh).
+ * Defaults: chat instruments (legal corpus, court practice, draft) on; pages/sidebar off.
+ * Production VM overlays via `.env.vm-ui` merged at deploy (see scripts/lib/deploy-common.sh).
  */
 
 function parseEnvBool(value: string | undefined, defaultEnabled: boolean): boolean {
@@ -21,47 +21,29 @@ function readAgentRunsFlag(): boolean {
   return parseEnvBool(import.meta.env.VITE_AGENT_RUNS_ENABLED, false)
 }
 
-/** Страницы/сайдбар: отдельный флаг *_PAGES, иначе наследует основной. */
-function readPagesFlag(
-  pagesEnv: string | undefined,
-  primaryEnv: string | undefined,
-  defaultEnabled: boolean,
-): boolean {
-  if (pagesEnv !== undefined && pagesEnv !== '') {
-    return parseEnvBool(pagesEnv, defaultEnabled)
-  }
-  return parseEnvBool(primaryEnv, defaultEnabled)
-}
-
 export const productFeatures = {
+  /** Страница /assistant и пункт «Ассистент» в главном меню. */
+  globalAssistant: parseEnvBool(import.meta.env.VITE_FEATURE_GLOBAL_ASSISTANT, false),
   /** Тумблер «Справочник» в чате (НПА / legal corpus retrieval). */
   legalCorpus: parseEnvBool(import.meta.env.VITE_FEATURE_LEGAL_CORPUS, true),
-  /** Страница /legal-corpus и пункт в сайдбаре. */
-  legalCorpusPages: readPagesFlag(
-    import.meta.env.VITE_FEATURE_LEGAL_CORPUS_PAGES,
-    import.meta.env.VITE_FEATURE_LEGAL_CORPUS,
-    true,
-  ),
+  /** Страница /legal-corpus и пункт в сайдбаре (отдельно от тумблера в чате). */
+  legalCorpusPages: parseEnvBool(import.meta.env.VITE_FEATURE_LEGAL_CORPUS_PAGES, false),
   /** Тумблер «Суд. практика» в чате. */
   courtPractice: parseEnvBool(import.meta.env.VITE_FEATURE_COURT_PRACTICE, true),
   /** Страница /court-practice и пункт в сайдбаре. */
-  courtPracticePages: readPagesFlag(
-    import.meta.env.VITE_FEATURE_COURT_PRACTICE_PAGES,
-    import.meta.env.VITE_FEATURE_COURT_PRACTICE,
-    true,
-  ),
-  /** Админ-страница шаблонов Draft. */
-  draftTemplates: parseEnvBool(import.meta.env.VITE_FEATURE_DRAFT_TEMPLATES, true),
+  courtPracticePages: parseEnvBool(import.meta.env.VITE_FEATURE_COURT_PRACTICE_PAGES, false),
+  /** Админ-страница шаблонов Draft и пункт в сайдбаре. */
+  draftTemplates: parseEnvBool(import.meta.env.VITE_FEATURE_DRAFT_TEMPLATES, false),
   /** Режим Draft в ассистентах (внутренний и глобальный). */
   draftMode: parseEnvBool(import.meta.env.VITE_FEATURE_DRAFT_MODE, true),
   /** Редактор документов по делу. */
-  editor: parseEnvBool(import.meta.env.VITE_FEATURE_EDITOR, true),
+  editor: parseEnvBool(import.meta.env.VITE_FEATURE_EDITOR, false),
   /** Playbooks по делу. */
-  playbooks: parseEnvBool(import.meta.env.VITE_FEATURE_PLAYBOOKS, true),
+  playbooks: parseEnvBool(import.meta.env.VITE_FEATURE_PLAYBOOKS, false),
   /** Workflows / agent runs: страница, карточки, баннеры, сценарии на лендинге. */
   agentRuns: readAgentRunsFlag(),
   /** Chunk lab (внутренний dev-tool, маршрут /chunk-lab). */
-  chunkLab: parseEnvBool(import.meta.env.VITE_FEATURE_CHUNK_LAB, true),
+  chunkLab: parseEnvBool(import.meta.env.VITE_FEATURE_CHUNK_LAB, false),
 } as const
 
 export type ProductFeatureKey = keyof typeof productFeatures

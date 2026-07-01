@@ -11,12 +11,6 @@ export type PostCreatePendingRow = {
   errorDetail?: string
 }
 
-const PENDING_STORAGE_PREFIX = 'legalai:postCreatePending:'
-
-export function postCreatePendingStorageKey(caseId: string): string {
-  return `${PENDING_STORAGE_PREFIX}${caseId}`
-}
-
 export function buildPostCreatePendingRows(
   payload: PostCreateUploadPayload | undefined,
 ): PostCreatePendingRow[] {
@@ -39,32 +33,6 @@ export function buildPostCreatePendingRows(
     })
   }
   return rows
-}
-
-export function readPostCreatePendingFromSession(caseId: string): PostCreatePendingRow[] {
-  try {
-    const raw = sessionStorage.getItem(postCreatePendingStorageKey(caseId))
-    if (!raw) return []
-    const parsed = JSON.parse(raw) as PostCreatePendingRow[]
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
-}
-
-export function writePostCreatePendingToSession(
-  caseId: string,
-  rows: PostCreatePendingRow[],
-): void {
-  if (rows.length === 0) {
-    sessionStorage.removeItem(postCreatePendingStorageKey(caseId))
-    return
-  }
-  sessionStorage.setItem(postCreatePendingStorageKey(caseId), JSON.stringify(rows))
-}
-
-export function clearPostCreatePendingSession(caseId: string): void {
-  sessionStorage.removeItem(postCreatePendingStorageKey(caseId))
 }
 
 function normalizeStem(filename: string): string {

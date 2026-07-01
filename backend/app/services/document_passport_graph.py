@@ -188,12 +188,13 @@ def _generate_or_repair_node(state: PassportGraphState) -> PassportGraphState:
         '  "doc_summary_short": "2-4 предложения, 80-900 символов, нейтрально и по фактам",\n'
         '  "doc_key_points": ["ключевой тезис 1", "ключевой тезис 2"]\n'
         "}\n"
+        "doc_type определи по содержанию документа; подсказка по имени файла может быть неточной. "
         "Запрещено: markdown, пояснения, комментарии, поля вне схемы."
     )
     if attempt == 1:
         human_prompt = (
             f"Имя файла: {filename}\n"
-            f"Опорный тип документа: {hint_doc_type}\n"
+            f"Подсказка по имени файла (может быть неточной): {hint_doc_type}\n"
             "Текст документа:\n"
             f"{context}\n\n"
             "Сформируй JSON строго по схеме."
@@ -201,7 +202,7 @@ def _generate_or_repair_node(state: PassportGraphState) -> PassportGraphState:
     else:
         human_prompt = (
             f"Имя файла: {filename}\n"
-            f"Опорный тип документа: {hint_doc_type}\n"
+            f"Подсказка по имени файла (может быть неточной): {hint_doc_type}\n"
             "Текст документа:\n"
             f"{context}\n\n"
             "Прошлый ответ не прошел валидацию. Исправь JSON.\n"

@@ -1,9 +1,11 @@
-"""Background file processor: OCR → classify → index in PGVector.
+"""Background file processor: OCR → passport → index in PGVector.
 
 Each file is processed independently in a bounded thread pool (see
 ``file_processing_concurrency``). A single call to ``process_files_background``
 shares one ``DocumentProcessor`` instance across workers to avoid re-initialising
 Yandex embeddings for every file.
+
+Document type is determined during passport generation (one LLM call per file).
 """
 from __future__ import annotations
 
@@ -75,7 +77,7 @@ def process_files_background(file_ids: List[str], case_id: str) -> None:
     Per file:
       1. Load raw bytes (UPLOAD_DIR + file_path, else file_content in DB)
       2. OCR / parse via DocumentLoaderService
-      3. Classify
+      3. Generate document passport (summary, key points, doc_type) — one LLM call
       4. Update original_text in DB
       5. Split + embed + store in PGVector
       6. Mark processing_status = 'ready'
@@ -170,6 +172,44 @@ def process_files_background(file_ids: List[str], case_id: str) -> None:
         )
 
 
+def _persist_passport_classification(
+    db: Session,
+    *,
+    case_id: str,
+    file_id: str,
+    doc_type: str,
+    key_points: List[str],
+    passport_version: str,
+) -> None:
+    """Store document classification derived from the passport (single source of truth)."""
+    from app.models.analysis import DocumentClassification
+
+    existing = (
+        db.query(DocumentClassification)
+        .filter(DocumentClassification.file_id == file_id)
+        .first()
+    )
+    if existing:
+        return
+
+    topics = [str(p).strip() for p in (key_points or []) if str(p).strip()][:8]
+    db.add(
+        DocumentClassification(
+            case_id=case_id,
+            file_id=file_id,
+            doc_type=doc_type or "прочее",
+            relevance_score=0,
+            is_privileged="false",
+            privilege_type="none",
+            key_topics=topics,
+            confidence="1.0",
+            reasoning="Тип и ключевые тезисы определены при генерации паспорта документа.",
+            needs_human_review="false",
+            prompt_version=passport_version or "v3_langgraph_llm",
+        )
+    )
+
+
 def _process_one_file(
     db: Session,
     file_id: str,
@@ -177,10 +217,9 @@ def _process_one_file(
     document_processor,
 ) -> List[Document]:
     from app.services.langchain_loaders import DocumentLoaderService
-    from app.services.document_classifier_service import DocumentClassifierService
+    from app.services.document_passport_hint import infer_doc_type_hint_from_filename
     from app.services.chat.entity_index_service import merge_case_entity_index
     from app.models.case import Case, File as FileModel
-    from app.models.analysis import DocumentClassification
 
     _reconnect(db)
 
@@ -248,28 +287,7 @@ def _process_one_file(
         )
         text = text[:max_text]
 
-    file_classification: dict = {
-        "doc_type": "other",
-        "tags": [],
-        "confidence": 0.0,
-        "needs_human_review": True,
-        "reasoning": "",
-    }
-    try:
-        classifier = DocumentClassifierService()
-        file_classification = classifier.classify_document(
-            text=text,
-            filename=filename,
-            case_context=None,
-        )
-        logger.info(
-            "Classified %s: %s (%.2f)",
-            filename,
-            file_classification.get("doc_type"),
-            file_classification.get("confidence", 0),
-        )
-    except Exception as e:
-        logger.warning("Classification failed for %s: %s", filename, e)
+    doc_type_hint = infer_doc_type_hint_from_filename(filename)
 
     _reconnect(db)
     file_model = db.query(FileModel).filter(FileModel.id == file_id).first()
@@ -288,7 +306,7 @@ def _process_one_file(
         ) = _generate_llm_document_passport(
             text=text,
             filename=filename,
-            hint_doc_type=file_classification.get("doc_type", "other"),
+            hint_doc_type=doc_type_hint,
         )
     except Exception as e:
         logger.error(
@@ -357,26 +375,14 @@ def _process_one_file(
     db.flush()
 
     try:
-        existing = db.query(DocumentClassification).filter(
-            DocumentClassification.file_id == file_id
-        ).first()
-        if not existing:
-            doc_cls = DocumentClassification(
-                case_id=case_id,
-                file_id=file_id,
-                doc_type=passport_doc_type or file_classification.get("doc_type", "other"),
-                relevance_score=0,
-                is_privileged="false",
-                privilege_type="none",
-                key_topics=file_classification.get("tags", []),
-                confidence=str(file_classification.get("confidence", 0.0)),
-                reasoning=file_classification.get("reasoning", ""),
-                needs_human_review=(
-                    "true" if file_classification.get("needs_human_review") else "false"
-                ),
-                prompt_version="v1",
-            )
-            db.add(doc_cls)
+        _persist_passport_classification(
+            db,
+            case_id=case_id,
+            file_id=file_id,
+            doc_type=passport_doc_type,
+            key_points=passport_key_points,
+            passport_version=passport_version,
+        )
     except Exception as e:
         logger.warning("Could not save classification for %s: %s", filename, e)
 
@@ -389,7 +395,7 @@ def _process_one_file(
             "case_id": case_id,
             "file_id": file_id,
             "file_type": ext,
-            "doc_type": file_classification.get("doc_type", "other"),
+            "doc_type": passport_doc_type or doc_type_hint,
         }
 
         file_documents = document_processor.split_documents(

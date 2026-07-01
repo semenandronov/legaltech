@@ -19,8 +19,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
-import { buildCaseNavItems } from '@/lib/caseNavItems'
-import { useAuth } from '@/contexts/AuthContext'
+import { buildMainNavItems } from '@/lib/mainNavItems'
 import { agentRunsEnabled } from '../lib/agentRunsPolicy'
 import ThinkingBlock from '../components/Chat/ThinkingBlock'
 import MessageContent from '../components/Chat/MessageContent'
@@ -123,7 +122,6 @@ function runSliceFromDetail(detail: Awaited<ReturnType<typeof getAgentRun>>): Ag
 
 const CaseWorkflowsPage = () => {
   const { caseId } = useParams<{ caseId: string }>()
-  const { user } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
   const runFromUrl = searchParams.get('run')
 
@@ -150,10 +148,7 @@ const CaseWorkflowsPage = () => {
 
   const abortRef = useRef<AbortController | null>(null)
 
-  const navItems = useMemo(
-    () => (caseId ? buildCaseNavItems(caseId, user?.email) : []),
-    [caseId, user?.email],
-  )
+  const navItems = useMemo(() => buildMainNavItems(), [])
 
   const refreshMeta = useCallback(async () => {
     if (!caseId) return

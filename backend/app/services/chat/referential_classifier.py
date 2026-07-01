@@ -41,6 +41,17 @@ _MEMORY_SYNTHESIS_RE = re.compile(
     re.IGNORECASE,
 )
 
+_DRILL_DOWN_RE = re.compile(
+    r"(?:"
+    r"\bподробн\w*"
+    r"|\bдетальн\w*"
+    r"|\bразверн\w*"
+    r"|\bраскрой\w*"
+    r"|\bраспиш\w*"
+    r")",
+    re.IGNORECASE,
+)
+
 _CITATION_EXPAND_RE = re.compile(
     r"(?:"
     r"\bгде\s+(?:об\s+)?(?:этом|этом\s+написан\w*)"
@@ -73,6 +84,11 @@ def is_short_referential_question(question: str) -> bool:
     return len(q.split()) <= SHORT_REFERENTIAL_MAX_WORDS
 
 
+def is_drill_down_question(question: str) -> bool:
+    """Explicit drill-down into prior topic or document — never chat-only replay."""
+    return bool(_DRILL_DOWN_RE.search((question or "").strip()))
+
+
 def is_memory_synthesis_question(question: str) -> bool:
     return bool(_MEMORY_SYNTHESIS_RE.search((question or "").strip()))
 
@@ -101,13 +117,20 @@ def classify_referential_kind(question: str, *, has_prior: bool) -> ReferentialK
     questions return ``none`` and follow the normal retrieval path.
     """
     q = (question or "").strip()
-    if not q or not has_prior or not is_short_referential_question(q):
+    if not q or not has_prior:
+        return "none"
+
+    # Drill-down / citation: any reasonable length (not only ultra-short turns).
+    if is_drill_down_question(q):
+        return "scoped_deep_read"
+    if is_citation_expand_question(q):
+        return "citation_expand"
+
+    if not is_short_referential_question(q):
         return "none"
 
     if is_memory_synthesis_question(q):
         return "memory_synthesis"
-    if is_citation_expand_question(q):
-        return "citation_expand"
     if needs_prior_turn_resolution(q):
         return "scoped_deep_read"
     return "none"
