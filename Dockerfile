@@ -1,8 +1,10 @@
 # syntax=docker/dockerfile:1
 FROM python:3.12-slim
 
-# Install Node.js
-RUN apt-get update && apt-get install -y --no-install-recommends curl fonts-dejavu-core && \
+# System deps: Node.js + Docling/OpenCV headless libs (libxcb required for PDF table parsing).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl fonts-dejavu-core \
+    libxcb1 libxcb-xfixes0 libglib2.0-0 libgl1 && \
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
