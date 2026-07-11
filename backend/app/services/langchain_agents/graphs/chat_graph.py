@@ -42,6 +42,7 @@ from langgraph.graph import StateGraph, END, START
 from langgraph.graph.message import add_messages
 from langgraph.types import Send, Command
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.config import get_stream_writer
 from langchain_core.documents import Document
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, RemoveMessage, trim_messages
 from app.services.llm_factory import create_llm, create_legal_llm, user_facing_llm_reasoning_kwargs
@@ -55,6 +56,7 @@ from app.services.langchain_agents.utils.reducers import (
     citations_state_reducer,
     append_errors_reducer,
 )
+from app.services.chat.citation_file_identity import CaseCitationFileIndex
 from app.services.chat.citation_payload import (
     build_retrieval_citations,
     expand_dc_markers_to_cite_zw,
@@ -743,6 +745,8 @@ class ChatGraphState(TypedDict):
     retrieval_round: Optional[int]
     escalated_from: Optional[str]
     grade_retrieval_ok: Optional[bool]
+    retrieval_escalation: Optional[Dict[str, Any]]
+    escalation_seed_documents: Optional[List[Dict[str, Any]]]
     legal_intent: Optional[str]
     legal_intent_reason: Optional[str]
     legal_research: Optional[bool]
@@ -1361,6 +1365,17 @@ def rag_retrieval_node(
                         attached_file_ids=attached_file_ids or state.get("scoped_file_ids"),
                         budget_profile=bp,
                     )
+                    seed = state.get("escalation_seed_documents")
+                    if isinstance(seed, list) and seed:
+                        from app.services.chat.retrieval_escalation import (
+                            merge_retrieval_documents,
+                        )
+
+                        docs = merge_retrieval_documents(seed, docs, limit=100)
+                        recall_meta = dict(recall_meta or {})
+                        recall_meta["merged_escalation_seed"] = True
+                        recall_meta["recall_docs"] = len(docs)
+                        out["escalation_seed_documents"] = []
                     pipeline_holder.update(
                         {**recall_meta, **summarize_case_documents(docs)}
                     )
@@ -1901,6 +1916,19 @@ def extract_retrieval_task_node(
     if tier_skips_retrieval(tier):
         return {}
 
+    existing_rt = state.get("retrieval_task")
+    if isinstance(existing_rt, dict) and existing_rt.get("escalation_lock"):
+        logger.info(
+            "[ExtractRetrievalTask] escalation_lock — reuse task scope_mode=%s files=%s",
+            existing_rt.get("scope_mode"),
+            len(existing_rt.get("file_ids") or []),
+        )
+        return {
+            "retrieval_task": existing_rt,
+            "scoped_file_ids": list(existing_rt.get("file_ids") or []) or None,
+            "scoped_doc_type": existing_rt.get("doc_type"),
+        }
+
     bp = state.get("budget_profile") if isinstance(state.get("budget_profile"), dict) else {}
     if str(bp.get("retrieval_path") or "") == "summary_overview":
         from app.services.chat.session_context_retrieval import question_for_retrieval
@@ -1967,13 +1995,51 @@ def extract_retrieval_task_node(
     else:
         inherited_file_ids = []
 
-    if primary_intent and retrieval_path in {"scoped_deep_read", "chunk_hybrid"}:
+    # Exact document-number binding beats session evidence_scope / inherited anchors.
+    try:
+        from app.services.chat.case_file_catalog_cache import get_case_file_catalog_cached
+        from app.services.chat.document_ref_scope import (
+            extract_document_refs,
+            resolve_document_ref_file_ids,
+        )
+        from app.services.chat.retrieval_router import RetrievalTask
+
+        if extract_document_refs(retrieval_q):
+            catalog = get_case_file_catalog_cached(db, str(case_id), limit=80)
+            ref_ids = resolve_document_ref_file_ids(catalog, retrieval_q, limit=3)
+            if ref_ids:
+                task = RetrievalTask(
+                    search_query=retrieval_q,
+                    file_ids=ref_ids,
+                    scope_mode="resolved",
+                    confidence=0.94,
+                    rationale="document_ref_catalog_match",
+                    within_file_expand=True,
+                )
+                logger.info(
+                    "[ExtractRetrievalTask] document_ref files=%s (overrides evidence_scope)",
+                    len(ref_ids),
+                )
+                return {
+                    "retrieval_task": task.model_dump(),
+                    "scoped_file_ids": list(ref_ids),
+                    "scoped_doc_type": None,
+                }
+    except Exception as ref_exc:
+        logger.debug("document_ref scope skipped: %s", ref_exc)
+
+    # Session drill-down only. First-turn document Q&A must reach CaseRouter
+    # (incl. fast LLM file-scope) — do not let catalog token-overlap steal scope.
+    if (
+        referential_kind in {"scoped_deep_read", "citation_expand"}
+        or (isinstance(inherited_file_ids, list) and inherited_file_ids)
+    ):
         from app.services.chat.case_file_catalog_cache import get_case_file_catalog_cached
         from app.services.chat.evidence_scope import resolve_evidence_scope
 
         catalog = get_case_file_catalog_cached(db, str(case_id), limit=80)
         scope = resolve_evidence_scope(
-            primary_intent=primary_intent,
+            primary_intent=primary_intent or "standard_case_qa",
             question=retrieval_q,
             anchor_file_ids=anchor_file_ids if isinstance(anchor_file_ids, list) else [],
             catalog=catalog,
@@ -2008,6 +2074,13 @@ def extract_retrieval_task_node(
 
     router = create_case_retrieval_router()
     t_router = _time.monotonic()
+    allow_llm_scope = True
+    if isinstance(bp, dict) and bp.get("skip_llm_document_scope") is True:
+        allow_llm_scope = False
+    qp = bp.get("query_plan") if isinstance(bp, dict) else None
+    if isinstance(qp, dict) and qp.get("skip_document_scope_router"):
+        # Planner already scoped (attached / hybrid) — still run router only if needed.
+        pass
     with case_assistant_span(
         "router",
         input_payload={"question": (retrieval_q or "")[:800]},
@@ -2015,6 +2088,7 @@ def extract_retrieval_task_node(
             "case_id": str(case_id),
             "corpus_size": int(state.get("corpus_size") or 0),
             "attached_files_count": len(state.get("attached_file_ids") or []),
+            "allow_llm_scope": allow_llm_scope,
         },
     ) as router_span:
         task = router.route(
@@ -2024,6 +2098,7 @@ def extract_retrieval_task_node(
             attached_file_ids=state.get("attached_file_ids"),
             document_id=state.get("document_id"),
             corpus_size=int(state.get("corpus_size") or 0),
+            allow_llm_scope=allow_llm_scope,
         )
         router_ms = int((_time.monotonic() - t_router) * 1000)
         router_span.update(
@@ -2496,7 +2571,9 @@ def generate_response_node(
         tctx = get_active_trace_context()
         _budget = state.get("budget_profile") if isinstance(state.get("budget_profile"), dict) else {}
         from app.services.chat.execution_tier import llm_max_tokens_from_budget
+        from app.services.chat.case_query_planner import use_compact_system_prompt
         from app.services.chat.response_shape import (
+            case_assistant_compact_system_prompt,
             case_assistant_readability_base,
             response_shape_system_prompt_addon,
         )
@@ -2542,6 +2619,7 @@ def generate_response_node(
                     "messages_count": len(state.get("messages") or []),
                     "generation_max_tokens": _gen_max_tokens or None,
                     "response_shape": _response_shape,
+                    "compact_system_prompt": bool(use_compact_system_prompt(state)),
                     "primary_intent": str(
                         state.get("primary_intent")
                         or (_budget.get("primary_intent") if isinstance(_budget, dict) else "")
@@ -2717,6 +2795,10 @@ def generate_response_node(
         }
         
         system_prompt = system_prompts.get(mode, system_prompts["normal"])
+        _use_compact = bool(use_compact_system_prompt(state)) and mode == "normal"
+        if _use_compact:
+            # Same legal model; shorter instructions for FAST/instant TTFT.
+            system_prompt = case_assistant_compact_system_prompt()
 
         if not memory_only and not (document_context or "").strip():
             _n_docs = len(state.get("attached_file_ids") or []) or int(state.get("corpus_size") or 0)
@@ -2927,11 +3009,6 @@ def generate_response_node(
                         docs_out["retrieved_docs"] = len(retrieved)
                     if retrieved:
                         rag = RAGService()
-                        awc = rag.generate_with_structured_citations(
-                            question,
-                            retrieved,
-                            system_prompt=system_prompt,
-                        )
                         case_docs = [
                             d
                             for d in retrieved
@@ -2947,33 +3024,111 @@ def generate_response_node(
                                 if db and case_id
                                 else {}
                             )
+                            citation_index = None
+                            if db and case_id:
+                                try:
+                                    citation_index = CaseCitationFileIndex.from_db(
+                                        db, str(case_id)
+                                    )
+                                except Exception:
+                                    logger.debug(
+                                        "CaseCitationFileIndex load failed",
+                                        exc_info=True,
+                                    )
+                                    citation_index = None
                             orig_out["originals_count"] = len(originals or {})
-                        dumped = [c.model_dump() for c in awc.citations]
-                        with assistant_step_span(
-                            "case",
-                            "graph.generate.structured.enrich",
-                            input_payload={"citations_in": len(dumped)},
-                        ) as enrich_out:
-                            enriched = enrich_structured_citations(
+                            orig_out["has_file_index"] = citation_index is not None
+
+                        def _enrich_citation_dicts(
+                            dumped: List[Dict[str, Any]],
+                        ) -> List[Dict[str, Any]]:
+                            return enrich_structured_citations(
                                 dumped,
                                 retrieved,
                                 originals,
                                 case_id=str(case_id) if case_id else None,
                                 db=db,
+                                case_file_index=citation_index,
                             )
+
+                        prefer_stream = bool(
+                            _stream_tokens
+                            and getattr(
+                                config,
+                                "RAG_STRUCTURED_CITATIONS_STREAM_ENABLED",
+                                True,
+                            )
+                        )
+                        stream_writer = None
+                        if prefer_stream:
+                            try:
+                                stream_writer = get_stream_writer()
+                            except Exception:
+                                stream_writer = None
+
+                        stream_metrics: Dict[str, Any] = {}
+                        awc = None
+                        streamed_ok = False
+                        if stream_writer is not None:
+                            awc = rag.stream_with_structured_citations(
+                                question,
+                                retrieved,
+                                system_prompt=system_prompt,
+                                llm=llm,
+                                writer=stream_writer,
+                                enrich_citations=_enrich_citation_dicts,
+                                metrics_out=stream_metrics,
+                            )
+                            structured_out["ttft_ms"] = stream_metrics.get("ttft_ms")
+                            structured_out["chunk_count"] = stream_metrics.get(
+                                "chunk_count"
+                            )
+                            if (awc.answer or "").strip():
+                                streamed_ok = True
+                            else:
+                                logger.warning(
+                                    "[GenerateResponse] structured stream empty; "
+                                    "falling back to sync invoke"
+                                )
+                                awc = None
+                                structured_out["stream_fallback_to_sync"] = True
+
+                        if awc is None:
+                            awc = rag.generate_with_structured_citations(
+                                question,
+                                retrieved,
+                                system_prompt=system_prompt,
+                                llm=llm,
+                            )
+                        structured_out["streamed"] = streamed_ok
+
+                        dumped = [c.model_dump() for c in (awc.citations or [])]
+                        with assistant_step_span(
+                            "case",
+                            "graph.generate.structured.enrich",
+                            input_payload={"citations_in": len(dumped)},
+                        ) as enrich_out:
+                            enriched = _enrich_citation_dicts(dumped) if dumped else []
                             enrich_out["citations_out"] = len(enriched or [])
-                        if (awc.answer or "").strip() and enriched:
-                            new_state["citations"] = enriched
+                        # Streamed answers are committed even without enrichable citations
+                        # (tokens already left the node; never dual-generate).
+                        # Sync path still requires enrichable citations for clickable sources.
+                        accept_structured = bool((awc.answer or "").strip()) and (
+                            bool(enriched) or streamed_ok
+                        )
+                        if accept_structured:
+                            new_state["citations"] = enriched or []
                             response_text = awc.answer
                             used_structured = True
                             structured_out["used_structured"] = True
-                            structured_out["n_citations"] = len(enriched)
+                            structured_out["n_citations"] = len(enriched or [])
                             structured_out["answer_chars"] = len(response_text or "")
                             logger.info(
-                                "[GenerateResponse] structured_citations path, n_citations=%s (rag=%s, garant=%s)",
+                                "[GenerateResponse] structured_citations path streamed=%s n_citations=%s (rag=%s, garant=%s)",
+                                bool(structured_out.get("streamed")),
                                 len(new_state.get("citations") or []),
-                                sum(1 for c in enriched if c.get("source_type") == "document"),
-                                sum(1 for c in enriched if c.get("source_type") == "legal_reference"),
+                                sum(1 for c in (enriched or []) if c.get("source_type") == "document"),
+                                sum(1 for c in (enriched or []) if c.get("source_type") == "legal_reference"),
                             )
             except Exception as s_exc:
                 logger.warning(
@@ -3060,8 +3215,6 @@ def generate_response_node(
                     "stream_tokens": _stream_tokens,
                 }
                 if _stream_tokens:
-                    from langgraph.config import get_stream_writer
-
                     writer = None
                     try:
                         writer = get_stream_writer()
@@ -3871,6 +4024,7 @@ def create_chat_graph(
     graph.add_node("mode_router", mode_router_node)
     from app.services.chat.tier_graph_nodes import (
         clarify_response_node,
+        escalate_retrieval_node,
         grade_retrieval_node,
         rewrite_search_query_node,
         route_after_execution_tier,
@@ -3884,6 +4038,7 @@ def create_chat_graph(
     graph.add_node("sync_execution_tier", sync_execution_tier_node)
     graph.add_node("clarify_response", clarify_response_node)
     graph.add_node("grade_retrieval", grade_retrieval_node)
+    graph.add_node("escalate_retrieval", escalate_retrieval_node)
     graph.add_node("rewrite_search_query", rewrite_search_query_node)
     graph.add_node("parallel_retrieval", parallel_retrieval_node)  # Параллельный запуск RAG и справочного правового источника
     graph.add_node("extract_retrieval_task", lambda state, config=None: extract_retrieval_task_node(state, db))
@@ -4075,10 +4230,13 @@ def create_chat_graph(
         route_after_grade_retrieval,
         {
             "rag_quality_gate": "rag_quality_gate",
+            "escalate_retrieval": "escalate_retrieval",
             "rewrite_search_query": "rewrite_search_query",
             "extract_retrieval_task": "extract_retrieval_task",
         },
     )
+    # Deterministic escalate owns scope (escalation_lock) → skip CaseRouter re-pick.
+    graph.add_edge("escalate_retrieval", "parallel_retrieval")
     graph.add_edge("rewrite_search_query", "extract_retrieval_task")
     graph.add_conditional_edges(
         "rag_quality_gate",

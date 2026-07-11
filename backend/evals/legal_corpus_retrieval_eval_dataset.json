@@ -1,0 +1,70 @@
+{
+  "version": "1",
+  "description": "E2E eval: какие статьи должны попасть в контекст справочника (127-ФЗ). Без захардкоженных маршрутов — эталон для проверки LLM+граф.",
+  "cases": [
+    {
+      "id": "challenge_relative_deal",
+      "question": "Можно ли оспорить сделку: должник продал участок брату за месяц до банкротства?",
+      "instrument_ids": ["fz-127"],
+      "must_include_articles": ["61.2", "19"],
+      "should_include_articles": ["61.1", "61.3"]
+    },
+    {
+      "id": "subsidiary_liability",
+      "question": "Субсидиарная ответственность контролирующего лица при банкротстве юрлица",
+      "instrument_ids": ["fz-127"],
+      "must_include_articles": ["61.10", "61.11"],
+      "should_include_articles": ["61.12"]
+    },
+    {
+      "id": "limitation_challenge",
+      "question": "Какой срок исковой давности на оспаривание подозрительной сделки должника?",
+      "instrument_ids": ["fz-127"],
+      "must_include_articles": ["61.9", "61.2"],
+      "should_include_articles": ["61.1"]
+    },
+    {
+      "id": "article_lookup_61",
+      "question": "о чем статья 61.2 127-ФЗ",
+      "instrument_ids": ["fz-127"],
+      "must_include_articles": ["61.2"],
+      "should_include_articles": []
+    },
+    {
+      "id": "citizen_bankruptcy",
+      "question": "План реструктуризации долгов гражданина — что предусмотрено законом?",
+      "instrument_ids": ["fz-127"],
+      "must_include_articles": ["213.4"],
+      "should_include_articles": ["213.1", "213.6"]
+    },
+    {
+      "id": "registry_creditors",
+      "question": "Как формируется реестр требований кредиторов?",
+      "instrument_ids": ["fz-127"],
+      "must_include_articles": ["71"],
+      "should_include_articles": ["100"]
+    },
+    {
+      "id": "interested_person",
+      "question": "Кто считается заинтересованным лицом должника?",
+      "instrument_ids": ["fz-127"],
+      "must_include_articles": ["19"],
+      "should_include_articles": []
+    },
+    {
+      "id": "bankruptcy_initiation_thresholds_ul",
+      "question": "Какой минимальный размер совокупных требований установлен для возбуждения дела о банкротстве юридического лица и каков минимальный период просрочки?",
+      "instrument_ids": ["fz-127"],
+      "must_include_articles": ["33"],
+      "should_include_articles": ["6"],
+      "notes": "Порог суммы и 3 месяца просрочки — в п. 2 ст. 33 (редакция ГАРАНТ); без угадывания ст. 7"
+    },
+    {
+      "question": "Какие полномочия у финансового управляющего при конкурсном производстве?",
+      "instrument_ids": ["fz-127"],
+      "must_include_articles": [],
+      "should_include_articles": ["20", "129"],
+      "notes": "Нет жёсткого пакета — проверяем, что LLM-план нашёл релевантные статьи"
+    }
+  ]
+}

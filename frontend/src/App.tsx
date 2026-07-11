@@ -16,6 +16,7 @@ const ContradictionsPage = lazy(() => import('./pages/ContradictionsPage'))
 const AnalysisPage = lazy(() => import('./pages/AnalysisPage'))
 const ReportsPage = lazy(() => import('./pages/ReportsPage'))
 const TabularReviewPage = lazy(() => import('./pages/TabularReviewPage'))
+const OperationsPage = lazy(() => import('./pages/OperationsPage'))
 const DocumentEditorPage = lazy(() => import('./pages/DocumentEditorPage'))
 const PlaybooksPage = lazy(() => import('./pages/PlaybooksPage'))
 const GlobalAssistantPage = lazy(() => import('./pages/GlobalAssistantPage'))
@@ -26,6 +27,7 @@ const CaseOverviewPage = lazy(() => import('./pages/CaseOverviewPage'))
 const CaseWorkflowsPage = lazy(() => import('./pages/CaseWorkflowsPage'))
 const HistoryPage = lazy(() => import('./pages/HistoryPage'))
 const ChunkPreviewPage = lazy(() => import('./pages/ChunkPreviewPage'))
+const DoclingStructurePage = lazy(() => import('./pages/DoclingStructurePage'))
 const ChunkLabPage = lazy(() => import('./pages/ChunkLabPage'))
 
 const PageLoader = () => (
@@ -147,6 +149,18 @@ function App() {
         }
       />
       <Route
+        path="/docling-structure"
+        element={
+          <ProtectedRoute>
+            <InternalDevToolsRoute redirectTo="/cases">
+              <Suspense fallback={<PageLoader />}>
+                <DoclingStructurePage />
+              </Suspense>
+            </InternalDevToolsRoute>
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/cases/:caseId"
         element={
           <ProtectedRoute>
@@ -210,6 +224,16 @@ function App() {
           <ProtectedRoute>
             <Suspense fallback={<PageLoader />}>
               <TabularReviewPage />
+            </Suspense>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/cases/:caseId/operations"
+        element={
+          <ProtectedRoute>
+            <Suspense fallback={<PageLoader />}>
+              <OperationsPage />
             </Suspense>
           </ProtectedRoute>
         }

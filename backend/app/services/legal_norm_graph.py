@@ -824,6 +824,55 @@ def expand_norm_neighbor_edges(
     return out
 
 
+def expand_norm_neighbor_edges_multihop(
+    source_norm_keys: Sequence[str],
+    *,
+    max_hops: Optional[int] = None,
+    limit_per_hop: Optional[int] = None,
+    total_limit: Optional[int] = None,
+    edge_types: Sequence[str] = EDGE_TYPES_RETRIEVAL,
+    reference_date: Optional[date] = None,
+    include_parents: bool = True,
+) -> List[Tuple[str, str]]:
+    """BFS: обход графа на max_hops шагов (паутина норм)."""
+    keys = [str(k).strip() for k in source_norm_keys if str(k).strip()]
+    if not keys:
+        return []
+
+    hops = max(1, int(max_hops or getattr(config, "LEGAL_NORM_GRAPH_MAX_HOPS", 2) or 2))
+    per_hop = max(1, int(limit_per_hop or getattr(config, "LEGAL_NORM_GRAPH_EXPAND_LIMIT", 8) or 8))
+    cap = max(1, int(total_limit or getattr(config, "LEGAL_NORM_GRAPH_TOTAL_EXPAND_LIMIT", 24) or 24))
+
+    seen: set[str] = set(keys)
+    accumulated: List[Tuple[str, str]] = []
+    frontier = list(keys)
+
+    for _hop in range(hops):
+        if not frontier or len(accumulated) >= cap:
+            break
+        neighbors = expand_norm_neighbor_edges(
+            frontier,
+            edge_types=edge_types,
+            limit=per_hop,
+            reference_date=reference_date,
+            include_parents=include_parents,
+        )
+        next_frontier: List[str] = []
+        for nk, et in neighbors:
+            if nk in seen:
+                continue
+            seen.add(nk)
+            accumulated.append((nk, et))
+            next_frontier.append(nk)
+            if len(accumulated) >= cap:
+                break
+        if len(accumulated) >= cap:
+            break
+        frontier = next_frontier
+
+    return accumulated
+
+
 def expand_norm_neighbors(
     source_norm_keys: Sequence[str],
     *,

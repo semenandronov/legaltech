@@ -57,6 +57,8 @@ describe('buildTabularViewerCellData', () => {
     expect(out.sourcePage).toBe(3)
     expect(out.highlightBBox).toEqual({ x0: 10, y0: 20, x1: 30, y1: 40 })
     expect(out.highlightBBoxRegions).toHaveLength(1)
+    expect(out.verbatimAlternates).toContain('legacy')
+    expect(out.verbatimAlternates).toContain('первый')
   })
 
   it('defaults to first reference when index omitted', () => {
@@ -84,6 +86,56 @@ describe('buildTabularViewerCellData', () => {
     })
     expect(out.charStart).toBeUndefined()
     expect(out.charEnd).toBeUndefined()
+  })
+
+  it('prefers active reference doc and char span when present', () => {
+    const out = buildTabularViewerCellData({
+      details: {
+        ...details,
+        primary_source_doc_id: 'legacy-doc',
+        primary_source_char_start: 10,
+        primary_source_char_end: 50,
+        source_references: [
+          {
+            text: 'первый',
+            page: 2,
+            doc_id: 'doc-1',
+            char_start: 11,
+            char_end: 22,
+          },
+          {
+            text: 'второй',
+            page: 3,
+            doc_id: 'doc-2',
+            char_start: 30,
+            char_end: 40,
+          },
+        ],
+      },
+      fileId: 'f1',
+      click: {
+        sourceReferences: [
+          {
+            text: 'первый',
+            page: 2,
+            doc_id: 'doc-1',
+            char_start: 11,
+            char_end: 22,
+          },
+          {
+            text: 'второй',
+            page: 3,
+            doc_id: 'doc-2',
+            char_start: 30,
+            char_end: 40,
+          },
+        ],
+        sourceReferenceIndex: 1,
+      },
+    })
+    expect(out.docId).toBe('doc-2')
+    expect(out.charStart).toBe(30)
+    expect(out.charEnd).toBe(40)
   })
 })
 

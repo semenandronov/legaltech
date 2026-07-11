@@ -28,5 +28,8 @@ class CaseFileTransaction(Base):
     page_start = Column(Integer, nullable=True)
     char_start = Column(Integer, nullable=True)
     char_end = Column(Integer, nullable=True)
+    verbatim_row_text = Column(Text, nullable=True)
+    source_references = Column(JSON, nullable=True)
+    flow_direction = Column(String(16), nullable=True)
     source_filename = Column(String(512), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

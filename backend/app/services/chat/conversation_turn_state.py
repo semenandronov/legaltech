@@ -31,7 +31,14 @@ class ConversationTurnState:
     date_from: str = ""
     date_to: str = ""
     on_date: str = ""
+    time_hint: str = ""
+    description_contains: str = ""
     structured_data_plane: str = ""
+    amount_semantics: str = ""
+    amount_compare: str = ""
+    amount_min: str = ""
+    amount_max: str = ""
+    ui_scope_had_filters: bool = False
     rag_file_ids: tuple[str, ...] = ()
     topic_file_ids: tuple[str, ...] = ()
 
@@ -57,7 +64,14 @@ class ConversationTurnState:
             date_from=str(data.get("date_from") or "").strip(),
             date_to=str(data.get("date_to") or "").strip(),
             on_date=str(data.get("on_date") or "").strip(),
+            time_hint=str(data.get("time_hint") or "").strip(),
+            description_contains=str(data.get("description_contains") or "").strip(),
             structured_data_plane=str(data.get("structured_data_plane") or "").strip(),
+            amount_semantics=str(data.get("amount_semantics") or "").strip(),
+            amount_compare=str(data.get("amount_compare") or "").strip(),
+            amount_min=str(data.get("amount_min") or "").strip(),
+            amount_max=str(data.get("amount_max") or "").strip(),
+            ui_scope_had_filters=bool(data.get("ui_scope_had_filters")),
             rag_file_ids=tuple(str(x).strip() for x in rag_ids if str(x).strip()),
             topic_file_ids=tuple(str(x).strip() for x in topic_ids if str(x).strip()),
         )
@@ -77,6 +91,17 @@ class ConversationTurnState:
             parts.append(f"date={self.on_date}")
         elif self.date_from and self.date_to:
             parts.append(f"period={self.date_from}..{self.date_to}")
+        if self.time_hint:
+            parts.append(f"time={self.time_hint}")
+        if self.description_contains:
+            parts.append(f"desc={self.description_contains}")
+        if self.amount_compare:
+            amount_bits = [self.amount_compare]
+            if self.amount_min:
+                amount_bits.append(f"min={self.amount_min}")
+            if self.amount_max:
+                amount_bits.append(f"max={self.amount_max}")
+            parts.append("amount=" + ",".join(amount_bits))
         if self.domain != "none":
             parts.append(f"domain={self.domain}")
         return "; ".join(parts)
@@ -105,6 +130,24 @@ def load_prior_turn_state(prior: PriorTurnEvidence | None) -> Optional[Conversat
     return None
 
 
+def operations_ui_scope_reset_needed(
+    *,
+    scope_has_active_filters: bool,
+    prior_evidence: PriorTurnEvidence | None,
+) -> bool:
+    """
+    True when the user expanded the table from a filtered view to the full statement.
+
+    In that case prior SQL/dialog scope must not carry over (e.g. amount > 10k).
+    """
+    if scope_has_active_filters:
+        return False
+    prior = load_prior_turn_state(prior_evidence)
+    if prior is None:
+        return False
+    return bool(prior.ui_scope_had_filters)
+
+
 def turn_state_from_sql_plan(
     *,
     plan: Any,
@@ -118,7 +161,13 @@ def turn_state_from_sql_plan(
         date_from=str(getattr(plan, "date_from", "") or "").strip(),
         date_to=str(getattr(plan, "date_to", "") or "").strip(),
         on_date=str(getattr(plan, "on_date", "") or "").strip(),
+        time_hint=str(getattr(plan, "time_hint", "") or "").strip(),
+        description_contains=str(getattr(plan, "description_contains", "") or "").strip(),
         structured_data_plane=plane,
+        amount_semantics=str(getattr(plan, "amount_semantics", "") or "").strip(),
+        amount_compare=str(getattr(plan, "amount_compare", "") or "").strip(),
+        amount_min=str(getattr(plan, "amount_min", "") or "").strip(),
+        amount_max=str(getattr(plan, "amount_max", "") or "").strip(),
         topic_file_ids=(str(file_id).strip(),) if file_id else (),
     )
 
@@ -161,4 +210,13 @@ def merge_sql_plan_hints(
             hints["date_from"] = prior.date_from
         if prior.date_to:
             hints["date_to"] = prior.date_to
+        if prior.time_hint:
+            hints["time_hint"] = prior.time_hint
+    # Scope continuity for underspecified follow-ups («на какие суммы», «подробнее»).
+    # Do NOT inherit amount_compare/min/max — thresholds belong in the planner decision
+    # from the current question + dialogue, otherwise stale «>9999» sticks to new topics.
+    if prior.description_contains:
+        hints["description_contains"] = prior.description_contains
+    if prior.amount_semantics:
+        hints["amount_semantics"] = prior.amount_semantics
     return hints

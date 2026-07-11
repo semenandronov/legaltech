@@ -83,6 +83,7 @@ def prepare_case_chat_request(db: Session, params: CaseChatPrepParams) -> CaseCh
     case_turns = []
     prior_evidence = None
     memory_contract_refined = None
+    latency_path = None
 
     with assistant_step_span(
         "case",
@@ -108,6 +109,23 @@ def prepare_case_chat_request(db: Session, params: CaseChatPrepParams) -> CaseCh
             except Exception as case_meta_err:
                 logger.debug("case doc count probe failed: %s", case_meta_err)
             doc_out["case_doc_count"] = case_doc_count
+
+        with assistant_step_span("case", "http.latency_path") as lp_out:
+            from app.services.chat.case_latency_path import resolve_case_latency_path
+
+            latency_path = resolve_case_latency_path(
+                question=question,
+                draft_mode=bool(draft_mode),
+                deep_think=bool(deep_think),
+                legal_research=bool(legal_research),
+                court_practice=bool(params.court_practice),
+                attached_files_count=len(attached_file_ids or []),
+                corpus_size=case_doc_count,
+            )
+            lp_out["kind"] = latency_path.kind
+            lp_out["reason"] = latency_path.reason
+            prep_out["latency_path"] = latency_path.kind
+            prep_out["latency_path_reason"] = latency_path.reason
 
         with assistant_step_span(
             "case",
@@ -195,12 +213,16 @@ def prepare_case_chat_request(db: Session, params: CaseChatPrepParams) -> CaseCh
                             "http.turn_memory_contract",
                             input_payload={"question_chars": len(question)},
                         ) as mc_out:
+                            allow_llm_judge = True
+                            if latency_path is not None and latency_path.skip_turn_context_llm:
+                                allow_llm_judge = False
                             memory_contract = resolve_turn_memory_contract(
                                 question=question,
                                 turns=case_turns,
                                 dialog_history=dialog_history,
                                 conversation_summary=conversation_summary,
                                 anchor_filenames=anchor_filenames,
+                                allow_llm_judge=allow_llm_judge,
                             )
                             turn_context_dict = memory_contract.turn_context_dict
                             mc_out.update(turn_context_trace_fields(turn_context_dict))
@@ -208,9 +230,29 @@ def prepare_case_chat_request(db: Session, params: CaseChatPrepParams) -> CaseCh
                             mc_out["information_need"] = memory_contract.information_need
                             mc_out["resolver"] = memory_contract.resolver
                             mc_out["confidence"] = memory_contract.confidence
+                            mc_out["allow_llm_judge"] = allow_llm_judge
                             if memory_contract.effective_query:
                                 routing_question = memory_contract.effective_query
                             memory_contract_refined = memory_contract
+                            # Refine latency path with referential kind (memory → no RAG).
+                            from app.services.chat.case_latency_path import (
+                                resolve_case_latency_path,
+                            )
+
+                            latency_path = resolve_case_latency_path(
+                                question=question,
+                                draft_mode=bool(draft_mode),
+                                deep_think=bool(deep_think),
+                                legal_research=bool(legal_research),
+                                court_practice=bool(params.court_practice),
+                                attached_files_count=len(attached_file_ids or []),
+                                corpus_size=case_doc_count,
+                                referential_kind=str(
+                                    turn_context_dict.get("referential_kind") or "none"
+                                ),
+                            )
+                            prep_out["latency_path"] = latency_path.kind
+                            prep_out["latency_path_reason"] = latency_path.reason
                 except Exception as hist_err:
                     logger.debug("standalone query history load skipped: %s", hist_err)
 
@@ -233,26 +275,36 @@ def prepare_case_chat_request(db: Session, params: CaseChatPrepParams) -> CaseCh
             inf_out["clarification_needed"] = clarification_needed
 
         with assistant_step_span("case", "http.tier_classifier_llm") as tier_out:
-            try:
-                from app.services.chat.tier_classifier import classify_execution_tier_llm
-
-                structured_tier = classify_execution_tier_llm(
-                    question=question,
-                    task_type=task_type,
-                    depth_tier=depth_tier,
-                    clarification_needed=clarification_needed,
-                    legal_research=bool(legal_research),
-                    deep_think=bool(deep_think),
-                    draft_mode=bool(draft_mode),
-                    corpus_size=max(case_doc_count, len(attached_file_ids or [])),
-                    attached_files_count=len(attached_file_ids or []),
-                )
-                tier_out["execution_tier"] = structured_tier
-            except Exception as tier_cls_err:
-                logger.debug("tier LLM classifier skipped: %s", tier_cls_err)
+            skip_tier_llm = bool(
+                latency_path is not None and latency_path.skip_tier_llm
+            )
+            if skip_tier_llm:
                 tier_out["skipped"] = True
+                tier_out["reason"] = "latency_path_fast"
+            else:
+                try:
+                    from app.services.chat.tier_classifier import classify_execution_tier_llm
+
+                    structured_tier = classify_execution_tier_llm(
+                        question=question,
+                        task_type=task_type,
+                        depth_tier=depth_tier,
+                        clarification_needed=clarification_needed,
+                        legal_research=bool(legal_research),
+                        deep_think=bool(deep_think),
+                        draft_mode=bool(draft_mode),
+                        corpus_size=max(case_doc_count, len(attached_file_ids or [])),
+                        attached_files_count=len(attached_file_ids or []),
+                    )
+                    tier_out["execution_tier"] = structured_tier
+                except Exception as tier_cls_err:
+                    logger.debug("tier LLM classifier skipped: %s", tier_cls_err)
+                    tier_out["skipped"] = True
 
         with assistant_step_span("case", "http.budget_profile") as budget_out:
+            forced_tier = None
+            if latency_path is not None and latency_path.force_execution_tier:
+                forced_tier = latency_path.force_execution_tier
             budget_profile = ConversationPolicyService.budget_profile_for_depth(
                 depth_tier,
                 task_type,
@@ -263,7 +315,7 @@ def prepare_case_chat_request(db: Session, params: CaseChatPrepParams) -> CaseCh
                 court_practice=bool(params.court_practice),
                 deep_think=bool(deep_think),
                 draft_mode=bool(draft_mode),
-                structured_execution_tier=structured_tier,
+                structured_execution_tier=forced_tier or structured_tier,
                 attached_files_count=len(attached_file_ids or []),
                 dialog_history=dialog_history,
                 conversation_summary=conversation_summary,
@@ -272,6 +324,11 @@ def prepare_case_chat_request(db: Session, params: CaseChatPrepParams) -> CaseCh
             )
             budget_profile["anchor_file_ids"] = list(anchor_file_ids)
             budget_profile["anchor_filenames"] = list(anchor_filenames)
+            if latency_path is not None:
+                from app.services.chat.case_latency_path import apply_latency_path_to_budget
+
+                budget_profile = apply_latency_path_to_budget(budget_profile, latency_path)
+                budget_out["latency_path"] = latency_path.kind
             if turn_context_dict:
                 budget_out["referential_kind"] = turn_context_dict.get("referential_kind")
             if memory_contract is not None:
@@ -338,6 +395,19 @@ def prepare_case_chat_request(db: Session, params: CaseChatPrepParams) -> CaseCh
             memory_contract is not None
             and memory_contract_skips_structured_router(memory_contract)
         )
+        if latency_path is not None and latency_path.skip_structured_data_router:
+            skip_structured_router = True
+            structured_data_plane = "rag"
+            structured_data_router_meta = {
+                "resolver": "latency_path_fast",
+                "confidence": 1.0,
+                "reason": latency_path.reason,
+                "statement_file_ids": [],
+                "rag_file_ids": [],
+                "information_need": "document_rag",
+                "turn_scope_source": "latency_path",
+                "turn_scope_file_ids": [],
+            }
         if (
             bool(getattr(app_config, "STRUCTURED_DATA_HTTP_PREP_ROUTER_ENABLED", True))
             and not draft_mode
@@ -410,6 +480,60 @@ def prepare_case_chat_request(db: Session, params: CaseChatPrepParams) -> CaseCh
 
         budget_profile["dialog_history"] = dialog_history
 
+        # Wire query planner (previously unused in prep) for scope/rerank shortcuts.
+        try:
+            from app.services.chat.case_query_planner import (
+                apply_query_plan_to_budget,
+                plan_case_query,
+            )
+
+            memory_only = bool(
+                latency_path is not None and latency_path.kind == "memory"
+            ) or (
+                memory_contract is not None
+                and memory_contract.execution_mode == "chat_replay"
+            )
+            query_plan = plan_case_query(
+                db=db,
+                case_id=str(case_id),
+                question=question,
+                retrieval_query=routing_question,
+                task_type=task_type,
+                depth_tier=depth_tier,
+                execution_tier=str(budget_profile.get("execution_tier") or ""),
+                attached_file_ids=attached_file_ids,
+                structured_data_plane=structured_data_plane or "rag",
+                hybrid_rag_file_ids=hybrid_rag_file_ids,
+                memory_only=memory_only,
+                deep_think=bool(deep_think),
+                legal_research=bool(legal_research),
+            )
+            if latency_path is not None and latency_path.skip_llm_document_scope:
+                # Tighten: never call LLM document scope on FAST.
+                from dataclasses import replace
+
+                query_plan = replace(
+                    query_plan,
+                    skip_document_scope_router=bool(
+                        query_plan.skip_document_scope_router
+                        or bool(attached_file_ids)
+                    ),
+                    # Latency path owns FAST rerank: light_only must not be undone by
+                    # query_planner's instant_skip_rerank.
+                    rerank_policy=(
+                        latency_path.rerank_policy
+                        if latency_path.rerank_policy in ("skip", "light_only")
+                        else query_plan.rerank_policy
+                    ),
+                    skip_session_semantic=True,
+                    plan_reason=f"{query_plan.plan_reason}+latency_path_fast",
+                )
+            budget_profile = apply_query_plan_to_budget(budget_profile, query_plan)
+            if query_plan.pre_retrieval_task:
+                budget_profile["pre_retrieval_task"] = query_plan.pre_retrieval_task
+        except Exception as qp_err:
+            logger.debug("query planner skipped: %s", qp_err)
+
     session_context_prompt: Optional[str] = None
     session_context_meta: Optional[Dict[str, Any]] = None
     if session_id:
@@ -439,7 +563,14 @@ def prepare_case_chat_request(db: Session, params: CaseChatPrepParams) -> CaseCh
                         task_type=task_type,
                         corpus_size=max(case_doc_count, len(attached_file_ids or [])),
                         draft_mode=bool(draft_mode),
-                        skip_semantic_search=str(structured_data_plane or "").lower() == "sql",
+                        skip_semantic_search=(
+                            str(structured_data_plane or "").lower() == "sql"
+                            or bool(
+                                latency_path is not None
+                                and latency_path.skip_session_semantic
+                            )
+                            or bool(budget_profile.get("skip_session_semantic"))
+                        ),
                         budget_profile=budget_profile,
                     )
                     sc_out["prompt_chars"] = len(session_context_prompt or "")
@@ -509,6 +640,9 @@ def prepare_case_chat_request(db: Session, params: CaseChatPrepParams) -> CaseCh
     state_contract.budget_profile = budget_profile
     state_contract.task_family = task_family
 
+    pre_rt = budget_profile.get("pre_retrieval_task")
+    retrieval_task_out = pre_rt if isinstance(pre_rt, dict) else None
+
     chat_request = ChatRequest(
         case_id=case_id,
         question=question,
@@ -536,8 +670,12 @@ def prepare_case_chat_request(db: Session, params: CaseChatPrepParams) -> CaseCh
         clarification_needed=clarification_needed,
         budget_profile=state_contract.budget_profile,
         corpus_size=max(case_doc_count, len(attached_file_ids or [])),
-        retrieval_task=None,
-        scoped_file_ids=None,
+        retrieval_task=retrieval_task_out,
+        scoped_file_ids=(
+            list(retrieval_task_out.get("file_ids") or [])
+            if isinstance(retrieval_task_out, dict)
+            else None
+        ),
         scoped_doc_type=None,
         semantic_intent="",
         retrieval_probe_hits=0,

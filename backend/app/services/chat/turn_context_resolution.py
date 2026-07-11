@@ -71,6 +71,7 @@ def _expand_standalone_query(
     conversation_summary: str,
     anchor_filenames: Sequence[str],
     preset_standalone: str = "",
+    allow_llm: bool = True,
 ) -> tuple[str, str, float, str]:
     """Phase 2: standalone query for routing and retrieval."""
     preset = (preset_standalone or "").strip()
@@ -82,6 +83,7 @@ def _expand_standalone_query(
             question=question,
             prior_evidence=prior_evidence,
             referential_kind=kind,
+            allow_llm=allow_llm,
         )
         confidence = 0.88 if ref.changed else 0.82
         reason = ref.reason if ref.changed else f"referential_{kind}"
@@ -108,6 +110,7 @@ def _resolution_from_judge(
     dialog_history: str,
     conversation_summary: str,
     anchor_filenames: Sequence[str],
+    allow_llm: bool = True,
 ) -> TurnContextResolution:
     kind = judge.referential_kind
     inherited: tuple[str, ...] = ()
@@ -144,6 +147,7 @@ def _resolution_from_judge(
             conversation_summary=conversation_summary,
             anchor_filenames=anchor_filenames,
             preset_standalone=judge.standalone_query,
+            allow_llm=allow_llm,
         )
         return TurnContextResolution(
             original_question=original,
@@ -169,6 +173,7 @@ def _resolution_from_judge(
             conversation_summary=conversation_summary,
             anchor_filenames=anchor_filenames,
             preset_standalone=judge.standalone_query,
+            allow_llm=allow_llm,
         )
         return TurnContextResolution(
             original_question=original,
@@ -192,6 +197,7 @@ def _resolution_from_judge(
         dialog_history=dialog_history,
         conversation_summary=conversation_summary,
         anchor_filenames=anchor_filenames,
+        allow_llm=allow_llm,
     )
     return TurnContextResolution(
         original_question=original,
@@ -217,6 +223,7 @@ def resolve_turn_context(
     dialog_history: str = "",
     conversation_summary: str = "",
     anchor_filenames: Sequence[str] = (),
+    allow_llm_judge: bool = True,
 ) -> TurnContextResolution:
     original = (question or "").strip()
     has_prior = prior_evidence is not None and bool(
@@ -231,6 +238,7 @@ def resolve_turn_context(
         dialog_history=dialog_history,
         conversation_summary=conversation_summary,
         anchor_filenames=anchor_filenames,
+        allow_llm=allow_llm_judge,
     )
     return _resolution_from_judge(
         original=original,
@@ -239,6 +247,7 @@ def resolve_turn_context(
         dialog_history=dialog_history,
         conversation_summary=conversation_summary,
         anchor_filenames=anchor_filenames,
+        allow_llm=allow_llm_judge,
     )
 
 

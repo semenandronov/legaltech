@@ -355,7 +355,7 @@ export const deleteChatSession = async (caseId: string, sessionId: string): Prom
 }
 
 export interface RecentActivityItem {
-  type: 'case_chat' | 'global_chat' | 'tabular_review'
+  type: 'case_chat' | 'global_chat' | 'tabular_review' | 'operations'
   id: string
   title: string
   case_id: string | null

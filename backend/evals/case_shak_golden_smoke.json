@@ -1,0 +1,66 @@
+{
+  "summary": {
+    "case_id": "0604cbe5-d37d-473f-aa90-d4ad7e7a26fc",
+    "n": 2,
+    "passed": 1,
+    "pass_rate": 0.5,
+    "path_ok": 2,
+    "path_ok_rate": 1.0,
+    "sla_ok": 0,
+    "sla_ok_rate": 0.0,
+    "total_ms_p50": 64873,
+    "total_ms_avg": 64873,
+    "total_ms_max": 107795,
+    "prep_ms_p50": 97,
+    "prep_ms_avg": 97,
+    "by_difficulty": {
+      "easy": {
+        "n": 2,
+        "passed": 1,
+        "total_ms_p50": 64873
+      }
+    }
+  },
+  "results": [
+    {
+      "id": "g-01",
+      "difficulty": "easy",
+      "question": "Какой номер дела указан в возражениях?",
+      "passed": false,
+      "cover": 0.0,
+      "misses": [
+        "А40-179003/2024"
+      ],
+      "total_ms": 107795,
+      "prep_ms": 156,
+      "ttft_ms": 106201,
+      "latency_path": "fast",
+      "execution_tier": "instant",
+      "router_resolver": "latency_path_fast",
+      "citations": 2,
+      "sla_ok": false,
+      "answer_preview": "В представленных фрагментах материалов дела номер судебного дела не указан. В тексте возражений содержится ссылка на Определение Арбитражного суда города Москвы от 09.11.2023, которым была признана недействительной сделка между ООО «НВ-Строй» и Должником[1], а также на заявление ",
+      "expect_latency_path": "fast",
+      "path_ok": true
+    },
+    {
+      "id": "g-02",
+      "difficulty": "easy",
+      "question": "Кто должники в возражениях ШАК и ШЭР?",
+      "passed": true,
+      "cover": 1.0,
+      "misses": [],
+      "total_ms": 21952,
+      "prep_ms": 38,
+      "ttft_ms": 19302,
+      "latency_path": "fast",
+      "execution_tier": "instant",
+      "router_resolver": "latency_path_fast",
+      "citations": 1,
+      "sla_ok": false,
+      "answer_preview": "В возражениях должниками выступают Шиошвили Андрей Константинович и Шиошвили Элина Рафаиловна[1]. Данные лица выступают заявителями возражений против признания их банкротами и введения процедуры реализации имущества гражданина[1].",
+      "expect_latency_path": "fast",
+      "path_ok": true
+    }
+  ]
+}

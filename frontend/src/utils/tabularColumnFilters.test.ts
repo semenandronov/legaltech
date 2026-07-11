@@ -25,6 +25,15 @@ const textColumn: TabularColumn = {
   is_pinned: false,
 }
 
+const amountColumn: TabularColumn = {
+  id: "col-amount",
+  column_label: "Дебет",
+  column_type: "currency",
+  prompt: "",
+  order_index: 2,
+  is_pinned: false,
+}
+
 const rows: TabularRow[] = [
   {
     file_id: "f1",
@@ -90,6 +99,29 @@ describe("evaluateColumnValueFilter", () => {
     }
     expect(evaluateColumnValueFilter("2024-01-10", cond, dateColumn)).toBe(true)
     expect(evaluateColumnValueFilter("2024-03-15", cond, dateColumn)).toBe(false)
+  })
+
+  it("number_greater_than compares parsed amounts", () => {
+    const cond = {
+      ...emptyFilterCondition(),
+      columnId: "col-amount",
+      operator: "number_greater_than" as const,
+      numberFrom: "500000",
+    }
+    expect(evaluateColumnValueFilter("1 000 000,00", cond, amountColumn)).toBe(true)
+    expect(evaluateColumnValueFilter("100 000,00", cond, amountColumn)).toBe(false)
+  })
+
+  it("number_between includes endpoints", () => {
+    const cond = {
+      ...emptyFilterCondition(),
+      columnId: "col-amount",
+      operator: "number_between" as const,
+      numberFrom: "100000",
+      numberTo: "500000",
+    }
+    expect(evaluateColumnValueFilter("250 000,00", cond, amountColumn)).toBe(true)
+    expect(evaluateColumnValueFilter("50 000", cond, amountColumn)).toBe(false)
   })
 })
 

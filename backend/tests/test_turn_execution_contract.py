@@ -3,6 +3,7 @@ from app.services.chat.conversation_turn_state import (
     ConversationTurnState,
     load_prior_turn_state,
     merge_sql_plan_hints,
+    operations_ui_scope_reset_needed,
     turn_state_from_sql_plan,
 )
 from app.services.chat.structured_data_capability import enforce_data_plane_capability
@@ -47,6 +48,25 @@ def test_merge_sql_plan_hints_flips_count_to_sum():
     hints = merge_sql_plan_hints(prior, operation_override="sum")
     assert hints["operation"] == "sum"
     assert hints["date_from"] == "01.05.2026"
+
+
+def test_merge_sql_plan_hints_skips_amount_thresholds():
+    prior = ConversationTurnState(
+        domain="statement_analytics",
+        statement_file_id="file-1",
+        operation="list",
+        description_contains="Yandex",
+        amount_compare="gt",
+        amount_min="9999",
+        amount_max="50000",
+        amount_semantics="debit",
+    )
+    hints = merge_sql_plan_hints(prior)
+    assert hints["description_contains"] == "Yandex"
+    assert hints["amount_semantics"] == "debit"
+    assert "amount_compare" not in hints
+    assert "amount_min" not in hints
+    assert "amount_max" not in hints
 
 
 def test_deterministic_delta_for_metric_follow_up():
@@ -126,3 +146,30 @@ def test_turn_state_from_sql_plan():
     state = turn_state_from_sql_plan(plan=plan, file_id="f1")
     assert state.operation == "sum"
     assert state.domain == "statement_analytics"
+
+
+def test_operations_ui_scope_reset_when_expanding_table_view():
+    prior = PriorTurnEvidence(
+        message_id="a1",
+        assistant_excerpt="9 операций",
+        citations=(),
+        retrieval_metadata={
+            "turn_state": {
+                "domain": "statement_analytics",
+                "operation": "list",
+                "ui_scope_had_filters": True,
+            }
+        },
+    )
+    assert operations_ui_scope_reset_needed(
+        scope_has_active_filters=False,
+        prior_evidence=prior,
+    )
+    assert not operations_ui_scope_reset_needed(
+        scope_has_active_filters=True,
+        prior_evidence=prior,
+    )
+    assert not operations_ui_scope_reset_needed(
+        scope_has_active_filters=False,
+        prior_evidence=_prior_sql_state(),
+    )

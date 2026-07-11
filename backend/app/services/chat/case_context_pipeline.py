@@ -10,6 +10,7 @@ from langchain_core.documents import Document
 from sqlalchemy.orm import Session
 
 from app.config import config
+from app.models.case import File as CaseFile
 from app.services.chat.citation_file_identity import CaseCitationFileIndex
 from app.services.chat.citation_payload import (
     build_retrieval_citations,
@@ -17,6 +18,11 @@ from app.services.chat.citation_payload import (
 )
 from app.services.chat.rag_passage_utils import passage_for_rerank
 from app.services.chat.retrieval_router import RetrievalTask, build_metadata_filter, resolve_scoped_file_ids
+from app.services.chat.scoped_file_expand import (
+    expand_docs_within_scoped_files,
+    scoped_file_expand_enabled,
+    scoped_file_expand_max_files,
+)
 from app.services.observability.case_assistant_langfuse_tracing import (
     case_assistant_span,
     summarize_case_documents,
@@ -28,7 +34,15 @@ logger = logging.getLogger(__name__)
 
 def _doc_recall_score(doc: Document) -> Optional[float]:
     md = doc.metadata or {}
-    for key in ("combined_score", "similarity_score", "bm25_score", "score", "rerank_score"):
+    # within_file_lexical_score first: BM25-in-file is authoritative under narrow scope.
+    for key in (
+        "within_file_lexical_score",
+        "combined_score",
+        "similarity_score",
+        "bm25_score",
+        "score",
+        "rerank_score",
+    ):
         v = md.get(key)
         if isinstance(v, (int, float)):
             return float(v)
@@ -224,6 +238,55 @@ def run_hybrid_recall(
             query_embedding=query_embedding,
         )
         docs = [d for d in (docs or []) if d is not None and hasattr(d, "page_content")]
+
+        # Narrow scope → always run within-file BM25 channel (production path).
+        scoped_n = len(file_ids or [])
+        want_expand = bool(
+            file_ids
+            and scoped_file_expand_enabled()
+            and scoped_n <= scoped_file_expand_max_files()
+        )
+        if want_expand:
+            try:
+                vector_store = getattr(
+                    getattr(rag_service, "document_processor", None),
+                    "vector_store",
+                    None,
+                )
+                file_texts: Dict[str, str] = {}
+                if db is not None and file_ids:
+                    try:
+                        rows = (
+                            db.query(CaseFile)
+                            .filter(
+                                CaseFile.case_id == str(case_id),
+                                CaseFile.id.in_([str(x) for x in file_ids]),
+                            )
+                            .all()
+                        )
+                        for row in rows:
+                            body = (
+                                (getattr(row, "original_text", None) or "")
+                                or (getattr(row, "structured_text", None) or "")
+                            )
+                            if str(body).strip():
+                                file_texts[str(row.id)] = str(body)
+                    except Exception as text_exc:
+                        logger.debug("within_file original_text load skipped: %s", text_exc)
+
+                docs, expand_meta = expand_docs_within_scoped_files(
+                    case_id=str(case_id),
+                    file_ids=file_ids,
+                    question=search_query or question,
+                    hybrid_docs=docs,
+                    vector_store=vector_store,
+                    force=True,
+                    file_texts=file_texts or None,
+                )
+                meta["within_file_expand"] = expand_meta
+            except Exception as expand_exc:
+                logger.debug("within_file_expand skipped: %s", expand_exc)
+
         span_out.update(summarize_case_documents(docs))
 
     meta["recall_k"] = k
@@ -458,6 +521,20 @@ def assemble_rag_output(
 ) -> Dict[str, Any]:
     """Format context + citations after rerank."""
     max_context_chars = max_assemble_context_chars(budget_profile)
+
+    if db and case_id and docs:
+        try:
+            from app.services.chat.chunk_file_passport import (
+                load_case_file_summary_map,
+                stamp_file_summaries_on_documents,
+            )
+
+            stamp_file_summaries_on_documents(
+                docs,
+                summaries_by_file_id=load_case_file_summary_map(db, str(case_id)),
+            )
+        except Exception:
+            pass
 
     with case_assistant_span(
         "assemble_context",

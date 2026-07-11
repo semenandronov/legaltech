@@ -67,22 +67,22 @@ def _tier_generation_caps(execution_tier: ExecutionTierLabel) -> Tuple[int, int,
     """Return (max_context_chars_cap, llm_max_tokens_cap, temperature) for tier."""
     tier = (execution_tier or "").strip().lower()
     ctx_caps = {
-        "instant": int(getattr(config, "CASE_ASSISTANT_INSTANT_MAX_CONTEXT_CHARS", 16_000) or 16_000),
+        "instant": int(getattr(config, "CASE_ASSISTANT_INSTANT_MAX_CONTEXT_CHARS", 3500) or 3500),
         "standard": int(
             getattr(config, "CASE_ASSISTANT_STANDARD_MAX_CONTEXT_CHARS", 48_000) or 48_000
         ),
         "deep": int(getattr(config, "CASE_ASSISTANT_DEEP_MAX_CONTEXT_CHARS", 64_000) or 64_000),
         "mixed": int(getattr(config, "CASE_ASSISTANT_DEEP_MAX_CONTEXT_CHARS", 64_000) or 64_000),
-        "clarify": int(getattr(config, "CASE_ASSISTANT_INSTANT_MAX_CONTEXT_CHARS", 16_000) or 16_000),
-        "no_retrieval": int(getattr(config, "CASE_ASSISTANT_INSTANT_MAX_CONTEXT_CHARS", 16_000) or 16_000),
+        "clarify": int(getattr(config, "CASE_ASSISTANT_INSTANT_MAX_CONTEXT_CHARS", 3500) or 3500),
+        "no_retrieval": int(getattr(config, "CASE_ASSISTANT_INSTANT_MAX_CONTEXT_CHARS", 3500) or 3500),
     }
     tok_caps = {
-        "instant": int(getattr(config, "CASE_ASSISTANT_INSTANT_MAX_TOKENS", 800) or 800),
+        "instant": int(getattr(config, "CASE_ASSISTANT_INSTANT_MAX_TOKENS", 300) or 300),
         "standard": int(getattr(config, "CASE_ASSISTANT_STANDARD_MAX_TOKENS", 1500) or 1500),
         "deep": int(getattr(config, "CASE_ASSISTANT_DEEP_MAX_TOKENS", 4500) or 4500),
         "mixed": int(getattr(config, "CASE_ASSISTANT_DEEP_MAX_TOKENS", 4500) or 4500),
-        "clarify": int(getattr(config, "CASE_ASSISTANT_INSTANT_MAX_TOKENS", 800) or 800),
-        "no_retrieval": int(getattr(config, "CASE_ASSISTANT_INSTANT_MAX_TOKENS", 800) or 800),
+        "clarify": int(getattr(config, "CASE_ASSISTANT_INSTANT_MAX_TOKENS", 300) or 300),
+        "no_retrieval": int(getattr(config, "CASE_ASSISTANT_INSTANT_MAX_TOKENS", 300) or 300),
     }
     temps = {
         "instant": float(getattr(config, "CASE_ASSISTANT_INSTANT_TEMPERATURE", 0.1) or 0.1),

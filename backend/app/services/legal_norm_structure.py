@@ -15,6 +15,12 @@ _CLAUSE_LINE_START_RE = re.compile(
     r"(?m)^(?P<num>\d+(?:\.\d+)*)\.\s+",
 )
 
+# PDF ГАРАНТ/Docling: «1 .» вместо «1.»; пункт после заголовка статьи в той же строке.
+_CLAUSE_SPACED_DOT_RE = re.compile(r"(?<!\d)(\d+(?:\.\d+)*)\s+\.")
+_INLINE_CLAUSE_BREAK_RE = re.compile(
+    r"(?<=[а-яёa-z»\"»\);\.])\s+(?P<num>\d+(?:\.\d+)*)\.\s+(?=[А-ЯA-Z«(])",
+)
+
 _CHAPTER_HEADING_RE = re.compile(
     r"^\s*(?P<kind>Часть|Раздел|Глава|Параграф|§)\s*"
     r"(?P<num>[\dIVXLCDM]+(?:[.\-–][\dIVXLCDM]+)*)?"
@@ -108,9 +114,31 @@ def extract_chapters_from_parent_path(parent_path: Sequence[str]) -> List[Struct
     return out
 
 
+def normalize_article_text_for_clause_split(article_text: str) -> str:
+    """
+    Подготовка текста статьи перед split по пунктам.
+
+    - «1 .» → «1.» (типичная вёрстка КонсультантПлюс / Docling)
+    - inline «…банкротстве 1. Дела» → перенос, чтобы сработал ^1. в split
+    """
+    text = (article_text or "").strip()
+    if not text:
+        return ""
+    text = _CLAUSE_SPACED_DOT_RE.sub(r"\1.", text)
+
+    def _inline_break(m: re.Match[str]) -> str:
+        prefix = text[: m.start()]
+        if re.search(r"(?i)статья\s*$", prefix) or re.search(r"(?i)ст\.\s*$", prefix):
+            return m.group(0)
+        return f"\n{m.group('num')}. "
+
+    text = _INLINE_CLAUSE_BREAK_RE.sub(_inline_break, text)
+    return text
+
+
 def split_article_into_clauses(article_text: str) -> List[NormClausePiece]:
     """Делит текст статьи на пункты; преамбула (заголовок статьи) — clause_ref=''."""
-    text = (article_text or "").strip()
+    text = normalize_article_text_for_clause_split(article_text)
     if not text:
         return []
 

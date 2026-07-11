@@ -75,7 +75,7 @@ def synthetic_court_docs(pool_size: int) -> list[Document]:
 
 
 def bench_legal_corpus(warm_rounds: int = 5) -> dict:
-    recall_max = int(getattr(config, "LEGAL_CORPUS_RECALL_MAX", 60) or 60)
+    recall_max = int(getattr(config, "LEGAL_CORPUS_RECALL_MAX", 30) or 30)
     final_k = int(getattr(config, "LEGAL_CORPUS_FINAL_K", 8) or 8)
     docs = synthetic_legal_docs(recall_max)
 

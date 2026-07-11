@@ -1,7 +1,8 @@
 """
 Structured facts from statement SQL execution — input for LLM synthesis only.
 
-User-facing text is never assembled here; only aggregates and row samples.
+User-facing text for aggregate ops is composed deterministically here;
+list/find may still go through the synthesizer LLM with these facts as the sole source of numbers.
 """
 from __future__ import annotations
 
@@ -24,9 +25,19 @@ class StatementSqlRowFact:
     page: Optional[int] = None
 
 
+@dataclass(frozen=True)
+class StatementSqlGroupFact:
+    """One description-group aggregate for counterparties / recurring payments."""
+
+    description: str
+    op_count: int
+    amount_sum_text: str
+    abs_amount_sum_text: str
+
+
 @dataclass
 class StatementSqlFacts:
-    """Deterministic SQL result — no user-facing prose."""
+    """Deterministic SQL result — no user-facing prose in the structure itself."""
 
     operation: str
     file_label: str
@@ -38,9 +49,15 @@ class StatementSqlFacts:
     time_hint: str = ""
     description_filter: str = ""
     amount_semantics_label: str = ""
+    amount_filter_label: str = ""
+    scope_note: str = ""
+    result_limit: int = 0
     sample_rows: List[StatementSqlRowFact] = field(default_factory=list)
+    group_rows: List[StatementSqlGroupFact] = field(default_factory=list)
 
     def has_matches(self) -> bool:
+        if self.operation == "group":
+            return bool(self.group_rows)
         return self.row_count > 0
 
 
@@ -88,6 +105,21 @@ def row_fact_from_db(row: CaseFileTransaction) -> StatementSqlRowFact:
     )
 
 
+def group_fact_from_aggregate(
+    *,
+    description: str,
+    op_count: int,
+    amount_sum: Decimal,
+    abs_amount_sum: Decimal,
+) -> StatementSqlGroupFact:
+    return StatementSqlGroupFact(
+        description=(description or "—").strip() or "—",
+        op_count=int(op_count),
+        amount_sum_text=_format_amount_rub(amount_sum),
+        abs_amount_sum_text=_format_amount_rub(abs_amount_sum),
+    )
+
+
 def build_facts_evidence_block(
     *,
     question: str,
@@ -114,19 +146,37 @@ def build_facts_evidence_block(
         lines.append(f"Фильтр по описанию: {facts.description_filter.strip()}")
     if facts.amount_semantics_label.strip():
         lines.append(f"Направление суммы: {facts.amount_semantics_label.strip()}")
+    if facts.amount_filter_label.strip():
+        lines.append(f"Фильтр по величине суммы: {facts.amount_filter_label.strip()}")
+    if facts.scope_note.strip():
+        lines.append(f"Область анализа: {facts.scope_note.strip()}")
+    if facts.result_limit > 0:
+        lines.append(f"Лимит результата: {facts.result_limit}")
     if plan.rationale.strip():
         lines.append(f"Пояснение планировщика: {plan.rationale.strip()[:300]}")
 
-    include_rows = facts.operation in {"list", "find"} and facts.sample_rows
-    if include_rows:
+    if facts.operation in {"list", "find", "top"} and facts.sample_rows:
+        label = {
+            "list": "Операции для ответа",
+            "find": "Операции для ответа",
+            "top": "Крупнейшие операции по |сумме|",
+        }[facts.operation]
         lines.append("")
-        lines.append(f"Операции для ответа ({len(facts.sample_rows)} строк):")
+        lines.append(f"{label} ({len(facts.sample_rows)} строк):")
         for rf in facts.sample_rows:
             page = f", стр. {rf.page}" if rf.page else ""
             lines.append(
                 f"- №{rf.row_number} | {rf.date_text} | {rf.amount_text} | {rf.description}{page}"
             )
-    elif facts.row_count == 0:
+    elif facts.operation == "group" and facts.group_rows:
+        lines.append("")
+        lines.append(f"Группы по описанию ({len(facts.group_rows)}):")
+        for gf in facts.group_rows:
+            lines.append(
+                f"- {gf.description} | операций: {gf.op_count} | "
+                f"оборот |сумма|: {gf.abs_amount_sum_text} | алгебраическая сумма: {gf.amount_sum_text}"
+            )
+    elif facts.row_count == 0 and not facts.group_rows:
         lines.append("")
         lines.append("Операций по фильтру не найдено.")
 
@@ -140,16 +190,35 @@ def compose_fallback_answer(
     facts: StatementSqlFacts,
 ) -> str:
     """
-    Last-resort user text when synthesis LLM is unavailable.
+    Deterministic user text for aggregate ops and LLM-unavailable fallback.
 
-    Short prose only — never debug pipe format or raw row dumps for count/sum.
+    Short prose only — never debug pipe format or invented numbers.
     """
+    del question  # facts already encode the answered slice
     file_ref = facts.file_label or "выписке"
     period = facts.period_label or "указанный период"
+    scope_prefix = f"{facts.scope_note.strip()} " if facts.scope_note.strip() else ""
+
+    if facts.operation == "group":
+        if not facts.group_rows:
+            return (
+                f"{scope_prefix}По файлу «{file_ref}» за {period} групп по описанию не найдено."
+            )
+        intro = (
+            f"{scope_prefix}По файлу «{file_ref}» за {period} — основные группы "
+            f"по описанию (топ-{len(facts.group_rows)}):"
+        )
+        items: List[str] = [intro]
+        for idx, gf in enumerate(facts.group_rows, start=1):
+            items.append(
+                f"{idx}. {gf.description} — {gf.op_count} оп., "
+                f"оборот {gf.abs_amount_sum_text} (алг. {gf.amount_sum_text})"
+            )
+        return "\n".join(items)
 
     if facts.row_count == 0:
         return (
-            f"По файлу «{file_ref}» за {period} операций по заданному условию не найдено."
+            f"{scope_prefix}По файлу «{file_ref}» за {period} операций по заданному условию не найдено."
         )
 
     op = facts.operation
@@ -158,31 +227,40 @@ def compose_fallback_answer(
         if facts.amount_sum is not None:
             amount_part = f" Суммарный оборот по строкам: {_format_amount_rub(facts.amount_sum)}."
         return (
-            f"По файлу «{file_ref}» за {period} — {facts.row_count} операций.{amount_part}"
+            f"{scope_prefix}По файлу «{file_ref}» за {period} — {facts.row_count} операций.{amount_part}"
         ).strip()
 
     if op == "sum":
         return (
-            f"По файлу «{file_ref}» за {period} сумма операций составляет "
+            f"{scope_prefix}По файлу «{file_ref}» за {period} сумма операций составляет "
             f"{_format_amount_rub(facts.amount_sum)} ({facts.row_count} операций)."
         )
 
+    if op == "top" and facts.sample_rows:
+        n = len(facts.sample_rows)
+        title = "Самая крупная операция" if n == 1 else f"Топ-{n} операций по |сумме|"
+        intro = f"{scope_prefix}По файлу «{file_ref}» за {period} — {title}:"
+        items = [intro]
+        for idx, rf in enumerate(facts.sample_rows, start=1):
+            items.append(
+                f"{idx}. {rf.date_text} — {rf.amount_text} — {rf.description}"
+            )
+        return "\n".join(items)
+
     if op in {"list", "find"} and facts.sample_rows:
         intro = (
-            f"По файлу «{file_ref}» за {period} найдено {facts.row_count} операций"
+            f"{scope_prefix}По файлу «{file_ref}» за {period} найдено {facts.row_count} операций"
         )
         if facts.truncated:
-            intro += " (показаны не все)"
+            intro += f" (показаны первые {len(facts.sample_rows)})"
         intro += ":"
-        items: List[str] = [intro]
-        for rf in facts.sample_rows[:10]:
+        items = [intro]
+        for rf in facts.sample_rows:
             items.append(
                 f"• {rf.date_text} — {rf.amount_text} — {rf.description}"
             )
-        if facts.row_count > len(facts.sample_rows[:10]):
-            items.append(f"… и ещё {facts.row_count - min(10, len(facts.sample_rows))} операций.")
         return "\n".join(items)
 
     return (
-        f"По файлу «{file_ref}» за {period} найдено {facts.row_count} операций."
+        f"{scope_prefix}По файлу «{file_ref}» за {period} найдено {facts.row_count} операций."
     )

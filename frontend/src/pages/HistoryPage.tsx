@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Clock, MessageSquare, Table2 } from 'lucide-react'
+import { Clock, MessageSquare, Table2, Receipt } from 'lucide-react'
 import UnifiedSidebar from '../components/Layout/UnifiedSidebar'
 import { MikePageHeader } from '../components/TabularReview/mike/MikePageHeader'
 import {
@@ -25,6 +25,7 @@ const TYPE_CONFIG: Record<
   case_chat: { label: 'Чат по делу', Icon: MessageSquare },
   global_chat: { label: 'Глобальный чат', Icon: MessageSquare },
   tabular_review: { label: 'Таблица', Icon: Table2 },
+  operations: { label: 'Выписка', Icon: Receipt },
 }
 
 const formatDate = (iso: string | null) => {
@@ -75,6 +76,8 @@ const HistoryPage = () => {
       navigate(`/assistant?session=${item.id}`)
     } else if (item.type === 'tabular_review' && item.case_id) {
       navigate(`/cases/${item.case_id}/tabular-review/${item.id}`)
+    } else if (item.type === 'operations' && item.case_id) {
+      navigate(`/cases/${item.case_id}/operations?file=${item.id}`)
     }
   }
 
@@ -85,7 +88,7 @@ const HistoryPage = () => {
       <p className="mt-1 text-left text-xs text-gray-400">
         {search.trim()
           ? 'Ничего не найдено. Попробуйте другой запрос.'
-          : 'Здесь появятся недавние чаты и табличные обзоры.'}
+          : 'Здесь появятся недавние чаты, табличные обзоры и выписки.'}
       </p>
       {!search.trim() && (
         <button
@@ -163,7 +166,8 @@ const HistoryPage = () => {
                   const clickable =
                     (item.type === 'case_chat' && !!item.case_id) ||
                     (item.type === 'global_chat' && isProductFeatureEnabled('globalAssistant')) ||
-                    (item.type === 'tabular_review' && !!item.case_id)
+                    (item.type === 'tabular_review' && !!item.case_id) ||
+                    (item.type === 'operations' && !!item.case_id)
 
                   return (
                     <MikeTableRow

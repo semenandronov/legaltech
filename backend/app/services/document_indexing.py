@@ -30,6 +30,7 @@ def build_index_chunks(
     loader_native_text: bool = False,
     loader_documents: Optional[List[Document]] = None,
     use_norm_corpus: bool = False,
+    prepared_pdf_text: Optional[str] = None,
 ) -> List[Document]:
     """
     Run Docling pre-segmentation once, route to structured-table or narrative indexer.
@@ -47,6 +48,7 @@ def build_index_chunks(
             loader_did_ocr=loader_did_ocr,
             loader_native_text=loader_native_text,
             loader_documents=loader_documents,
+            prepared_pdf_text=prepared_pdf_text,
         )
 
     if loader_did_ocr:

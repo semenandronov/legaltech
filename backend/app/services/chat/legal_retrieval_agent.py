@@ -17,12 +17,17 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from langchain_core.documents import Document
 
 from app.config import config
+from app.services.chat.rag_passage_utils import legal_corpus_max_fragment_chars, truncate_passage_body
 from app.services.chat.legal_query_plan import (
     LegalRetrievalPlan,
+    build_hybrid_queries_from_plan,
+    coverage_target_articles,
     doc_metadata_matches_article,
+    effective_search_queries,
     is_repeal_only_snippet,
     plan_coverage,
     plan_is_sufficient,
+    structured_lookup_articles,
 )
 from app.services.chat.legal_retrieval_planner import resolve_legal_retrieval_plan
 
@@ -46,7 +51,10 @@ def _wall_ms() -> int:
 
 def _max_hybrid_queries(plan: LegalRetrievalPlan) -> int:
     base = max(1, min(8, int(getattr(config, "LEGAL_CORPUS_MAX_HYBRID_QUERIES", 3) or 3)))
-    return max(base, min(len(plan.search_queries), 8))
+    # facts дают отдельные проходы hybrid — расширяем cap, но не выше 8
+    fact_bonus = min(len(plan.facts or []), 3)
+    query_count = len(plan.search_queries or []) + fact_bonus
+    return max(base, min(query_count, 8))
 
 
 def _filter_instrument_ids(ids: Optional[List[str]]) -> List[str]:
@@ -74,7 +82,8 @@ def _format_context_with_budget(
     for i, d in enumerate(docs, start=1):
         meta = d.metadata or {}
         fn = meta.get("source_filename", "файл")
-        block = f"[Справочник — фрагмент {i}, источник: {fn}]\n{(d.page_content or '').strip()}"
+        body = truncate_passage_body((d.page_content or "").strip(), legal_corpus_max_fragment_chars())
+        block = f"[Справочник — фрагмент {i}, источник: {fn}]\n{body}"
         if used + len(block) > max_chars:
             break
         parts.append(block)
@@ -126,22 +135,32 @@ def _merge_documents(existing: List[Document], new_docs: Sequence[Document]) -> 
     return out
 
 
-def _rank_documents_for_plan(docs: List[Document], plan: LegalRetrievalPlan) -> List[Document]:
-    """Поднять содержательные фрагменты; опустить «только утратила силу» при article_lookup."""
+def _rank_documents_for_plan(
+    docs: List[Document],
+    plan: LegalRetrievalPlan,
+    *,
+    question: str = "",
+) -> List[Document]:
+    """Поднять содержательные фрагменты; закрепить слоты coverage_target_articles в начале."""
     from app.services.legal_instruments import instrument_priority_weight
+
+    targets = set(coverage_target_articles(plan, question))
 
     def score(doc: Document) -> float:
         text = (doc.page_content or "").strip()
         md = doc.metadata or {}
         s = float(md.get("rerank_score") or md.get("score") or 0.0)
         s += instrument_priority_weight(str(md.get("instrument_id") or "") or None) * 0.35
+        art = str(md.get("article_number") or "").strip()
+        if art and art in targets:
+            s += 5.0
         if md.get("graph_expanded"):
-            s += 0.25
+            s += 0.15
         if plan.topic == "article_lookup" and plan.user_articles:
-            for art in plan.user_articles:
-                if _doc_mentions_article(doc, art):
+            for art_u in plan.user_articles:
+                if _doc_mentions_article(doc, art_u):
                     s += 2.0
-                    if is_repeal_only_snippet(text, article=art):
+                    if is_repeal_only_snippet(text, article=art_u):
                         s -= 3.0
                     elif len(text) >= 400:
                         s += 1.5
@@ -149,7 +168,21 @@ def _rank_documents_for_plan(docs: List[Document], plan: LegalRetrievalPlan) -> 
             s += 0.5
         return s
 
-    return sorted(docs, key=score, reverse=True)
+    ranked = sorted(docs, key=score, reverse=True)
+    if not targets:
+        return ranked
+
+    pinned: List[Document] = []
+    rest: List[Document] = []
+    seen_target: set[str] = set()
+    for d in ranked:
+        art = str((d.metadata or {}).get("article_number") or "").strip()
+        if art and art in targets and art not in seen_target:
+            pinned.append(d)
+            seen_target.add(art)
+        else:
+            rest.append(d)
+    return pinned + rest
 
 
 def _parse_reference_date(value: Any) -> Optional[date]:
@@ -205,7 +238,7 @@ def _expand_with_norm_graph(
         return docs
     from app.services.legal_norm_graph import (
         EDGE_TYPES_FORWARD,
-        expand_norm_neighbor_edges,
+        expand_norm_neighbor_edges_multihop,
         fetch_documents_by_norm_keys,
     )
 
@@ -217,9 +250,13 @@ def _expand_with_norm_graph(
     if not keys:
         return docs
 
-    neighbor_edges = expand_norm_neighbor_edges(
-        keys[:6],
-        limit=limit,
+    max_hops = int(getattr(config, "LEGAL_NORM_GRAPH_MAX_HOPS", 2) or 2)
+    total_limit = max(limit, int(getattr(config, "LEGAL_NORM_GRAPH_TOTAL_EXPAND_LIMIT", 24) or 24))
+    neighbor_edges = expand_norm_neighbor_edges_multihop(
+        keys[:8],
+        max_hops=max_hops,
+        limit_per_hop=limit,
+        total_limit=total_limit,
         reference_date=reference_date,
     )
     if not neighbor_edges:
@@ -236,7 +273,86 @@ def _expand_with_norm_graph(
         reference_date=reference_date,
         full_article_for_keys=full_article_keys,
     )
+    if extra:
+        for d in extra:
+            md = dict(d.metadata or {})
+            md["graph_expanded"] = True
+            d.metadata = md
     return _merge_documents(docs, extra) if extra else docs
+
+
+def _fetch_graph_cluster_for_plan(
+    plan: LegalRetrievalPlan,
+    *,
+    reference_date: Optional[date],
+    limit: int,
+) -> List[Document]:
+    """
+    Graph-first: явные статьи пользователя → узлы графа → многошаговый обход → тексты норм.
+    """
+    articles = structured_lookup_articles(plan)
+    if not articles or not plan.instrument_ids:
+        return []
+    if not bool(getattr(config, "LEGAL_NORM_GRAPH_CLUSTER_ENABLED", True)):
+        return []
+
+    from app.services.legal_norm_lookup import NormLookupRequest, fetch_norm_documents
+    from app.services.legal_norm_graph import (
+        EDGE_TYPES_FORWARD,
+        expand_norm_neighbor_edges_multihop,
+        fetch_documents_by_norm_keys,
+    )
+
+    seed_requests: List[NormLookupRequest] = []
+    for iid in plan.instrument_ids:
+        for art in articles:
+            cref = plan.user_clause_ref if len(articles) == 1 else None
+            seed_requests.append(
+                NormLookupRequest(
+                    instrument_id=iid,
+                    article_number=art,
+                    clause_ref=cref or None,
+                )
+            )
+
+    seed_docs = fetch_norm_documents(seed_requests, reference_date=reference_date)
+    seed_keys: List[str] = []
+    for d in seed_docs:
+        k = str((d.metadata or {}).get("norm_node_key") or "").strip()
+        if k:
+            seed_keys.append(k)
+
+    if not seed_keys:
+        return seed_docs[:limit] if seed_docs else []
+
+    max_hops = int(getattr(config, "LEGAL_NORM_GRAPH_MAX_HOPS", 2) or 2)
+    cluster_cap = max(limit, int(getattr(config, "LEGAL_NORM_GRAPH_CLUSTER_LIMIT", 20) or 20))
+    neighbor_edges = expand_norm_neighbor_edges_multihop(
+        seed_keys,
+        max_hops=max_hops,
+        total_limit=cluster_cap,
+        reference_date=reference_date,
+    )
+    full_article_keys = {
+        nk
+        for nk, edge_type in neighbor_edges
+        if edge_type in EDGE_TYPES_FORWARD and "::clause::" not in nk
+    }
+    neighbor_keys = [nk for nk, _ in neighbor_edges]
+    cluster_docs = list(seed_docs)
+    if neighbor_keys:
+        extra = fetch_documents_by_norm_keys(
+            neighbor_keys,
+            reference_date=reference_date,
+            full_article_for_keys=full_article_keys,
+        )
+        for d in extra:
+            md = dict(d.metadata or {})
+            md["graph_cluster"] = True
+            d.metadata = md
+        cluster_docs = _merge_documents(cluster_docs, extra)
+
+    return cluster_docs[:cluster_cap]
 
 
 def _fetch_norm_tree_for_plan(
@@ -262,13 +378,14 @@ def _fetch_required_articles_fast(
     *,
     k: int,
 ) -> Tuple[List[Document], bool]:
-    """Batch FTS по всем целевым статьям плана — одна SQL-сессия на запрос."""
-    if not plan.required_articles or not plan.instrument_ids:
+    """Batch FTS по явным статьям пользователя."""
+    articles = structured_lookup_articles(plan)
+    if not articles or not plan.instrument_ids:
         return [], False
     from app.services.legal_corpus_service import batch_articles_fts_lookup
 
     merged = batch_articles_fts_lookup(
-        plan.required_articles[:6],
+        articles[:6],
         question,
         plan.instrument_ids,
         k_per_article=k,
@@ -287,8 +404,8 @@ def _gap_fill_missing_articles(
 ) -> List[Document]:
     if time.monotonic() >= wall_deadline:
         return docs
-    cov = plan_coverage(docs, plan)
-    missing = list(cov.get("missing") or [])
+    cov = plan_coverage(docs, plan, question=question)
+    missing = [a for a in (cov.get("missing") or []) if a in coverage_target_articles(plan, question)]
     if not missing or not plan.instrument_ids:
         return docs
     from app.services.legal_corpus_service import batch_articles_fts_lookup
@@ -303,12 +420,11 @@ def _gap_fill_missing_articles(
 
 
 def _cap_search_queries_from_plan(plan: LegalRetrievalPlan, question: str) -> List[str]:
-    raw: List[str] = [(question or "").strip()]
-    raw.extend(plan.search_queries)
+    cap = _max_hybrid_queries(plan)
+    base = build_hybrid_queries_from_plan(plan, question)
     out: List[str] = []
     seen: set[str] = set()
-    cap = _max_hybrid_queries(plan)
-    for sq in raw:
+    for sq in base:
         t = (sq or "").strip()
         if not t:
             continue
@@ -319,7 +435,7 @@ def _cap_search_queries_from_plan(plan: LegalRetrievalPlan, question: str) -> Li
         out.append(t)
         if len(out) >= cap:
             break
-    return out or [(question or "").strip() or " "]
+    return out or base[:1]
 
 
 def _maybe_plenum_supplement(
@@ -556,7 +672,6 @@ def run_legal_corpus_retrieval(
         else (getattr(config, "LEGAL_CORPUS_MAX_CONTEXT_CHARS", 14000) or 14000)
     )
     t0 = time.monotonic()
-    deadline = t0 + (_wall_ms() / 1000.0)
     ref_date = _parse_reference_date(reference_date)
 
     pre_ids = _filter_instrument_ids(instrument_ids)
@@ -566,13 +681,17 @@ def run_legal_corpus_retrieval(
         legal_research=legal_research,
         task_type=task_type,
     )
+    # Бюджет retrieval — после планировщика (LLM не должен съедать wall_ms поиска).
+    deadline = time.monotonic() + (_wall_ms() / 1000.0)
     instrument_ids_final = plan.instrument_ids or pre_ids
 
     meta: Dict[str, Any] = {
         "topic": plan.topic,
         "required_articles": list(plan.required_articles),
         "user_articles": list(plan.user_articles),
+        "facts": list(plan.facts),
         "planner_source": planner_source,
+        "planner_ms": int((time.monotonic() - t0) * 1000),
         "hybrid_queries_used": 0,
         "used_fast_path": False,
         "iterative_added": 0,
@@ -586,8 +705,9 @@ def run_legal_corpus_retrieval(
     used_norm_tree = False
 
     if _agentic_plan_enabled():
+        user_arts = structured_lookup_articles(plan)
         # --- 0) Norm tree (structured metadata lookup для article_lookup) ---
-        if plan.required_articles and instrument_ids_final and time.monotonic() < deadline:
+        if user_arts and instrument_ids_final and time.monotonic() < deadline:
             tree_docs, tree_sufficient = _fetch_norm_tree_for_plan(plan, reference_date=ref_date)
             if tree_docs:
                 docs = tree_docs
@@ -605,8 +725,30 @@ def run_legal_corpus_retrieval(
                     used_fast = True
                     meta["used_fast_path"] = True
 
+        # --- 0b) Graph cluster: явные статьи → паутина норм (до FTS/hybrid) ---
+        if (
+            user_arts
+            and instrument_ids_final
+            and not plan_is_sufficient(docs, plan)
+            and time.monotonic() < deadline
+        ):
+            cluster_lim = int(getattr(config, "LEGAL_NORM_GRAPH_CLUSTER_LIMIT", 20) or 20)
+            cluster_docs = _fetch_graph_cluster_for_plan(
+                plan,
+                reference_date=ref_date,
+                limit=cluster_lim,
+            )
+            if cluster_docs:
+                docs = _merge_documents(docs, cluster_docs)
+                meta["graph_cluster_docs"] = len(cluster_docs)
+                logger.info(
+                    "[LegalRetrievalAgent] graph_cluster articles=%s n=%d",
+                    user_arts,
+                    len(cluster_docs),
+                )
+
         # --- 1) Per-article FTS fast path (fallback если дерево пусто / недостаточно) ---
-        if not used_norm_tree and plan.required_articles and instrument_ids_final and time.monotonic() < deadline:
+        if not used_norm_tree and user_arts and instrument_ids_final and time.monotonic() < deadline:
             fast_docs, used_fast = _fetch_required_articles_fast(plan, q, k=ctx_k)
             docs = fast_docs
             if used_fast:
@@ -660,6 +802,7 @@ def run_legal_corpus_retrieval(
                     search_queries=hybrid_qs,
                     max_search_queries=len(hybrid_qs),
                     skip_rerank=skip_rerank,
+                    include_original_query=False,
                 )
             except TypeError:
                 hits = retrieve_legal_corpus_documents(
@@ -668,6 +811,7 @@ def run_legal_corpus_retrieval(
                     instrument_ids=instrument_ids_final or None,
                     search_queries=hybrid_qs,
                     skip_rerank=skip_rerank,
+                    include_original_query=False,
                 )
             docs = _merge_documents(docs, hits or [])
         elif used_fast and plan_is_sufficient(docs, plan):
@@ -679,7 +823,7 @@ def run_legal_corpus_retrieval(
             )
 
         # --- 3) Gap-fill по непокрытым статьям ---
-        cov = plan_coverage(docs, plan)
+        cov = plan_coverage(docs, plan, question=question)
         if cov.get("missing") and time.monotonic() < deadline:
             before = len(docs)
             docs = _gap_fill_missing_articles(docs, plan, q, k=ctx_k, wall_deadline=deadline)
@@ -687,7 +831,7 @@ def run_legal_corpus_retrieval(
                 meta["gap_fill_rounds"] = int(meta.get("gap_fill_rounds") or 0) + 1
 
         docs = _maybe_plenum_supplement(docs, q, plan, k=ctx_k)
-        docs = _rank_documents_for_plan(docs, plan)
+        docs = _rank_documents_for_plan(docs, plan, question=question)
 
     else:
         # Legacy path (flag off)
@@ -713,7 +857,7 @@ def run_legal_corpus_retrieval(
                 search_queries=hybrid_qs,
             )
 
-    cov = plan_coverage(docs, plan) if _agentic_plan_enabled() else {}
+    cov = plan_coverage(docs, plan, question=question) if _agentic_plan_enabled() else {}
     sufficient = plan_is_sufficient(docs, plan) if _agentic_plan_enabled() else _heuristic_sufficient(
         docs, article=meta.get("article")
     )
@@ -736,7 +880,7 @@ def run_legal_corpus_retrieval(
         if extra:
             docs = _merge_documents(docs, extra)
             meta["iterative_added"] = len(extra)
-            cov = plan_coverage(docs, plan)
+            cov = plan_coverage(docs, plan, question=question)
             sufficient = plan_is_sufficient(docs, plan)
 
         if not sufficient and time.monotonic() < deadline:
@@ -751,7 +895,7 @@ def run_legal_corpus_retrieval(
             if extra_llm:
                 docs = _merge_documents(docs, extra_llm)
                 meta["iterative_added"] = int(meta.get("iterative_added") or 0) + len(extra_llm)
-                cov = plan_coverage(docs, plan)
+                cov = plan_coverage(docs, plan, question=question)
                 sufficient = plan_is_sufficient(docs, plan)
 
     meta["coverage"] = cov
@@ -779,7 +923,7 @@ def run_legal_corpus_retrieval(
             meta["graph_expanded"] = len(expanded) - len(docs)
             docs = expanded
 
-    docs = _rank_documents_for_plan(docs, plan)
+    docs = _rank_documents_for_plan(docs, plan, question=question)
     context, included = _format_context_with_budget(
         docs,
         max_chars=max_c,

@@ -2,7 +2,7 @@
 
 Phase 1.3: Added multi-stage RAG pipeline with reranking and query condensation.
 """
-from typing import List, Dict, Any, Tuple, Optional, Type, Set
+from typing import List, Dict, Any, Tuple, Optional, Type, Set, Callable
 import threading
 import json
 import time
@@ -775,6 +775,18 @@ class RAGService:
         }
         base_filter = _merge_retrieval_metadata_filter(metadata_filter, file_ids=file_ids)
 
+        if query_embedding is None and (query or "").strip():
+            try:
+                query_embedding = self.document_processor.vector_store.embeddings.embed_query(
+                    query
+                )
+            except Exception as embed_exc:
+                logger.warning(
+                    "Hybrid funnel: query embedding precompute failed for case %s: %s",
+                    case_id,
+                    embed_exc,
+                )
+
         # "Anchor/address" queries must have deterministic recall on docling chunks.
         is_anchor_query = False
         try:
@@ -884,6 +896,7 @@ class RAGService:
                     chunk_levels=["docling"],
                     metadata_filter=base_filter,
                     bm25_sync=bm25_sync,
+                    query_embedding=query_embedding,
                 )
             except Exception:
                 docling_exact_docs = []
@@ -905,6 +918,7 @@ class RAGService:
                     chunk_levels=["docling"],
                     metadata_filter=base_filter,
                     bm25_sync=bm25_sync,
+                    query_embedding=query_embedding,
                 )
             except Exception:
                 combined = []
@@ -1174,9 +1188,11 @@ class RAGService:
         if max_context_chars is None:
             max_context_chars = config.MAX_CONTEXT_CHARS
 
+        from app.services.chat.chunk_file_passport import attach_passports_to_source_headers
         from app.services.chat.retrieval_dc_labels import compute_retrieval_dc_labels
 
         dc_labels_full = compute_retrieval_dc_labels(documents)
+        _, passport_lines = attach_passports_to_source_headers(documents)
 
         formatted_sources: List[str] = []
         included_docs: List[Document] = []
@@ -1185,9 +1201,10 @@ class RAGService:
         for i, doc in enumerate(documents, 1):
             metadata = doc.metadata or {}
             source_file = metadata.get("source_file", "unknown")
-            source_page = metadata.get("source_page")
+            source_page = metadata.get("source_page") or metadata.get("page_start")
             source_line = metadata.get("source_start_line")
             d_ord, c_ref = dc_labels_full[i - 1]
+            passport = passport_lines[i - 1] if i - 1 < len(passport_lines) else ""
 
             doc_type = metadata.get("doc_type")
             classification_info = ""
@@ -1216,6 +1233,8 @@ class RAGService:
                 source_ref += f", позиция {start_char}"
 
             source_ref += "]"
+            if passport:
+                source_ref = f"{source_ref}\n{passport}"
 
             doc_content = doc.page_content or ""
             available_chars = max_context_chars - total_length - len(source_ref) - 10
@@ -2024,23 +2043,13 @@ class RAGService:
         history: Optional[List[Dict]] = None,
         *,
         system_prompt: Optional[str] = None,
+        llm: Any = None,
     ) -> "AnswerWithCitations":
         """
         Генерирует ответ со структурированными цитатами (Harvey/Lexis+ style).
-        
-        КЛЮЧЕВОЙ ПРИНЦИП: chunk_id-based citations
-        1. Каждый chunk имеет уникальный chunk_id с точными координатами
-        2. ИИ ссылается на chunk_id, мы заменяем на [N] для красоты
-        3. При клике - открываем документ по СОХРАНЁННЫМ координатам chunk
-        
-        Args:
-            query: Запрос пользователя
-            documents: Список Document объектов с метаданными (включая chunk_id)
-            history: Опциональная история чата
-            system_prompt: Опциональный system prompt (иначе встроенный для chunk citations)
-            
-        Returns:
-            AnswerWithCitations объект с ответом и списком EnhancedCitation
+
+        Non-streaming path (tests / fallback). Prefer
+        ``stream_with_structured_citations`` for case-assistant UX.
         """
         from app.services.chat.structured_citations_core import (
             build_structured_citation_context,
@@ -2077,12 +2086,14 @@ class RAGService:
                 list(prepared.chunk_ids_list[:5]),
             )
 
-            llm = create_llm(temperature=0.1, use_rate_limiting=False, streaming=False)
+            invoke_llm = llm or create_llm(
+                temperature=0.1, use_rate_limiting=False, streaming=False
+            )
             sys_content = str(prepared.messages[0].content or "")
             prompt = str(prepared.messages[1].content or "")
 
             response = traced_sync_llm_invoke(
-                llm,
+                invoke_llm,
                 list(prepared.messages),
                 generation_name="case_structured_citations_llm",
                 assistant_step="structured_citations.llm_invoke",
@@ -2120,6 +2131,95 @@ class RAGService:
             )
         except Exception as e:
             logger.error("Error in generate_with_structured_citations: %s", e, exc_info=True)
+            return AnswerWithCitations(answer="", citations=[], confidence=0.0)
+
+    def stream_with_structured_citations(
+        self,
+        query: str,
+        documents: List[Document],
+        *,
+        system_prompt: Optional[str] = None,
+        llm: Any,
+        writer: Callable[[Dict[str, Any]], None],
+        enrich_citations: Optional[Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]] = None,
+        metrics_out: Optional[Dict[str, Any]] = None,
+    ) -> "AnswerWithCitations":
+        """
+        Stream structured-citation answer to LangGraph custom channel.
+
+        Emits incremental ``text_delta`` (user-visible [N] markers) and progressive
+        ``citations`` payloads via ``writer``. Returns the canonical final answer
+        after map/normalize (caller should content_sync if post-process changes text).
+        """
+        from app.services.chat.structured_citations_core import (
+            build_structured_citation_context,
+        )
+        from app.services.langchain_agents.schemas.citation_schema import AnswerWithCitations
+        from app.services.observability.assistant_pipeline_langfuse_tracing import (
+            assistant_step_span,
+        )
+        from app.services.observability.llm_langfuse_instrumentation import (
+            traced_collect_structured_citation_stream,
+        )
+
+        stream_metrics: Dict[str, Any] = {}
+        try:
+            with assistant_step_span(
+                "case",
+                "structured_citations.prepare_chunks",
+                input_payload={"docs_in": len(documents)},
+            ) as prep_out:
+                prepared = build_structured_citation_context(
+                    query=query,
+                    documents=documents,
+                    rag_service=self,
+                    system_prompt=system_prompt,
+                )
+                prep_out["num_chunks"] = prepared.num_chunks
+                prep_out["context_chars"] = prepared.context_chars
+
+            logger.info(
+                "[StructuredCitations] Streaming %s chunks with IDs: %s...",
+                prepared.num_chunks,
+                list(prepared.chunk_ids_list[:5]),
+            )
+
+            sys_content = str(prepared.messages[0].content or "")
+            prompt = str(prepared.messages[1].content or "")
+            answer_text, citations = traced_collect_structured_citation_stream(
+                llm,
+                prepared,
+                writer,
+                enrich_citations=enrich_citations,
+                generation_name="case_structured_citations_llm",
+                assistant_step="structured_citations.llm_stream",
+                assistant_scope="case",
+                metadata={
+                    "num_chunks": prepared.num_chunks,
+                    "system_chars": len(sys_content),
+                    "human_chars": len(prompt),
+                    "stream": True,
+                },
+                metrics_out=stream_metrics,
+            )
+            if metrics_out is not None:
+                metrics_out.update(stream_metrics)
+
+            logger.info(
+                "[StructuredCitations] Stream complete chars=%s citations=%s ttft_ms=%s",
+                len(answer_text or ""),
+                len(citations or []),
+                stream_metrics.get("ttft_ms"),
+            )
+            return AnswerWithCitations(
+                answer=answer_text or "",
+                citations=list(citations or []),
+                confidence=0.85 if citations else 0.5,
+            )
+        except Exception as e:
+            logger.error("Error in stream_with_structured_citations: %s", e, exc_info=True)
+            if metrics_out is not None:
+                metrics_out["stream_error"] = f"{type(e).__name__}: {e}"[:300]
             return AnswerWithCitations(answer="", citations=[], confidence=0.0)
     
     def _prepare_context_with_positions(self, documents: List[Document]) -> str:

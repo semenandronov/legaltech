@@ -7,9 +7,13 @@ from app.services.chat.execution_tier import adaptive_tier_enabled
 
 def test_fast_fact_lookup_instant_recall_when_adaptive_enabled(monkeypatch):
     monkeypatch.setenv("CASE_ASSISTANT_ADAPTIVE_TIER_ENABLED", "true")
+    monkeypatch.setenv("CASE_ASSISTANT_INSTANT_MAX_CONTEXT_CHARS", "3500")
+    monkeypatch.setenv("CASE_ASSISTANT_INSTANT_MAX_TOKENS", "300")
     from app.config import config
 
     config.CASE_ASSISTANT_ADAPTIVE_TIER_ENABLED = True
+    config.CASE_ASSISTANT_INSTANT_MAX_CONTEXT_CHARS = 3500
+    config.CASE_ASSISTANT_INSTANT_MAX_TOKENS = 300
     profile = ConversationPolicyService.budget_profile_for_depth(
         "fast",
         "fact_lookup",
@@ -22,9 +26,9 @@ def test_fast_fact_lookup_instant_recall_when_adaptive_enabled(monkeypatch):
     assert profile["final_k"] == 6
     assert profile["rerank_enabled"] is True
     assert profile["rerank_tier"] == "light"
-    assert profile["max_context_chars"] >= 16000
-    assert profile["max_tokens"] == 800
-    assert profile["tier_contract"]["llm_max_tokens"] == 800
+    assert profile["max_context_chars"] == 3500
+    assert profile["max_tokens"] == 300
+    assert profile["tier_contract"]["llm_max_tokens"] == 300
 
 
 def test_adaptive_disabled_uses_legacy_recall_100(monkeypatch):

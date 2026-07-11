@@ -84,3 +84,11 @@ def test_priority_embed_processed_when_first_job():
 
     assert len(result) == 256
     assert result[0] == 0.3
+
+
+def test_batch_cap_respects_max_parallel_burst(monkeypatch):
+    monkeypatch.setattr(http_mod.config, "YANDEX_EMBEDDING_RPS_LIMIT", 100, raising=False)
+    monkeypatch.setattr(http_mod.config, "YANDEX_EMBEDDING_MAX_PARALLEL_REQUESTS", 8, raising=False)
+    assert http_mod._batch_cap() == 8
+    monkeypatch.setattr(http_mod.config, "YANDEX_EMBEDDING_MAX_PARALLEL_REQUESTS", 200, raising=False)
+    assert http_mod._batch_cap() == 99

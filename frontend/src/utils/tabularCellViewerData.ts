@@ -3,6 +3,7 @@
  * CITATION_CONTRACT_V1: page 1-based, bbox на один выбранный фрагмент.
  */
 import type { CellDetails, SourceReference } from '@/services/tabularReviewApi'
+import { buildQuoteSearchCandidates } from './citationHighlight'
 
 export type TabularCellClickPayload = {
   verbatimExtract?: string | null
@@ -22,6 +23,7 @@ export type TabularCellClickPayload = {
 
 export type TabularViewerCellData = {
   verbatimExtract?: string | null
+  verbatimAlternates?: string[] | null
   cellValue?: string | null
   sourcePage?: number | null
   sourceSection?: string | null
@@ -130,12 +132,35 @@ export function buildTabularViewerCellData(params: {
 
   const bbox = bboxFromReference(active)
   const refIndex = click.sourceReferenceIndex ?? 0
-  const usePrimaryCharSpan =
-    refIndex === 0 &&
-    (click.charStart != null || details?.primary_source_char_start != null)
+  const activeCharStart = active?.char_start
+  const activeCharEnd = active?.char_end
+  const fallbackCharStart = click.charStart ?? details?.primary_source_char_start ?? undefined
+  const fallbackCharEnd = click.charEnd ?? details?.primary_source_char_end ?? undefined
+  const charStart =
+    activeCharStart != null
+      ? activeCharStart
+      : refIndex === 0
+        ? fallbackCharStart
+        : undefined
+  const charEnd =
+    activeCharEnd != null
+      ? activeCharEnd
+      : refIndex === 0
+        ? fallbackCharEnd
+        : undefined
+  const verbatimAlternates = buildQuoteSearchCandidates(
+    null,
+    [
+      click.verbatimExtract,
+      details?.verbatim_extract,
+      details?.cell_value,
+      ...refs.map((ref, index) => (index === refIndex ? null : ref.text)),
+    ],
+  ).filter((candidate) => candidate !== verbatimExtract)
 
   return {
     verbatimExtract,
+    verbatimAlternates: verbatimAlternates.length > 0 ? verbatimAlternates : null,
     cellValue: details?.cell_value ?? null,
     sourcePage,
     sourceSection,
@@ -146,13 +171,9 @@ export function buildTabularViewerCellData(params: {
     highlightBBox: bbox,
     highlightBBoxRegions: bbox ? [bbox] : undefined,
     highlightPageBBox: active?.page_bbox ?? undefined,
-    docId: click.docId ?? details?.primary_source_doc_id ?? fileId,
-    charStart: usePrimaryCharSpan
-      ? (click.charStart ?? details?.primary_source_char_start ?? undefined)
-      : undefined,
-    charEnd: usePrimaryCharSpan
-      ? (click.charEnd ?? details?.primary_source_char_end ?? undefined)
-      : undefined,
+    docId: active?.doc_id ?? click.docId ?? details?.primary_source_doc_id ?? fileId,
+    charStart,
+    charEnd,
   }
 }
 

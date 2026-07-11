@@ -18,6 +18,7 @@ from app.services.chat.statement_sql_plan_normalize import apply_amount_semantic
 def test_infer_debit_and_credit():
     assert infer_amount_semantics("какая сумма списаний за май") == "debit"
     assert infer_amount_semantics("сумма поступлений за май 2026") == "credit"
+    assert infer_amount_semantics("сколько было пополнений") == "credit"
     assert infer_amount_semantics("сколько операций за май") == "any"
 
 
@@ -59,9 +60,14 @@ def _row(amount: str) -> CaseFileTransaction:
 
 
 @patch("app.services.chat.statement_sql_executor.file_display_name", return_value="выписка.pdf")
-@patch("app.services.chat.statement_sql_executor.CaseFileTransactionService.query")
-def test_executor_applies_debit_filter(mock_query, _mock_label):
-    mock_query.return_value = [_row("-100"), _row("-50")]
+@patch("app.services.chat.statement_sql_executor.CaseFileTransactionService.aggregate_totals")
+def test_executor_applies_debit_filter(mock_totals, _mock_label):
+    from app.services.case_file_transaction_service import TransactionAggregateTotals
+
+    mock_totals.return_value = TransactionAggregateTotals(
+        count=2,
+        amount_sum=Decimal("-150"),
+    )
 
     plan = apply_amount_semantics_normalization(
         StatementSqlPlan(
@@ -83,7 +89,7 @@ def test_executor_applies_debit_filter(mock_query, _mock_label):
 
     assert result.facts is not None
     assert result.facts.row_count == 2
-    _, kwargs = mock_query.call_args
+    _, kwargs = mock_totals.call_args
     assert kwargs["max_amount"] == Decimal("-0.01")
     assert kwargs["min_amount"] is None
     assert kwargs["description_contains"] is None

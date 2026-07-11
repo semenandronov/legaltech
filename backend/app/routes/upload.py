@@ -86,6 +86,26 @@ class CaseInfoRequest(BaseModel):
             raise ValueError('Title must be at most 255 characters')
         return v
 
+    @field_validator('description')
+    @classmethod
+    def validate_description(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            v = v.strip()
+            if len(v) == 0:
+                return None
+            if len(v) > 5000:
+                raise ValueError('Description must be at most 5000 characters')
+        return v
+
+    @field_validator('case_type')
+    @classmethod
+    def validate_case_type(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            valid_types = ["litigation", "contracts", "dd", "compliance", "other"]
+            if v not in valid_types:
+                raise ValueError(f'Case type must be one of: {", ".join(valid_types)}')
+        return v
+
 
 @router.post("/chunk-preview")
 async def chunk_preview(
@@ -161,26 +181,60 @@ async def chunk_preview(
         "truncated": len(docs) > safe_limit,
         "chunks": chunks,
     }
-    
-    @field_validator('description')
-    @classmethod
-    def validate_description(cls, v: Optional[str]) -> Optional[str]:
-        if v is not None:
-            v = v.strip()
-            if len(v) == 0:
-                return None
-            if len(v) > 5000:
-                raise ValueError('Description must be at most 5000 characters')
-        return v
-    
-    @field_validator('case_type')
-    @classmethod
-    def validate_case_type(cls, v: Optional[str]) -> Optional[str]:
-        if v is not None:
-            valid_types = ["litigation", "contracts", "dd", "compliance", "other"]
-            if v not in valid_types:
-                raise ValueError(f'Case type must be one of: {", ".join(valid_types)}')
-        return v
+
+
+@router.post("/docling-structure")
+async def docling_structure_preview(
+    file: UploadFile = File(...),
+    do_ocr: bool = Form(True),
+    native_text: bool = Form(False),
+    max_items: int = Form(500),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Сырая структура DoclingDocument (iterate_items), без legal chunking.
+    Только для отладки Docling / OCR.
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Пустое имя файла недопустимо")
+
+    filename = file.filename.replace("..", "").replace("/", "").replace("\\", "")
+    _, ext = filename.rsplit(".", 1) if "." in filename else (filename, "")
+    if ext.lower() not in {"pdf", "docx", "html", "htm", "md", "pptx"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Поддерживаются: pdf, docx, html, htm, md, pptx",
+        )
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Файл пуст")
+
+    if len(content) > config.MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Файл слишком большой. Максимум: {config.MAX_FILE_SIZE / 1024 / 1024:.0f} МБ",
+        )
+
+    from app.services.docling_structure_preview import preview_docling_structure
+
+    try:
+        return preview_docling_structure(
+            content,
+            filename,
+            do_ocr=bool(do_ocr),
+            native_text=bool(native_text),
+            max_items=max(1, min(int(max_items or 500), 5000)),
+        )
+    except Exception as e:
+        logger.error(
+            "Docling structure preview failed for %s by user %s: %s",
+            filename,
+            current_user.id,
+            e,
+            exc_info=True,
+        )
+        raise HTTPException(status_code=400, detail=f"Не удалось разобрать документ: {e}") from e
 
 
 # Accept both /api/upload/ and /api/upload (без слеша)

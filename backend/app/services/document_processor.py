@@ -59,6 +59,7 @@ class DocumentProcessor:
         file_id: Optional[str] = None,
         langchain_docs: Optional[List[Document]] = None,
         content_bytes: Optional[bytes] = None,
+        prepared_pdf_text: Optional[str] = None,
     ) -> List[Document]:
         """
         Build vector-ready chunks directly from Docling/LangChain loader output.
@@ -143,6 +144,7 @@ class DocumentProcessor:
                     loader_native_text=loader_native_text and not loader_did_ocr,
                     loader_documents=langchain_docs if loader_did_ocr else None,
                     use_norm_corpus=use_norm_corpus,
+                    prepared_pdf_text=prepared_pdf_text,
                 )
                 if v2_documents:
                     if use_norm_corpus:

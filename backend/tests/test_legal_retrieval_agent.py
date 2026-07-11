@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 from langchain_core.documents import Document
 
 from app.config import config
@@ -28,7 +30,7 @@ def test_article_suggests_fz127():
 def test_route_article_61_bankruptcy_markers():
     route = route_legal_corpus_query("о чем статья 61")
     assert "fz-127" in route.instrument_ids
-    assert "plenum-63" in route.instrument_ids
+    assert "plenum-63" not in route.instrument_ids
 
 
 def test_resolve_legal_route_bare_article_with_legal_research():
@@ -128,6 +130,91 @@ def test_run_legal_corpus_fast_path(monkeypatch):
     assert not hybrid_called
 
 
+def test_retrieve_without_original_query_in_hybrid_pool(monkeypatch):
+    from app.services import legal_corpus_service as lcs
+
+    monkeypatch.setattr(lcs, "should_skip_retrieval_for_message", lambda _q: False)
+    monkeypatch.setattr(lcs, "count_corpus_chunks", lambda: 1)
+    monkeypatch.setattr(config, "LEGAL_CORPUS_USE_RERANKER", False, raising=False)
+    calls = []
+
+    def _fake_hybrid(q, k, instrument_ids=None):
+        calls.append(q)
+        return [Document(page_content=f"hit-{q}", metadata={"chunk_id": q})]
+
+    monkeypatch.setattr(lcs, "_run_norm_hybrid_search", _fake_hybrid)
+    monkeypatch.setattr(lcs, "_run_fts_bm25_search", lambda *a, **k: [])
+    monkeypatch.setattr(lcs, "_run_lexical_search", lambda *a, **k: [])
+
+    long_q = "Какой минимальный размер совокупных требований " + "установлен " * 20
+    lcs.retrieve_legal_corpus_documents(
+        long_q,
+        k=2,
+        search_queries=["короткий запрос банкротство юрлицо"],
+        max_search_queries=1,
+        include_original_query=False,
+    )
+    assert len(calls) == 1
+    assert calls[0] == "короткий запрос банкротство юрлицо"
+    assert long_q not in calls
+
+
+def test_cap_search_queries_from_plan_skips_full_question():
+    from app.services.chat.legal_query_plan import LegalRetrievalPlan
+
+    plan = LegalRetrievalPlan(
+        topic="general_bankruptcy",
+        required_articles=[],
+        instrument_ids=["fz-127"],
+        search_queries=["порог банкротства юрлицо", "период просрочки"],
+        rationale="test",
+        facts=["минимальный размер требований"],
+    )
+    long_q = "очень длинный вопрос " * 30
+    qs = lra._cap_search_queries_from_plan(plan, long_q)
+    assert long_q not in qs
+    assert qs[0] == "порог банкротства юрлицо"
+
+
+def test_retrieve_hybrid_queries_run_in_parallel(monkeypatch):
+    from app.services import legal_corpus_service as lcs
+
+    monkeypatch.setattr(lcs, "should_skip_retrieval_for_message", lambda _q: False)
+    monkeypatch.setattr(lcs, "count_corpus_chunks", lambda: 1)
+    monkeypatch.setattr(config, "LEGAL_CORPUS_USE_RERANKER", False, raising=False)
+    monkeypatch.setattr(config, "LEGAL_CORPUS_HYBRID_PARALLEL", True, raising=False)
+    monkeypatch.setattr(config, "LEGAL_CORPUS_HYBRID_MAX_WORKERS", 4, raising=False)
+
+    import threading
+
+    lock = threading.Lock()
+    active = {"n": 0, "max": 0}
+
+    def _fake_hybrid(q, k, instrument_ids=None):
+        with lock:
+            active["n"] += 1
+            active["max"] = max(active["max"], active["n"])
+        try:
+            time.sleep(0.05)
+            return [Document(page_content=f"hit-{q}", metadata={"chunk_id": q})]
+        finally:
+            with lock:
+                active["n"] -= 1
+
+    monkeypatch.setattr(lcs, "_run_norm_hybrid_search", _fake_hybrid)
+    monkeypatch.setattr(lcs, "_run_fts_bm25_search", lambda *a, **k: [])
+    monkeypatch.setattr(lcs, "_run_lexical_search", lambda *a, **k: [])
+
+    lcs.retrieve_legal_corpus_documents(
+        "тест",
+        k=2,
+        search_queries=["q1", "q2", "q3"],
+        max_search_queries=3,
+        include_original_query=False,
+    )
+    assert active["max"] >= 2
+
+
 def test_retrieve_max_search_queries_cap(monkeypatch):
     from app.services import legal_corpus_service as lcs
 
@@ -140,8 +227,7 @@ def test_retrieve_max_search_queries_cap(monkeypatch):
         calls.append(q)
         return [Document(page_content=f"hit-{q}", metadata={"chunk_id": q})]
 
-    monkeypatch.setattr(lcs, "_run_assistant_hybrid_search", _fake_hybrid)
-    monkeypatch.setattr(lcs, "_run_dense_search", lambda *a, **k: [])
+    monkeypatch.setattr(lcs, "_run_norm_hybrid_search", _fake_hybrid)
     monkeypatch.setattr(lcs, "_run_fts_bm25_search", lambda *a, **k: [])
     monkeypatch.setattr(lcs, "_run_lexical_search", lambda *a, **k: [])
 
@@ -187,8 +273,8 @@ def test_maybe_rerank_respects_skip_flag(monkeypatch):
             return a[1]
 
     monkeypatch.setattr(
-        "app.services.reranker_service.get_reranker_service",
-        lambda: _FakeSvc(),
+        "app.services.reranker_service.get_reranker_for_tier",
+        lambda _tier: _FakeSvc(),
     )
     docs = [Document(page_content="a", metadata={})]
     out = lcs._maybe_rerank_legal_pool("q", docs, top_k=1, skip_rerank=True)

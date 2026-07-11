@@ -34,6 +34,7 @@ class EvidenceScope:
             scope_mode=self.scope_mode,  # type: ignore[arg-type]
             confidence=self.confidence,
             rationale=f"evidence_scope_{self.reason}",
+            within_file_expand=bool(self.file_ids),
         )
 
 

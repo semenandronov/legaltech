@@ -48,6 +48,8 @@ def _assistant_rows_case(db: Session, *, case_id: str, session_id: str) -> list[
             ChatMessage.content != "",
             ChatMessage.evidence.isnot(None),
             (~ChatMessage.session_id.like("editor:%")),
+            (~ChatMessage.session_id.like("tabular:%")),
+            (~ChatMessage.session_id.like("operations:%")),
         )
         .order_by(ChatMessage.created_at.desc())
         .limit(_MAX_CANDIDATES)

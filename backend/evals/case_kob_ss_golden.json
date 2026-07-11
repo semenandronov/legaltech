@@ -1,0 +1,226 @@
+[
+  {
+    "id": "k-01",
+    "difficulty": "easy",
+    "question": "Какой номер дела указан во встречном иске?",
+    "must_include": ["А40-4022/2024"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 25000
+  },
+  {
+    "id": "k-02",
+    "difficulty": "easy",
+    "question": "Какой судья указан в шапке встречного иска?",
+    "must_include": ["Хайло"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 25000
+  },
+  {
+    "id": "k-03",
+    "difficulty": "easy",
+    "question": "Когда назначено судебное заседание по делу во встречном иске?",
+    "must_include": ["21.05.2024"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 25000
+  },
+  {
+    "id": "k-04",
+    "difficulty": "easy",
+    "question": "Какая цена встречного иска?",
+    "must_include": ["6 853 491"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 25000
+  },
+  {
+    "id": "k-05",
+    "difficulty": "easy",
+    "question": "Какой размер госпошлины указан во встречном иске?",
+    "must_include": ["57 267"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 25000
+  },
+  {
+    "id": "k-06",
+    "difficulty": "easy",
+    "question": "Какой ИНН у ИП Красноштановой О.Б.?",
+    "must_include": ["380503776092"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 25000
+  },
+  {
+    "id": "k-07",
+    "difficulty": "easy",
+    "question": "Какой ИНН у ООО «Смарт Сити»?",
+    "must_include": ["9701032688"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 25000
+  },
+  {
+    "id": "k-08",
+    "difficulty": "easy",
+    "question": "Какой номер и дата договора поставки между ООО «Смарт Сити» и ИП Красноштановой?",
+    "must_include": ["20/01-2022", "20.01.2022"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 25000
+  },
+  {
+    "id": "k-09",
+    "difficulty": "easy",
+    "question": "Сколько электросамокатов модели B1-D обязались поставить по договору поставки №20/01-2022 и на какую сумму?",
+    "must_include": ["150", "6 000 000"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 25000
+  },
+  {
+    "id": "k-10",
+    "difficulty": "easy",
+    "question": "Какая задолженность образовалась у ИП по договору поставки из-за замены самокатов?",
+    "must_include": ["141 000"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 25000
+  },
+  {
+    "id": "k-11",
+    "difficulty": "easy",
+    "question": "Какую неустойку по договору поставки просит взыскать ООО «Смарт Сити» во встречном иске?",
+    "must_include": ["99 405"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 25000
+  },
+  {
+    "id": "k-12",
+    "difficulty": "easy",
+    "question": "Какая совокупная задолженность по арендной плате указана во встречном иске?",
+    "must_include": ["5 607 651"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 25000
+  },
+  {
+    "id": "k-13",
+    "difficulty": "easy",
+    "question": "Какие договоры аренды электросамокатов заключены между сторонами?",
+    "must_include": ["20/01-2022", "03/03-2022"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 25000
+  },
+  {
+    "id": "k-14",
+    "difficulty": "easy",
+    "question": "Какая неустойка начислена по договору аренды №03/03-2022?",
+    "must_include": ["50 323"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 25000
+  },
+  {
+    "id": "k-15",
+    "difficulty": "easy",
+    "question": "Какой совокупный размер процентов по ст. 395 ГК РФ указан во встречном иске?",
+    "must_include": ["955 112"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 25000
+  },
+  {
+    "id": "k-16",
+    "difficulty": "medium",
+    "question": "Какую модель и сколько электросамокатов поставили взамен возвращённых 100 B1-D, и на какую сумму?",
+    "must_include": ["МК088", "50", "4 141 000"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 30000
+  },
+  {
+    "id": "k-17",
+    "difficulty": "easy",
+    "question": "К какой кикшеринговой платформе ИП подключала электросамокаты?",
+    "must_include": ["Карусель"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 25000
+  },
+  {
+    "id": "k-18",
+    "difficulty": "easy",
+    "question": "Какая общая сумма задолженности указана в претензии ООО «Смарт Сити»?",
+    "must_include": ["6 392 533"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 25000
+  },
+  {
+    "id": "k-19",
+    "difficulty": "easy",
+    "question": "Какой размер неустойки за просрочку оплаты установлен договором поставки по претензии?",
+    "must_include": ["0.1"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 25000
+  },
+  {
+    "id": "k-20",
+    "difficulty": "easy",
+    "question": "В какой срок претензия требует погасить задолженность?",
+    "must_include": ["10 рабоч"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 25000
+  },
+  {
+    "id": "k-21",
+    "difficulty": "easy",
+    "question": "Кто подписал претензию от имени ООО «Смарт Сити»?",
+    "must_include": ["Стеблин"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 25000
+  },
+  {
+    "id": "k-22",
+    "difficulty": "medium",
+    "question": "Какой размер ежемесячной арендной ставки использует претензия для договора аренды №20/01-2022?",
+    "must_include": ["206 592"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 30000
+  },
+  {
+    "id": "k-23",
+    "difficulty": "medium",
+    "question": "Какой размер ежемесячной арендной ставки указан в претензии для договора №03/03-2022?",
+    "must_include": ["103 296"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 30000
+  },
+  {
+    "id": "k-24",
+    "difficulty": "medium",
+    "question": "Сколько всего электросамокатов по итогам взаимоотношений получила ИП Красноштанова по позиции ООО «Смарт Сити»?",
+    "must_include": ["300"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 30000
+  },
+  {
+    "id": "k-25",
+    "difficulty": "medium",
+    "question": "Почему ООО «Смарт Сити» считает экспертизу электросамокатов непоказательной?",
+    "must_include": ["двух", "эксплуатац"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 35000
+  },
+  {
+    "id": "k-26",
+    "difficulty": "hard",
+    "question": "Как позиция ООО «Смарт Сити» отвечает на довод о невозможности подключения самокатов к программе ЭВМ?",
+    "must_include": ["договор", "заявлен"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 35000
+  },
+  {
+    "id": "k-27",
+    "difficulty": "medium",
+    "question": "Какая задолженность по аренде по договору №03/03-2022 с учётом допсоглашения указана во встречном иске?",
+    "must_include": ["236 259"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 30000
+  },
+  {
+    "id": "k-28",
+    "difficulty": "easy",
+    "question": "Когда датирован акт возврата 100 самокатов модели B1-D?",
+    "must_include": ["06.06.2022"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 25000
+  }
+]

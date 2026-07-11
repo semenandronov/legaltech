@@ -6,7 +6,7 @@ can be reused from LangGraph nodes and tests.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from langchain_core.documents import Document
 from sqlalchemy.orm import Session
@@ -20,6 +20,117 @@ from app.services.tabular_extraction_policy import (
 )
 from app.services.tabular_cell_verification import CellVerificationOutcome
 from app.services.tabular_review_models import TabularCellExtractionModel
+
+
+def _clean_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _copy_bbox(value: Any) -> Optional[Dict[str, float]]:
+    if not isinstance(value, dict):
+        return None
+    required = ("x0", "y0", "x1", "y1")
+    try:
+        bbox = {key: float(value[key]) for key in required}
+    except (KeyError, TypeError, ValueError):
+        return None
+    if bbox["x1"] <= bbox["x0"] or bbox["y1"] <= bbox["y0"]:
+        return None
+    return bbox
+
+
+def _copy_page_bbox(value: Any) -> Optional[Dict[str, float]]:
+    if not isinstance(value, dict):
+        return None
+    required = ("width", "height")
+    try:
+        page_bbox = {key: float(value[key]) for key in required}
+    except (KeyError, TypeError, ValueError):
+        return None
+    if page_bbox["width"] <= 0 or page_bbox["height"] <= 0:
+        return None
+    return page_bbox
+
+
+def _reference_identity(ref: Dict[str, Any]) -> Tuple[Any, ...]:
+    bbox = _copy_bbox(ref.get("bbox")) or {}
+    return (
+        ref.get("doc_id"),
+        ref.get("page"),
+        ref.get("section"),
+        _clean_text(ref.get("text")).lower(),
+        ref.get("char_start"),
+        ref.get("char_end"),
+        bbox.get("x0"),
+        bbox.get("y0"),
+        bbox.get("x1"),
+        bbox.get("y1"),
+    )
+
+
+def _build_source_references(
+    *,
+    result: TabularCellExtractionModel,
+    primary_source_doc_id: Optional[str],
+    primary_source_char_start: Optional[int],
+    primary_source_char_end: Optional[int],
+    verified_flag: Optional[bool],
+    source_page: Optional[int],
+    source_section: Optional[str],
+    bbox_regions: List[Dict[str, float]],
+    page_bbox: Optional[Dict[str, float]],
+    anchor_text: str,
+) -> List[Dict[str, Any]]:
+    text_fallback = _clean_text(result.verbatim_extract or anchor_text or result.cell_value)[:240]
+    base_refs: List[Dict[str, Any]] = []
+
+    if result.source_references:
+        for raw_ref in result.source_references or []:
+            if not isinstance(raw_ref, dict):
+                continue
+            base_refs.append(dict(raw_ref))
+
+    if not base_refs and (source_page is not None or source_section or bbox_regions):
+        base_refs = [{} for _ in (bbox_regions[:3] or [None])]
+
+    refs: List[Dict[str, Any]] = []
+    for index, raw_ref in enumerate(base_refs):
+        ref: Dict[str, Any] = dict(raw_ref)
+        ref_text = _clean_text(ref.get("text")) or text_fallback
+        if not ref_text:
+            continue
+
+        merged: Dict[str, Any] = {
+            "page": ref.get("page", source_page),
+            "section": ref.get("section", source_section),
+            "text": ref_text,
+            "doc_id": ref.get("doc_id", primary_source_doc_id),
+            "char_start": ref.get("char_start", primary_source_char_start),
+            "char_end": ref.get("char_end", primary_source_char_end),
+            "verified": ref.get("verified", verified_flag),
+        }
+
+        bbox = _copy_bbox(ref.get("bbox"))
+        if bbox is None and index < len(bbox_regions):
+            bbox = _copy_bbox(bbox_regions[index])
+        if bbox is not None:
+            merged["bbox"] = bbox
+            merged_page_bbox = _copy_page_bbox(ref.get("page_bbox")) or page_bbox
+            if merged_page_bbox is not None:
+                merged["page_bbox"] = merged_page_bbox
+
+        refs.append(merged)
+
+    seen = set()
+    deduped: List[Dict[str, Any]] = []
+    for ref in refs:
+        key = _reference_identity(ref)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(ref)
+
+    return deduped
 
 
 def build_tabular_cell_db_payload(
@@ -141,29 +252,18 @@ def build_tabular_cell_db_payload(
     except Exception:
         bbox_regions, page_bbox = [], None
 
-    source_references: List[Dict[str, Any]] = []
-    if source_page or source_section or (bbox_regions and page_bbox):
-        regions_to_emit = bbox_regions[:3] if bbox_regions else [None]
-        for region in regions_to_emit:
-            ref: Dict[str, Any] = {
-                "page": source_page,
-                "section": source_section,
-                "text": (result.verbatim_extract or anchor_text or result.cell_value or "")[:240],
-                "doc_id": primary_source_doc_id,
-                "char_start": primary_source_char_start,
-                "char_end": primary_source_char_end,
-                "verified": verified_flag,
-            }
-            if region and isinstance(region, dict):
-                ref["bbox"] = region
-                if page_bbox and isinstance(page_bbox, dict):
-                    ref["page_bbox"] = page_bbox
-            source_references.append(ref)
-
-    if result.source_references:
-        for r in result.source_references or []:
-            if isinstance(r, dict):
-                source_references.append(r)
+    source_references = _build_source_references(
+        result=result,
+        primary_source_doc_id=primary_source_doc_id,
+        primary_source_char_start=primary_source_char_start,
+        primary_source_char_end=primary_source_char_end,
+        verified_flag=verified_flag,
+        source_page=source_page,
+        source_section=source_section,
+        bbox_regions=bbox_regions[:3],
+        page_bbox=page_bbox if isinstance(page_bbox, dict) else None,
+        anchor_text=anchor_text,
+    )
 
     if (
         not is_na_cell_value(result.cell_value)

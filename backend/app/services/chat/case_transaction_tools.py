@@ -99,7 +99,8 @@ def list_case_transactions(
         on_date: дата DD.MM.YYYY (например 24.06.2026)
         date_from: начало периода DD.MM.YYYY
         date_to: конец периода DD.MM.YYYY
-        description_contains: подстрока в описании (например YANDEX, Иванов)
+        description_contains: токен в описании (например YANDEX, Иванов, VK) —
+            целое слово/код, не произвольная подстрока
         filename: имя файла выписки (необязательно)
         limit: максимум строк в ответе (по умолчанию 100)
     """

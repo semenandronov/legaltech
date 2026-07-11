@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef, useId } from "react"
 import {
-  Popover,
+  Dialog,
   Box,
   Typography,
   Button,
@@ -30,6 +30,7 @@ import {
   type ColumnFilterOperator,
 } from "@/utils/tabularColumnFilters"
 import { isDateColumn } from "@/utils/tabularDateUtils"
+import { isNumericColumn } from "@/utils/tabularNumericUtils"
 
 function computeValueCounts(
   rows: TabularRow[],
@@ -46,24 +47,15 @@ function computeValueCounts(
     .sort((a, b) => b.count - a.count)
 }
 
-const popoverProps = {
-  anchorReference: "anchorEl" as const,
-  anchorOrigin: { vertical: "bottom" as const, horizontal: "left" as const },
-  transformOrigin: { vertical: "top" as const, horizontal: "left" as const },
-  slotProps: {
-    root: { disableScrollLock: true },
-    backdrop: { sx: { backgroundColor: "transparent" } },
-  },
-  PaperProps: {
-    sx: {
-      minWidth: 480,
-      maxWidth: 600,
-      p: 2.5,
-      borderRadius: 2,
-      boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
-      border: "1px solid #E5E7EB",
-    },
-  },
+const dialogPaperSx = {
+  minWidth: 480,
+  maxWidth: 600,
+  width: "100%",
+  p: 2.5,
+  borderRadius: 2,
+  boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
+  border: "1px solid #E5E7EB",
+  m: 2,
 }
 
 const selectSx = {
@@ -79,7 +71,8 @@ const selectSx = {
 
 export interface FilterPopoverProps {
   open: boolean
-  anchorEl: HTMLElement | null
+  /** Kept for call-site compatibility; modal is centered and ignores anchor. */
+  anchorEl?: HTMLElement | null
   onClose: () => void
   columns: TabularColumn[]
   rows: TabularRow[]
@@ -89,7 +82,6 @@ export interface FilterPopoverProps {
 
 export function FilterPopover({
   open,
-  anchorEl,
   onClose,
   columns,
   rows,
@@ -98,11 +90,12 @@ export function FilterPopover({
 }: FilterPopoverProps) {
   const [appliedConditions, setAppliedConditions] = useState<ColumnValueFilterCondition[]>([])
   const [currentRows, setCurrentRows] = useState<ColumnValueFilterCondition[]>([emptyFilterCondition()])
-  const popoverPaperRef = useRef<HTMLDivElement | null>(null)
+  const dialogPaperRef = useRef<HTMLDivElement | null>(null)
+  const wasOpenRef = useRef(false)
   const idPrefix = useId().replace(/:/g, "")
 
   useEffect(() => {
-    if (open) {
+    if (open && !wasOpenRef.current) {
       setAppliedConditions(
         valueFilters.length > 0
           ? valueFilters.map((c) => ({
@@ -114,6 +107,7 @@ export function FilterPopover({
       )
       setCurrentRows([emptyFilterCondition()])
     }
+    wasOpenRef.current = open
   }, [open, valueFilters])
 
   const columnById = useMemo(
@@ -150,6 +144,8 @@ export function FilterPopover({
         textQuery: c.textQuery,
         dateFrom: c.dateFrom,
         dateTo: c.dateTo,
+        numberFrom: c.numberFrom,
+        numberTo: c.numberTo,
       })),
     ]
     setAppliedConditions(nextApplied)
@@ -176,12 +172,26 @@ export function FilterPopover({
   )
 
   return (
-    <Popover
+    <Dialog
       open={open}
-      anchorEl={anchorEl}
       onClose={onClose}
-      {...popoverProps}
-      PaperProps={{ ...popoverProps.PaperProps, ref: popoverPaperRef }}
+      maxWidth={false}
+      scroll="body"
+      slotProps={{
+        backdrop: {
+          sx: { backgroundColor: "rgba(15, 23, 42, 0.35)" },
+        },
+      }}
+      PaperProps={{
+        ref: dialogPaperRef,
+        sx: dialogPaperSx,
+      }}
+      sx={{
+        "& .MuiDialog-container": {
+          alignItems: "center",
+          justifyContent: "center",
+        },
+      }}
     >
       <Box sx={{ pb: 1 }}>
         <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 2 }}>
@@ -205,7 +215,7 @@ export function FilterPopover({
               onChange={(patch) => updateCurrentRow(index, patch)}
               onRemove={() => removeCurrentRow(index)}
               selectSx={selectSx}
-              menuContainerRef={popoverPaperRef}
+              menuContainerRef={dialogPaperRef}
             />
           ))}
         </Stack>
@@ -256,13 +266,13 @@ export function FilterPopover({
                 onChange={(patch) => updateApplied(index, patch)}
                 onRemove={() => removeApplied(index)}
                 selectSx={selectSx}
-                menuContainerRef={popoverPaperRef}
+                menuContainerRef={dialogPaperRef}
               />
             ))}
           </Stack>
         )}
       </Box>
-    </Popover>
+    </Dialog>
   )
 }
 
@@ -294,6 +304,9 @@ function FilterRow({
   const isDate = selectedColumn
     ? isDateColumn(selectedColumn.column_type, selectedColumn.column_label)
     : false
+  const isNumeric = selectedColumn
+    ? isNumericColumn(selectedColumn.column_type, selectedColumn.column_label)
+    : false
 
   const valueCounts = useMemo(
     () => (condition.columnId ? computeValueCounts(rows, condition.columnId) : []),
@@ -311,6 +324,8 @@ function FilterRow({
       textQuery: "",
       dateFrom: null,
       dateTo: null,
+      numberFrom: null,
+      numberTo: null,
     })
   }
 
@@ -321,6 +336,8 @@ function FilterRow({
       textQuery: "",
       dateFrom: null,
       dateTo: null,
+      numberFrom: null,
+      numberTo: null,
     })
   }
 
@@ -334,7 +351,14 @@ function FilterRow({
       condition.operator === "date_after" ||
       condition.operator === "date_before")
   const showDateRange = isDate && condition.operator === "date_between"
-  const showValueMultiSelect = showValuePicker && !isDate
+  const showNumberSingle =
+    isNumeric &&
+    (condition.operator === "equals" ||
+      condition.operator === "not_equals" ||
+      condition.operator === "number_greater_than" ||
+      condition.operator === "number_less_than")
+  const showNumberRange = isNumeric && condition.operator === "number_between"
+  const showValueMultiSelect = showValuePicker && !isDate && !isNumeric
 
   return (
     <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1 }}>
@@ -458,6 +482,53 @@ function FilterRow({
             onChange={(e) => onChange({ dateTo: e.target.value || null })}
             disabled={!condition.columnId}
             InputLabelProps={{ shrink: true }}
+            sx={{ minWidth: 140 }}
+          />
+        </>
+      )}
+
+      {showNumberSingle && (
+        <TextField
+          size="small"
+          type="text"
+          inputMode="decimal"
+          label={
+            condition.operator === "number_greater_than"
+              ? "Больше"
+              : condition.operator === "number_less_than"
+                ? "Меньше"
+                : "Значение"
+          }
+          placeholder="500 000"
+          value={condition.numberFrom ?? ""}
+          onChange={(e) => onChange({ numberFrom: e.target.value || null })}
+          disabled={!condition.columnId}
+          sx={{ minWidth: 160 }}
+        />
+      )}
+
+      {showNumberRange && (
+        <>
+          <TextField
+            size="small"
+            type="text"
+            inputMode="decimal"
+            label="От"
+            placeholder="0"
+            value={condition.numberFrom ?? ""}
+            onChange={(e) => onChange({ numberFrom: e.target.value || null })}
+            disabled={!condition.columnId}
+            sx={{ minWidth: 140 }}
+          />
+          <TextField
+            size="small"
+            type="text"
+            inputMode="decimal"
+            label="До"
+            placeholder="1 000 000"
+            value={condition.numberTo ?? ""}
+            onChange={(e) => onChange({ numberTo: e.target.value || null })}
+            disabled={!condition.columnId}
             sx={{ minWidth: 140 }}
           />
         </>

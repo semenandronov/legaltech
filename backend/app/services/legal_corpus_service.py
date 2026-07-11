@@ -5,12 +5,14 @@ import logging
 import re
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Tuple
 
 from langchain_core.documents import Document
 from sqlalchemy import text
 
 from app.config import config
+from app.services.chat.rag_passage_utils import legal_corpus_max_fragment_chars, passage_for_rerank, truncate_passage_body
 from app.services.document_processor import get_document_processor
 from app.services.langchain_loaders import DocumentLoaderService
 from app.services.pgvector_store import CaseVectorStore, get_case_vector_store
@@ -215,6 +217,7 @@ def index_uploaded_file(
     corpus_file_id = str(uuid.uuid4())
     ingest_content = content
     ext = _file_type_from_name(safe_name)
+    prepared_pdf_text: Optional[str] = None
     if ext in ("html", "htm"):
         from app.services.consultant_html_preprocess import (
             is_consultant_plus_html,
@@ -223,6 +226,26 @@ def index_uploaded_file(
 
         if is_consultant_plus_html(content):
             ingest_content = prepare_consultant_html_for_ingest(content)
+    elif ext == "pdf" and bool(getattr(config, "LEGAL_CORPUS_PDF_PREPROCESS_ENABLED", True)):
+        from app.services.consultant_pdf_preprocess import (
+            prepare_consultant_pdf_for_ingest,
+            should_preprocess_legal_pdf,
+        )
+        from app.services.legal_instruments import resolve_instrument as _resolve_inst
+
+        inst_preview = _resolve_inst(instrument_id) if instrument_id else None
+        iid_preview = inst_preview.instrument_id if inst_preview else (instrument_id or "other")
+        if should_preprocess_legal_pdf(instrument_id=iid_preview, ext=ext):
+            prep = prepare_consultant_pdf_for_ingest(content, filename=safe_name)
+            if prep and prep.plain_text.strip():
+                prepared_pdf_text = prep.plain_text
+                logger.info(
+                    "Legal corpus PDF preprocessed: %s pages=%s chars=%s stripped=%s",
+                    safe_name,
+                    prep.page_count,
+                    len(prep.plain_text),
+                    prep.stripped_chars,
+                )
     _save_original_corpus_file(
         corpus_file_id=corpus_file_id,
         filename=safe_name,
@@ -266,6 +289,7 @@ def index_uploaded_file(
             file_id=corpus_file_id,
             langchain_docs=docs,
             content_bytes=ingest_content,
+            prepared_pdf_text=prepared_pdf_text,
         )
         if not file_documents:
             raise ValueError("Не удалось сформировать чанки из документа")
@@ -338,6 +362,43 @@ def index_uploaded_file(
             )
         except Exception as graph_exc:
             logger.warning("Legal norm graph sync failed (non-fatal): %s", graph_exc, exc_info=True)
+
+        try:
+            from app.services.legal_corpus_index_health import (
+                assert_corpus_file_index_health,
+                assess_corpus_file_index,
+                log_corpus_file_index_health,
+            )
+
+            health = assess_corpus_file_index(
+                corpus_file_id=corpus_file_id,
+                instrument_id=inst.instrument_id if inst else "other",
+                chunk_count=total,
+            )
+            log_corpus_file_index_health(health)
+            assert_corpus_file_index_health(health)
+        except ValueError:
+            raise
+        except Exception as health_exc:
+            logger.warning("Legal corpus index health check failed: %s", health_exc)
+
+        if inst and bool(getattr(config, "LEGAL_NORM_GRAPH_RECONCILE_ON_UPLOAD", True)):
+            try:
+                from app.services.legal_norm_graph_reconcile import reconcile_instrument_graph
+
+                reconcile_stats = reconcile_instrument_graph(inst.instrument_id)
+                logger.info(
+                    "Legal norm graph reconcile after upload instrument=%s stats=%s",
+                    inst.instrument_id,
+                    reconcile_stats,
+                )
+            except Exception as reconcile_exc:
+                logger.warning(
+                    "Legal norm graph reconcile failed (non-fatal): %s",
+                    reconcile_exc,
+                    exc_info=True,
+                )
+
         try:
             prewarm_legal_corpus_bm25(force_rebuild=True)
         except Exception as bm25_exc:
@@ -841,61 +902,57 @@ def _instrument_metadata_filter(
     return {"instrument_id": norm}
 
 
-def _run_assistant_hybrid_search(
+def _embed_legal_search_query(query: str) -> List[float]:
+    """Один embed_query на поисковую фразу (text-search-query)."""
+    from app.services.yandex_embeddings import get_yandex_embeddings
+
+    emb = get_yandex_embeddings()
+    if not emb.is_available():
+        raise RuntimeError("Yandex embeddings unavailable for legal corpus search")
+    return emb.embed_query(query)
+
+
+def _legal_corpus_hybrid_alpha() -> float:
+    raw = float(getattr(config, "LEGAL_CORPUS_HYBRID_ALPHA", 0.7) or 0.7)
+    return max(0.0, min(raw, 1.0))
+
+
+def _run_norm_hybrid_search(
     query: str,
     k: int,
     *,
     instrument_ids: Optional[List[str]] = None,
+    query_embedding: Optional[List[float]] = None,
 ) -> List[Document]:
     """
-    Тот же путь retrieval, что у внутреннего ассистента по делу (deep/drafting):
-    RAGService.retrieve_context(..., retrieval_strategy=\"multi_query\", use_hybrid=True)
-    → _retrieve_hybrid_macro_micro (dense + sparse FTS + anchor + docling fallback).
+    Hybrid retrieval для GLOBAL_LEGAL_CORPUS: norm-чанки (статьи/пункты), dense + FTS.
 
-    Возвращает [] при недоступности RAGService — вызвавший может откатиться на dense/FTS.
+    Один embedding на фразу (переиспользуется в dense-ноге hybrid_search).
+    Не использует macro/micro воронку ассистента по делу — в корпусе chunk_level=norm.
     """
     q = (query or "").strip()
     if not q:
         return []
     try:
-        from app.services.rag_service import get_rag_service
-
-        rag = get_rag_service()
+        processor = get_document_processor()
         md_filter = _instrument_metadata_filter(instrument_ids)
-        docs = rag.retrieve_context(
+        vec = query_embedding
+        if vec is None:
+            vec = _embed_legal_search_query(q)
+        docs = processor.hybrid_search(
             case_id=LEGAL_CORPUS_CASE_ID,
             query=q,
             k=max(k, 8),
-            retrieval_strategy="multi_query",
-            use_hybrid=True,
+            alpha=_legal_corpus_hybrid_alpha(),
+            chunk_levels=["norm"],
             metadata_filter=md_filter,
-        ) or []
-        return [d for d in docs if d is not None and getattr(d, "page_content", None)]
+            bm25_sync=False,
+            query_embedding=vec,
+        )
+        return [d for d in (docs or []) if d is not None and getattr(d, "page_content", None)]
     except Exception as exc:
-        logger.warning("Legal corpus assistant-hybrid retrieve failed: %s", exc, exc_info=True)
+        logger.warning("Legal corpus norm-hybrid retrieve failed: %s", exc, exc_info=True)
         return []
-
-
-def _run_dense_search(query: str, k: int, *, instrument_ids: Optional[List[str]] = None) -> List[Document]:
-    """
-    Dense vector search over GLOBAL_LEGAL_CORPUS with optional metadata filtering.
-    This is deterministic (no multi-query expansion) and supports instrument_id filtering
-    via CaseVectorStore.similarity_search(filter=...).
-    """
-    q = (query or "").strip()
-    if not q:
-        return []
-    store = get_case_vector_store()
-    flt: Dict[str, Any] = {}
-    if instrument_ids:
-        norm = [
-            str(x).strip().lower()
-            for x in instrument_ids
-            if str(x).strip() and str(x).strip().lower() != "unknown"
-        ]
-        if norm:
-            flt["instrument_id"] = norm
-    return store.similarity_search(q, LEGAL_CORPUS_CASE_ID, k=max(1, int(k)), filter=(flt or None)) or []
 
 
 def _dedup_extend_in_order(pool: List[Document], incoming: List[Document], max_total: int) -> None:
@@ -924,14 +981,202 @@ def _trim_to_recall_cap(pool: List[Document], recall_cap: int) -> List[Document]
     return out
 
 
+def _hybrid_search_for_query(
+    sq: str,
+    *,
+    k_eff: int,
+    instrument_ids: Optional[List[str]],
+) -> List[Document]:
+    return _run_norm_hybrid_search(sq, k=k_eff, instrument_ids=instrument_ids) or []
+
+
+def _per_query_rerank_top_k(effective_final: int, n_queries: int) -> int:
+    """Сколько чанков оставлять после rerank на каждый planned search_query."""
+    n = max(1, int(n_queries))
+    final_k = max(1, int(effective_final))
+    # Минимум 3: иначе теряется 2–3-й hit hybrid до rerank (типично для пороговых статей).
+    base = max(3, (final_k + n - 1) // n)
+    return min(5, base)
+
+
+def _planned_search_queries_provided(search_queries: Optional[List[str]]) -> bool:
+    return bool([s for s in (search_queries or []) if (s or "").strip()])
+
+
+def _finalize_merged_legal_docs(docs: List[Document], top_k: int) -> List[Document]:
+    """
+    Финальный top-k после per-query merge: дедуп чанков, приоритет разнообразия по article_number.
+    """
+    if not docs:
+        return []
+    cap = max(1, int(top_k))
+    seen_chunk: set = set()
+    seen_article: set = set()
+    out: List[Document] = []
+
+    def _try_add(d: Document, *, allow_article_dup: bool) -> bool:
+        key = _legal_chunk_dedup_key(d)
+        if key in seen_chunk:
+            return False
+        art = str((d.metadata or {}).get("article_number") or "").strip()
+        if art and not allow_article_dup and art in seen_article:
+            return False
+        seen_chunk.add(key)
+        if art:
+            seen_article.add(art)
+        out.append(d)
+        return True
+
+    for d in docs:
+        if len(out) >= cap:
+            break
+        _try_add(d, allow_article_dup=False)
+
+    if len(out) < cap:
+        for d in docs:
+            if len(out) >= cap:
+                break
+            _try_add(d, allow_article_dup=True)
+
+    return out
+
+
+def _process_one_hybrid_rerank(
+    sq: str,
+    *,
+    k_eff: int,
+    per_query_top_k: int,
+    instrument_ids: Optional[List[str]],
+    skip_rerank: bool,
+) -> List[Document]:
+    part = _hybrid_search_for_query(sq, k_eff=k_eff, instrument_ids=instrument_ids)
+    if not part:
+        return []
+    pool_cap = max(per_query_top_k * 2, 12, k_eff)
+    trimmed = _trim_to_recall_cap(part, min(len(part), pool_cap))
+    return _maybe_rerank_legal_pool(sq.strip(), trimmed, top_k=per_query_top_k, skip_rerank=skip_rerank)
+
+
+def _collect_hybrid_per_query_reranked(
+    unique_queries: List[str],
+    *,
+    k_eff: int,
+    per_query_top_k: int,
+    instrument_ids: Optional[List[str]],
+    wide_cap: int,
+    skip_rerank: bool,
+) -> List[Document]:
+    """
+    Hybrid + rerank для каждой planned-фразы отдельно; merge в порядке планировщика.
+    """
+    if not unique_queries:
+        return []
+
+    merged: List[Document] = []
+    parallel = bool(getattr(config, "LEGAL_CORPUS_HYBRID_PARALLEL", True))
+    max_workers_cfg = max(1, int(getattr(config, "LEGAL_CORPUS_HYBRID_MAX_WORKERS", 5) or 5))
+
+    if parallel and len(unique_queries) > 1:
+        workers = min(max_workers_cfg, len(unique_queries))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                pool.submit(
+                    _process_one_hybrid_rerank,
+                    sq,
+                    k_eff=k_eff,
+                    per_query_top_k=per_query_top_k,
+                    instrument_ids=instrument_ids,
+                    skip_rerank=skip_rerank,
+                ): sq
+                for sq in unique_queries
+            }
+            by_sq: Dict[str, List[Document]] = {}
+            for fut in as_completed(futures):
+                sq = futures[fut]
+                try:
+                    by_sq[sq] = fut.result()
+                except Exception as exc:
+                    logger.warning(
+                        "Legal corpus per-query hybrid/rerank failed (%s): %s",
+                        (sq or "")[:80],
+                        exc,
+                    )
+                    by_sq[sq] = []
+            for sq in unique_queries:
+                _dedup_extend_in_order(merged, by_sq.get(sq) or [], wide_cap)
+    else:
+        for sq in unique_queries:
+            part = _process_one_hybrid_rerank(
+                sq,
+                k_eff=k_eff,
+                per_query_top_k=per_query_top_k,
+                instrument_ids=instrument_ids,
+                skip_rerank=skip_rerank,
+            )
+            _dedup_extend_in_order(merged, part, wide_cap)
+
+    return merged
+
+
+def _collect_hybrid_primary_docs(
+    unique_queries: List[str],
+    *,
+    k_eff: int,
+    instrument_ids: Optional[List[str]],
+    wide_cap: int,
+) -> List[Document]:
+    """Hybrid по каждой фразе; при LEGAL_CORPUS_HYBRID_PARALLEL — параллельно."""
+    if not unique_queries:
+        return []
+
+    primary_docs: List[Document] = []
+    parallel = bool(getattr(config, "LEGAL_CORPUS_HYBRID_PARALLEL", True))
+    max_workers_cfg = max(1, int(getattr(config, "LEGAL_CORPUS_HYBRID_MAX_WORKERS", 5) or 5))
+
+    if parallel and len(unique_queries) > 1:
+        workers = min(max_workers_cfg, len(unique_queries))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                pool.submit(
+                    _hybrid_search_for_query,
+                    sq,
+                    k_eff=k_eff,
+                    instrument_ids=instrument_ids,
+                ): sq
+                for sq in unique_queries
+            }
+            for fut in as_completed(futures):
+                sq = futures[fut]
+                try:
+                    part = fut.result()
+                    _dedup_extend_in_order(primary_docs, part, wide_cap)
+                except Exception as exc:
+                    logger.warning(
+                        "Legal corpus parallel hybrid failed (%s): %s",
+                        (sq or "")[:80],
+                        exc,
+                    )
+    else:
+        for sq in unique_queries:
+            part = _hybrid_search_for_query(sq, k_eff=k_eff, instrument_ids=instrument_ids)
+            _dedup_extend_in_order(primary_docs, part, wide_cap)
+
+    return primary_docs
+
+
+def _legal_rerank_max_chars() -> int:
+    tier = str(getattr(config, "LEGAL_CORPUS_RERANK_TIER", "light") or "light").strip().lower()
+    if tier == "light":
+        return int(getattr(config, "CASE_ASSISTANT_RERANK_LIGHT_MAX_CHARS", 900) or 900)
+    return int(getattr(config, "LEGAL_CORPUS_RERANK_MAX_CHARS", 2400) or 2400)
+
+
+def _legal_rerank_tier() -> str:
+    return str(getattr(config, "LEGAL_CORPUS_RERANK_TIER", "light") or "light").strip().lower()
+
+
 def _passage_for_rerank(doc: Document, max_chars: int) -> str:
-    m = doc.metadata or {}
-    title = str(m.get("section_title") or "").strip()
-    body = (doc.page_content or "").strip()
-    head = f"{title}\n\n" if title else ""
-    rest = max(256, int(max_chars) - len(head))
-    text = (head + body[:rest]).strip()
-    return text or body[: int(max_chars)]
+    return passage_for_rerank(doc, max_chars)
 
 
 def _maybe_rerank_legal_pool(
@@ -947,13 +1192,14 @@ def _maybe_rerank_legal_pool(
     if skip_rerank or not bool(getattr(config, "LEGAL_CORPUS_USE_RERANKER", False)):
         return docs[: max(1, top_k)]
 
-    max_c = int(getattr(config, "LEGAL_CORPUS_RERANK_MAX_CHARS", 2400) or 2400)
+    max_c = _legal_rerank_max_chars()
+    tier = _legal_rerank_tier()
     try:
-        from app.services.reranker_service import get_reranker_service
+        from app.services.reranker_service import get_reranker_for_tier
 
-        svc = get_reranker_service()
+        svc = get_reranker_for_tier(tier)
     except Exception as exc:
-        logger.warning("Legal corpus reranker init failed: %s", exc)
+        logger.warning("Legal corpus reranker init failed (tier=%s): %s", tier, exc)
         return docs[: max(1, top_k)]
 
     proxies: List[Document] = []
@@ -991,15 +1237,20 @@ def retrieve_legal_corpus_documents(
     final_k: Optional[int] = None,
     max_search_queries: Optional[int] = None,
     skip_rerank: bool = False,
+    include_original_query: bool = True,
 ) -> List[Document]:
     """
     Вернуть сырые документы из правового корпуса для citation/preview.
 
     Пайплайн:
-      1) Для каждой строки из search_queries (или только query) — hybrid RAG, затем dense fallback.
+      1) Для каждой строки из search_queries — norm-hybrid (1 embed + dense/FTS по chunk_level=norm).
+         При наличии planned search_queries: hybrid + cross-encoder rerank **по каждой фразе отдельно**.
       2) Один supplement FTS+lexical по исходному user query (статья / пустой primary).
-      3) Дедуп до LEGAL_CORPUS_RECALL_MAX (или recall_max).
-      4) Опционально cross-encoder rerank по исходному query → top final_k.
+      3) Без planned queries: дедуп до LEGAL_CORPUS_RECALL_MAX → global rerank по user query.
+         С planned queries: merge per-query winners → finalize top final_k (разнообразие по статьям).
+
+    include_original_query=False: не добавлять полный user query в пул hybrid-запросов
+    (только search_queries); FTS supplement по user query сохраняется.
     """
     if should_skip_retrieval_for_message(query):
         return []
@@ -1018,7 +1269,9 @@ def retrieve_legal_corpus_documents(
     k_eff = max(effective_final, 8)
     wide_cap = max(recall_cap * 4, 64, k_eff * 4)
 
-    raw_qs: List[str] = [query]
+    raw_qs: List[str] = []
+    if include_original_query or not search_queries:
+        raw_qs.append(query)
     if search_queries:
         raw_qs.extend([s for s in search_queries if (s or "").strip()])
     unique_queries: List[str] = []
@@ -1039,12 +1292,25 @@ def retrieve_legal_corpus_documents(
         cap = max(1, int(max_search_queries))
         unique_queries = unique_queries[:cap]
 
-    primary_docs: List[Document] = []
-    for sq in unique_queries:
-        part = _run_assistant_hybrid_search(sq, k=k_eff, instrument_ids=instrument_ids)
-        if not part:
-            part = _run_dense_search(sq, k=k_eff, instrument_ids=instrument_ids)
-        _dedup_extend_in_order(primary_docs, part, wide_cap)
+    use_per_query_rerank = _planned_search_queries_provided(search_queries)
+
+    if use_per_query_rerank:
+        per_k = _per_query_rerank_top_k(effective_final, len(unique_queries))
+        primary_docs = _collect_hybrid_per_query_reranked(
+            unique_queries,
+            k_eff=k_eff,
+            per_query_top_k=per_k,
+            instrument_ids=instrument_ids,
+            wide_cap=wide_cap,
+            skip_rerank=skip_rerank,
+        )
+    else:
+        primary_docs = _collect_hybrid_primary_docs(
+            unique_queries,
+            k_eff=k_eff,
+            instrument_ids=instrument_ids,
+            wide_cap=wide_cap,
+        )
 
     parts = _extract_article_query_parts(query)
     has_article_intent = bool(parts.get("article") or parts.get("code"))
@@ -1084,6 +1350,9 @@ def retrieve_legal_corpus_documents(
     if not combined:
         return []
 
+    if use_per_query_rerank:
+        return _finalize_merged_legal_docs(combined, effective_final)
+
     trimmed = _trim_to_recall_cap(combined, recall_cap)
     return _maybe_rerank_legal_pool(query, trimmed, top_k=effective_final, skip_rerank=skip_rerank)
 
@@ -1121,9 +1390,11 @@ def retrieve_legal_corpus_context(
 
     parts: List[str] = []
     used = 0
+    max_frag = legal_corpus_max_fragment_chars()
     for i, d in enumerate(docs, start=1):
         fn = d.metadata.get("source_filename", "файл")
-        block = f"[Справочник — фрагмент {i}, источник: {fn}]\n{d.page_content.strip()}"
+        body = truncate_passage_body((d.page_content or "").strip(), max_frag)
+        block = f"[Справочник — фрагмент {i}, источник: {fn}]\n{body}"
         if used + len(block) > max_c:
             break
         parts.append(block)
@@ -1169,9 +1440,11 @@ def retrieve_legal_corpus_context_with_docs(
     parts: List[str] = []
     included: List[Document] = []
     used = 0
+    max_frag = legal_corpus_max_fragment_chars()
     for i, d in enumerate(docs, start=1):
         fn = d.metadata.get("source_filename", "файл")
-        block = f"[Справочник — фрагмент {i}, источник: {fn}]\n{d.page_content.strip()}"
+        body = truncate_passage_body((d.page_content or "").strip(), max_frag)
+        block = f"[Справочник — фрагмент {i}, источник: {fn}]\n{body}"
         if used + len(block) > max_c:
             break
         parts.append(block)

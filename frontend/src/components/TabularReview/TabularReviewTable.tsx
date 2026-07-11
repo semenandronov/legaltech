@@ -114,13 +114,15 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, documentSea
       if (!onCellClick) return
       const cacheKey = `${fileId}_${columnId}`
       const row = tableData.rows.find((r) => r.file_id === fileId)
+      const rowCell = row?.cells?.[columnId]
       const cellValue = row?.cells?.[columnId]?.cell_value ?? ''
       const column = tableData.columns.find((c) => c.id === columnId)
 
       let details: CellDetails | null = null
+      const rowHasSourceRefs = Boolean(rowCell?.source_references?.length)
       if (cellDetailsCache.current.has(cacheKey)) {
         details = cellDetailsCache.current.get(cacheKey)!
-      } else {
+      } else if (!rowHasSourceRefs) {
         try {
           details = await tabularReviewApi.getCellDetails(reviewId, fileId, columnId)
           cellDetailsCache.current.set(cacheKey, details)
@@ -129,7 +131,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, documentSea
         }
       }
 
-      const citationList = buildCellCitationList(cellValue, details)
+      const citationList = buildCellCitationList(cellValue, details ?? rowCell)
       const refsFromCitations = citationList.map(
         (item) =>
           item.sourceRef ?? {
@@ -142,7 +144,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, documentSea
         refsFromCitations.length > 0
           ? refsFromCitations
           : normalizeCellSourceReferences(
-              details ?? {
+              details ?? rowCell ?? {
                 source_page: undefined,
                 source_references: undefined,
                 verbatim_extract: undefined,
@@ -153,30 +155,38 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, documentSea
 
       let highlightMode: 'verbatim' | 'page' | 'none' = 'none'
       const activeRef = refs[sourceReferenceIndex] ?? refs[0]
-      if (activeRef?.text || details?.verbatim_extract) {
+      if (activeRef?.text || details?.verbatim_extract || rowCell?.verbatim_extract) {
         highlightMode = 'verbatim'
-      } else if (activeRef?.page ?? details?.source_page ?? details?.source_section) {
+      } else if (
+        activeRef?.page ??
+        details?.source_page ??
+        details?.source_section ??
+        rowCell?.source_page ??
+        rowCell?.source_section
+      ) {
         highlightMode = 'page'
       }
 
       onCellClick(fileId, columnId, {
-        verbatimExtract: activeRef?.text ?? details?.verbatim_extract,
-        sourcePage: activeRef?.page ?? details?.source_page,
-        sourceSection: activeRef?.section ?? details?.source_section,
+        verbatimExtract: activeRef?.text ?? details?.verbatim_extract ?? rowCell?.verbatim_extract,
+        sourcePage: activeRef?.page ?? details?.source_page ?? rowCell?.source_page,
+        sourceSection: activeRef?.section ?? details?.source_section ?? rowCell?.source_section,
         columnType: details?.column_type ?? column?.column_type ?? 'text',
         highlightMode,
         sourceReferences: refs,
         sourceReferenceIndex,
         hideDetailPanel: true,
-        docId: details?.primary_source_doc_id || fileId,
+        docId: activeRef?.doc_id ?? details?.primary_source_doc_id ?? rowCell?.primary_source_doc_id ?? fileId,
         charStart:
-          sourceReferenceIndex === 0
-            ? details?.primary_source_char_start || undefined
-            : undefined,
+          activeRef?.char_start ??
+          (sourceReferenceIndex === 0
+            ? details?.primary_source_char_start ?? rowCell?.primary_source_char_start ?? undefined
+            : undefined),
         charEnd:
-          sourceReferenceIndex === 0
-            ? details?.primary_source_char_end || undefined
-            : undefined,
+          activeRef?.char_end ??
+          (sourceReferenceIndex === 0
+            ? details?.primary_source_char_end ?? rowCell?.primary_source_char_end ?? undefined
+            : undefined),
       })
     },
     [onCellClick, reviewId, tableData.rows, tableData.columns],
@@ -572,7 +582,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, documentSea
         }}
       />
 
-      {filterPopoverOpen && filterAnchorEl && onCloseFilterPopover && (
+      {filterPopoverOpen && onCloseFilterPopover && (
         <FilterPopover
           open={true}
           anchorEl={filterAnchorEl}

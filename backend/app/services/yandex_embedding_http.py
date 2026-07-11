@@ -45,6 +45,17 @@ def _micro_batch_size() -> int:
     return max(1, _embedding_rps_limit() - 1)
 
 
+def _max_parallel_burst() -> int:
+    """Max in-flight HTTP requests per 1s window (steady rate, not one giant burst)."""
+    raw = int(getattr(config, "YANDEX_EMBEDDING_MAX_PARALLEL_REQUESTS", 8) or 8)
+    return max(1, min(raw, _embedding_rps_limit()))
+
+
+def _batch_cap() -> int:
+    """Parallel requests fired together each second."""
+    return min(_micro_batch_size(), _max_parallel_burst())
+
+
 def _window_seconds() -> float:
     return 1.0
 
@@ -170,39 +181,54 @@ class YandexEmbeddingHttpEngine:
         import httpx
 
         assert self._queue is not None
+        burst = _batch_cap()
         limits = httpx.Limits(
-            max_keepalive_connections=max(20, _micro_batch_size() * 2),
-            max_connections=max(50, _micro_batch_size() * 4),
+            max_keepalive_connections=max(20, burst * 2),
+            max_connections=max(50, burst * 4),
         )
         url = f"{_yandex_openai_compat_base_url().rstrip('/')}/embeddings"
 
         async with httpx.AsyncClient(limits=limits, timeout=_REQUEST_TIMEOUT_SEC) as client:
+            sent_in_window = 0
+            window_start = time.monotonic()
+
             while True:
+                now = time.monotonic()
+                if now - window_start >= _window_seconds():
+                    window_start = now
+                    sent_in_window = 0
+
+                quota_left = _embedding_rps_limit() - sent_in_window
+                if quota_left <= 0:
+                    await asyncio.sleep(max(0.0, _window_seconds() - (now - window_start)))
+                    window_start = time.monotonic()
+                    sent_in_window = 0
+                    quota_left = _embedding_rps_limit()
+
+                take = min(_batch_cap(), quota_left)
                 first = await self._dequeue_job()
                 batch: List[_EmbedJob] = [first]
-                batch_cap = _micro_batch_size()
-                while len(batch) < batch_cap:
+                while len(batch) < take:
                     try:
                         batch.append(self._dequeue_job_nowait())
                     except asyncio.QueueEmpty:
                         break
 
-                window_start = time.monotonic()
                 await asyncio.gather(
                     *[self._execute_job(client, url, job) for job in batch],
                     return_exceptions=False,
                 )
+                sent_in_window += len(batch)
 
                 assert self._priority_queue is not None and self._queue is not None
-                if not self._priority_queue.empty():
-                    continue
-                if self._queue.empty():
-                    continue
-
-                elapsed = time.monotonic() - window_start
-                sleep_needed = _window_seconds() - elapsed
-                if sleep_needed > 0:
-                    await asyncio.sleep(sleep_needed)
+                has_backlog = not self._priority_queue.empty() or not self._queue.empty()
+                if sent_in_window >= _embedding_rps_limit() and has_backlog:
+                    elapsed = time.monotonic() - window_start
+                    sleep_needed = _window_seconds() - elapsed
+                    if sleep_needed > 0:
+                        await asyncio.sleep(sleep_needed)
+                    window_start = time.monotonic()
+                    sent_in_window = 0
 
     def _queues_empty(self) -> bool:
         assert self._queue is not None and self._priority_queue is not None

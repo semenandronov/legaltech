@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 from langchain_core.documents import Document
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
+from app.services.chat.chunk_file_passport import attach_passports_to_source_headers
 from app.services.langchain_agents.schemas.citation_schema import EnhancedCitation
 
 _CHUNK_REF_RE = re.compile(r"\[CHUNK:([^\]]+)\]")
@@ -74,6 +75,7 @@ def build_structured_citation_context(
     """Prepare chunk map, LLM messages, and context size for structured citations."""
     chunk_map: Dict[str, ChunkRecord] = {}
     context_parts: List[str] = []
+    _, passport_lines = attach_passports_to_source_headers(documents)
 
     for i, doc in enumerate(documents):
         content = doc.page_content or ""
@@ -85,6 +87,7 @@ def build_structured_citation_context(
         char_start = int(metadata.get("char_start") or 0)
         char_end = int(metadata.get("char_end") or len(content))
         bbox_regions, page_bbox = rag_service._extract_bbox_regions(metadata)
+        passport = passport_lines[i] if i < len(passport_lines) else ""
 
         chunk_map[chunk_id] = ChunkRecord(
             chunk_id=chunk_id,
@@ -98,9 +101,10 @@ def build_structured_citation_context(
             bbox_regions=bbox_regions or None,
             page_bbox=page_bbox,
         )
-        context_parts.append(
-            f"[CHUNK:{chunk_id}] {source_file}, стр. {source_page}:\n{content[:content_cap]}"
-        )
+        head = f"[CHUNK:{chunk_id}] {source_file}, стр. {source_page}"
+        if passport:
+            head = f"{head}\n{passport}"
+        context_parts.append(f"{head}:\n{content[:content_cap]}")
 
     context = "\n\n".join(context_parts)
     chunk_ids_list = tuple(chunk_map.keys())

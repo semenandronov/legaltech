@@ -461,7 +461,7 @@ class Config:
     ).strip().lower() == "true"
     # Справочник (GLOBAL_LEGAL_CORPUS): размер пула кандидатов до rerank / дедупа (multi-query + широкий recall).
     LEGAL_CORPUS_RECALL_MAX: int = int(
-        (os.getenv("LEGAL_CORPUS_RECALL_MAX", "60") or "60").strip().strip('"').strip("'") or "60"
+        (os.getenv("LEGAL_CORPUS_RECALL_MAX", "30") or "30").strip().strip('"').strip("'") or "30"
     )
     # Сколько чанков отдавать в промпт после rerank (если не переопределено аргументом k).
     LEGAL_CORPUS_FINAL_K: int = int(
@@ -475,10 +475,26 @@ class Config:
     LEGAL_CORPUS_SKIP_RERANK_ON_FAST_PATH: bool = os.getenv(
         "LEGAL_CORPUS_SKIP_RERANK_ON_FAST_PATH", "true"
     ).strip().lower() == "true"
-    # Усечение текста чанка для пары query–passage в reranker.
+    # Усечение текста чанка для пары query–passage в reranker (heavy tier).
     LEGAL_CORPUS_RERANK_MAX_CHARS: int = int(
         (os.getenv("LEGAL_CORPUS_RERANK_MAX_CHARS", "2400") or "2400").strip().strip('"').strip("'")
         or "2400"
+    )
+    # light — как CASE_ASSISTANT (ms-marco-MiniLM); heavy — BGE / RERANKER_MODEL_NAME
+    LEGAL_CORPUS_RERANK_TIER: str = (
+        (os.getenv("LEGAL_CORPUS_RERANK_TIER", "light") or "light").strip().lower()
+    )
+    # Параллельный hybrid по search_queries (несколько embedding-запросов одновременно)
+    LEGAL_CORPUS_HYBRID_PARALLEL: bool = os.getenv(
+        "LEGAL_CORPUS_HYBRID_PARALLEL", "true"
+    ).strip().lower() == "true"
+    LEGAL_CORPUS_HYBRID_MAX_WORKERS: int = int(
+        (os.getenv("LEGAL_CORPUS_HYBRID_MAX_WORKERS", "5") or "5").strip().strip('"').strip("'")
+        or "5"
+    )
+    # Dense/sparse blend для norm-hybrid справочника (GLOBAL_LEGAL_CORPUS).
+    LEGAL_CORPUS_HYBRID_ALPHA: float = float(
+        (os.getenv("LEGAL_CORPUS_HYBRID_ALPHA", "0.7") or "0.7").strip().strip('"').strip("'") or "0.7"
     )
     # Внутренний чат (garant): размер выборки и лимит символов контекста справочника.
     LEGAL_CORPUS_CONTEXT_K: int = int(
@@ -487,6 +503,11 @@ class Config:
     LEGAL_CORPUS_MAX_CONTEXT_CHARS: int = int(
         (os.getenv("LEGAL_CORPUS_MAX_CONTEXT_CHARS", "14000") or "14000").strip().strip('"').strip("'")
         or "14000"
+    )
+    # Макс. символов тела одного фрагмента в контексте справочника (чтобы один чанк не съедал весь бюджет).
+    LEGAL_CORPUS_MAX_FRAGMENT_CHARS: int = int(
+        (os.getenv("LEGAL_CORPUS_MAX_FRAGMENT_CHARS", "2800") or "2800").strip().strip('"').strip("'")
+        or "2800"
     )
     # Глобальный ассистент: минимум слотов для legal_corpus после merge с matter.
     LEGAL_CORPUS_GLOBAL_MERGE_MIN_SLOTS: int = int(
@@ -538,6 +559,14 @@ class Config:
     LEGAL_CORPUS_NORM_MAX_ARTICLE_CHARS: int = int(
         os.getenv("LEGAL_CORPUS_NORM_MAX_ARTICLE_CHARS", "12000") or "12000"
     )
+    # PDF законов: PyMuPDF text extract + очистка (consultant_pdf_preprocess).
+    LEGAL_CORPUS_PDF_PREPROCESS_ENABLED: bool = os.getenv(
+        "LEGAL_CORPUS_PDF_PREPROCESS_ENABLED", "true"
+    ).strip().lower() == "true"
+    # True = только text extract (без Docling AST) для PDF в справочнике.
+    LEGAL_CORPUS_PDF_TEXT_FIRST: bool = os.getenv(
+        "LEGAL_CORPUS_PDF_TEXT_FIRST", "false"
+    ).strip().lower() == "true"
     # Graph expand при retrieval (фаза B).
     LEGAL_NORM_GRAPH_EXPAND_ENABLED: bool = os.getenv(
         "LEGAL_NORM_GRAPH_EXPAND_ENABLED", "true"
@@ -545,6 +574,26 @@ class Config:
     LEGAL_NORM_GRAPH_EXPAND_LIMIT: int = int(
         os.getenv("LEGAL_NORM_GRAPH_EXPAND_LIMIT", "8") or "8"
     )
+    # Многошаговый обход графа (BFS): 1 = только соседи, 2–3 = паутина.
+    LEGAL_NORM_GRAPH_MAX_HOPS: int = int(os.getenv("LEGAL_NORM_GRAPH_MAX_HOPS", "2") or "2")
+    LEGAL_NORM_GRAPH_TOTAL_EXPAND_LIMIT: int = int(
+        os.getenv("LEGAL_NORM_GRAPH_TOTAL_EXPAND_LIMIT", "24") or "24"
+    )
+    # Graph-first: кластер норм по статьям из LLM-плана до hybrid retrieval.
+    LEGAL_NORM_GRAPH_CLUSTER_ENABLED: bool = os.getenv(
+        "LEGAL_NORM_GRAPH_CLUSTER_ENABLED", "true"
+    ).strip().lower() == "true"
+    LEGAL_NORM_GRAPH_CLUSTER_LIMIT: int = int(
+        os.getenv("LEGAL_NORM_GRAPH_CLUSTER_LIMIT", "20") or "20"
+    )
+    # После загрузки главы: reconcile cross-ref + NEXT по всему instrument_id.
+    LEGAL_NORM_GRAPH_RECONCILE_ON_UPLOAD: bool = os.getenv(
+        "LEGAL_NORM_GRAPH_RECONCILE_ON_UPLOAD", "true"
+    ).strip().lower() == "true"
+    # Строгая валидация индекса (сбой загрузки при пустом графе/нормах).
+    LEGAL_CORPUS_INDEX_GRAPH_VALIDATION_STRICT: bool = os.getenv(
+        "LEGAL_CORPUS_INDEX_GRAPH_VALIDATION_STRICT", "false"
+    ).strip().lower() == "true"
     # LLM extractor для неразрешённых отсылок при индексации (фаза E).
     LEGAL_NORM_LLM_EXTRACTOR_ENABLED: bool = os.getenv(
         "LEGAL_NORM_LLM_EXTRACTOR_ENABLED", "false"
@@ -649,7 +698,7 @@ class Config:
     CASE_TURN_PREP_UNIFIED_PLANNER_MAX_TOKENS: int = int(
         os.getenv("CASE_TURN_PREP_UNIFIED_PLANNER_MAX_TOKENS", "640") or "640"
     )
-    # Statement SQL: LLM planner → deterministic executor (count/sum/list/find).
+    # Statement SQL: LLM planner → deterministic executor (count/sum/list/find/top/group).
     STATEMENT_SQL_PLANNER_ENABLED: bool = (
         os.getenv("STATEMENT_SQL_PLANNER_ENABLED", "true").strip().lower() == "true"
     )
@@ -658,6 +707,16 @@ class Config:
     )
     STATEMENT_SQL_PLANNER_MAX_TOKENS: int = int(
         os.getenv("STATEMENT_SQL_PLANNER_MAX_TOKENS", "512") or "512"
+    )
+    # Tool-calling agent over one statement table (primary path; classic planner is fallback).
+    STATEMENT_TABLE_AGENT_ENABLED: bool = (
+        os.getenv("STATEMENT_TABLE_AGENT_ENABLED", "true").strip().lower() == "true"
+    )
+    STATEMENT_TABLE_AGENT_MAX_TOOL_CALLS: int = int(
+        os.getenv("STATEMENT_TABLE_AGENT_MAX_TOOL_CALLS", "8") or "8"
+    )
+    STATEMENT_TABLE_AGENT_MAX_TOKENS: int = int(
+        os.getenv("STATEMENT_TABLE_AGENT_MAX_TOKENS", "2048") or "2048"
     )
     # LLM формулирует ответ по структурированным фактам SQL (fallback — краткий детерминированный текст).
     STATEMENT_SQL_SYNTHESIS_ENABLED: bool = (
@@ -671,6 +730,12 @@ class Config:
     )
     STATEMENT_SQL_SYNTHESIS_MAX_ROWS: int = int(
         os.getenv("STATEMENT_SQL_SYNTHESIS_MAX_ROWS", "40") or "40"
+    )
+    OPERATIONS_CHAT_SCOPE_MAX_ROWS: int = int(
+        os.getenv("OPERATIONS_CHAT_SCOPE_MAX_ROWS", "20000") or "20000"
+    )
+    OPERATIONS_CHAT_HISTORY_MAX_TURNS: int = int(
+        os.getenv("OPERATIONS_CHAT_HISTORY_MAX_TURNS", "6") or "6"
     )
     # Shared file-scoped agent (SQL + RAG) for chat and tabular statement cells.
     FILE_SCOPED_AGENT_ENABLED: bool = (
@@ -741,6 +806,10 @@ class Config:
     RAG_ALLOW_UNCERTAINTY: bool = os.getenv("RAG_ALLOW_UNCERTAINTY", "true").lower() == "true"  # Allow model to express uncertainty when information is insufficient
     RAG_LANGGRAPH_STRUCTURED_CITATIONS_ENABLED: bool = (
         os.getenv("RAG_LANGGRAPH_STRUCTURED_CITATIONS_ENABLED", "true").lower() == "true"
+    )
+    # Stream structured-citation answers (text_delta + progressive citations) instead of sync invoke.
+    RAG_STRUCTURED_CITATIONS_STREAM_ENABLED: bool = (
+        os.getenv("RAG_STRUCTURED_CITATIONS_STREAM_ENABLED", "true").lower() == "true"
     )
     # Editor document chat: stream tokens via Yandex OpenAI-compat (stream=true).
     EDITOR_CHAT_STREAM_ENABLED: bool = (
@@ -817,6 +886,12 @@ class Config:
     CASE_ASSISTANT_LLM_ROUTER_ENABLED: bool = (
         os.getenv("CASE_ASSISTANT_LLM_ROUTER_ENABLED", "true").strip().lower() == "true"
     )
+    # FAST path: allow a cheap lite LLM call to pick file_ids from the catalog
+    # when deterministic №-ref / summary scope miss. Keeps prep LLMs skipped.
+    CASE_ASSISTANT_FAST_LLM_FILE_SCOPE_ENABLED: bool = (
+        os.getenv("CASE_ASSISTANT_FAST_LLM_FILE_SCOPE_ENABLED", "true").strip().lower()
+        == "true"
+    )
     CASE_ASSISTANT_ROUTER_MODEL: str = os.getenv(
         "CASE_ASSISTANT_ROUTER_MODEL",
         os.getenv("YANDEX_GPT_MODEL", "yandexgpt-lite/latest"),
@@ -850,8 +925,9 @@ class Config:
     CASE_ASSISTANT_DOC_COUNT_CACHE_TTL_SEC: int = int(
         os.getenv("CASE_ASSISTANT_DOC_COUNT_CACHE_TTL_SEC", "300") or "300"
     )
+    # Instant/fact answers: keep prompt small for TTFT (full tiers stay large).
     CASE_ASSISTANT_INSTANT_MAX_CONTEXT_CHARS: int = int(
-        os.getenv("CASE_ASSISTANT_INSTANT_MAX_CONTEXT_CHARS", "16000") or "16000"
+        os.getenv("CASE_ASSISTANT_INSTANT_MAX_CONTEXT_CHARS", "3500") or "3500"
     )
     CASE_ASSISTANT_STANDARD_MAX_CONTEXT_CHARS: int = int(
         os.getenv("CASE_ASSISTANT_STANDARD_MAX_CONTEXT_CHARS", "48000") or "48000"
@@ -863,7 +939,14 @@ class Config:
         os.getenv("CASE_ASSISTANT_MAX_CONTEXT_CHARS_CEILING", "48000") or "48000"
     )
     CASE_ASSISTANT_INSTANT_MAX_TOKENS: int = int(
-        os.getenv("CASE_ASSISTANT_INSTANT_MAX_TOKENS", "800") or "800"
+        os.getenv("CASE_ASSISTANT_INSTANT_MAX_TOKENS", "300") or "300"
+    )
+    # FAST latency path generation ceilings (same model; smaller prompt/output).
+    CASE_ASSISTANT_FAST_GEN_MAX_CONTEXT_CHARS: int = int(
+        os.getenv("CASE_ASSISTANT_FAST_GEN_MAX_CONTEXT_CHARS", "3500") or "3500"
+    )
+    CASE_ASSISTANT_FAST_GEN_MAX_TOKENS: int = int(
+        os.getenv("CASE_ASSISTANT_FAST_GEN_MAX_TOKENS", "300") or "300"
     )
     CASE_ASSISTANT_STANDARD_MAX_TOKENS: int = int(
         os.getenv("CASE_ASSISTANT_STANDARD_MAX_TOKENS", "1500") or "1500"
@@ -1082,6 +1165,31 @@ class Config:
     CASE_ASSISTANT_UNIFIED_RETRIEVAL: bool = (
         os.getenv("CASE_ASSISTANT_UNIFIED_RETRIEVAL", "true").strip().lower() == "true"
     )
+    # Adaptive latency path: FAST document Q&A skips prep LLMs (default ON).
+    # HEAVY only for UI toggles (draft/deep/127-FZ) and explicit heavy intents.
+    CASE_ASSISTANT_LATENCY_PATH_ENABLED: bool = (
+        os.getenv("CASE_ASSISTANT_LATENCY_PATH_ENABLED", "true").strip().lower() == "true"
+    )
+    # Weak retrieval → one deterministic broaden/deepen pass (no LLM rewrite on FAST).
+    CASE_ASSISTANT_RETRIEVAL_ESCALATION_ENABLED: bool = (
+        os.getenv("CASE_ASSISTANT_RETRIEVAL_ESCALATION_ENABLED", "true").strip().lower()
+        == "true"
+    )
+    # When retrieval is scoped to concrete file(s), merge a within-file lexical
+    # channel for compact documents (price / cadastral / clause recall).
+    CASE_ASSISTANT_SCOPED_FILE_EXPAND_ENABLED: bool = (
+        os.getenv("CASE_ASSISTANT_SCOPED_FILE_EXPAND_ENABLED", "true").strip().lower()
+        == "true"
+    )
+    CASE_ASSISTANT_SCOPED_FILE_EXPAND_MAX_CHUNKS: int = int(
+        os.getenv("CASE_ASSISTANT_SCOPED_FILE_EXPAND_MAX_CHUNKS", "48") or "48"
+    )
+    CASE_ASSISTANT_SCOPED_FILE_EXPAND_POOL: int = int(
+        os.getenv("CASE_ASSISTANT_SCOPED_FILE_EXPAND_POOL", "32") or "32"
+    )
+    CASE_ASSISTANT_SCOPED_FILE_EXPAND_MAX_FILES: int = int(
+        os.getenv("CASE_ASSISTANT_SCOPED_FILE_EXPAND_MAX_FILES", "3") or "3"
+    )
     # Adaptive execution tiers (instant / standard / deep) — recall and rerank per tier
     CASE_ASSISTANT_ADAPTIVE_TIER_ENABLED: bool = (
         os.getenv("CASE_ASSISTANT_ADAPTIVE_TIER_ENABLED", "true").strip().lower() == "true"
@@ -1128,6 +1236,10 @@ class Config:
     LEGAL_CORPUS_LLM_PLANNER_MODEL: str = os.getenv("LEGAL_CORPUS_LLM_PLANNER_MODEL", "").strip()
     LEGAL_CORPUS_LLM_PLANNER_MAX_QUERIES: int = int(
         os.getenv("LEGAL_CORPUS_LLM_PLANNER_MAX_QUERIES", "6") or "6"
+    )
+    # HTTP timeout планировщика retrieval (сек); fail-open → детерминированный план
+    LEGAL_CORPUS_PLANNER_TIMEOUT_SEC: float = float(
+        os.getenv("LEGAL_CORPUS_PLANNER_TIMEOUT_SEC", "20") or "20"
     )
     CASE_ASSISTANT_STREAM_CASE_CHAT: bool = (
         os.getenv("CASE_ASSISTANT_STREAM_CASE_CHAT", "true").strip().lower() == "true"

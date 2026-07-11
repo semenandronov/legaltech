@@ -771,13 +771,17 @@ const TabularReviewPage: React.FC = () => {
                   onCellClick={async (fileId, columnId, cellData: TabularCellClickPayload) => {
                     const row = tableData.rows.find(r => r.file_id === fileId)
                     const clickedColumn = tableData.columns.find(col => col.id === columnId)
+                    const rowCell = row?.cells?.[columnId]
 
                     // Popover уже загрузил details; повторный fetch только если refs не переданы
                     let details = null
                     if (
                       reviewId &&
                       clickedColumn &&
-                      !(cellData.sourceReferences && cellData.sourceReferences.length > 0)
+                      !(
+                        (cellData.sourceReferences && cellData.sourceReferences.length > 0) ||
+                        (rowCell?.source_references && rowCell.source_references.length > 0)
+                      )
                     ) {
                       setLoadingCellDetails(true)
                       try {
@@ -794,12 +798,26 @@ const TabularReviewPage: React.FC = () => {
                     }
 
                     const finalCellData = buildTabularViewerCellData({
-                      details,
+                      details: details ?? (rowCell ? {
+                        id: `${fileId}:${columnId}`,
+                        cell_value: rowCell.cell_value,
+                        normalized_value: rowCell.normalized_value,
+                        verbatim_extract: rowCell.verbatim_extract,
+                        reasoning: rowCell.reasoning,
+                        source_references: rowCell.source_references,
+                        confidence_score: rowCell.confidence_score,
+                        source_page: rowCell.source_page,
+                        source_section: rowCell.source_section,
+                        status: rowCell.status,
+                        column_type: clickedColumn?.column_type,
+                        primary_source_doc_id: rowCell.primary_source_doc_id,
+                        primary_source_char_start: rowCell.primary_source_char_start,
+                        primary_source_char_end: rowCell.primary_source_char_end,
+                        verified_flag: rowCell.verified_flag,
+                      } : null),
                       click: cellData,
                       fileId,
                     })
-
-                    const rowCell = row?.cells?.[columnId]
 
                     setSelectedDocument({
                       fileId,

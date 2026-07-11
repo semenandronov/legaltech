@@ -209,7 +209,7 @@ export const TabularReviewContextChat: React.FC<TabularReviewContextChatProps> =
   }
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex h-full min-h-0 flex-col bg-white">
       <div className="ws-tabular-chat-header">
         <div className="flex items-center gap-1 min-w-0">
           {onClose && (

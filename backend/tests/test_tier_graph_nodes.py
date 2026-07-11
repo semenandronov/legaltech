@@ -52,9 +52,30 @@ def test_grade_weak_instant_escalates_at_max_rounds():
     assert route_after_grade_retrieval(out) == "extract_retrieval_task"
 
 
+def test_grade_weak_fast_latency_path_escalates_with_budget_rounds():
+    state = {
+        "execution_tier": "instant",
+        "question": "сумма",
+        "rag_documents": [],
+        "budget_profile": {
+            "execution_tier": "instant",
+            "max_retrieval_rounds": 2,
+            "recall_k": 16,
+            "skip_llm_document_scope": True,
+            "latency_path": {"kind": "fast", "reason": "default_document_qa"},
+        },
+        "retrieval_round": 0,
+    }
+    out = grade_retrieval_node(state)
+    assert out.get("grade_retrieval_ok") is False
+    assert out.get("escalated_from") is None
+    assert route_after_grade_retrieval(out) == "escalate_retrieval"
+
+
 def test_grade_sufficient_goes_to_quality_gate():
     state = {
         "execution_tier": "standard",
+        "question": "общие сведения",
         "rag_documents": [
             {"page_content": "a", "metadata": {"score": 0.9}},
             {"page_content": "b", "metadata": {"score": 0.8}},

@@ -114,6 +114,7 @@ def resolve_turn_memory_contract(
     dialog_history: str = "",
     conversation_summary: str = "",
     anchor_filenames: Sequence[str] = (),
+    allow_llm_judge: bool = True,
 ) -> TurnMemoryContract:
     """
     Assemble the single turn memory contract (prep-time, before graph).
@@ -124,6 +125,8 @@ def resolve_turn_memory_contract(
     3. Referential routing (deterministic-first via resolve_turn_context)
     4. Working-memory delta (execution contract)
     5. Map to execution_mode
+
+    FAST latency path sets ``allow_llm_judge=False``.
     """
     original = (question or "").strip()
     prior = load_prior_turn_evidence_from_turns(turns)
@@ -168,6 +171,7 @@ def resolve_turn_memory_contract(
         dialog_history=dialog_history,
         conversation_summary=conversation_summary,
         anchor_filenames=anchor_filenames,
+        allow_llm_judge=allow_llm_judge,
     )
     exec_contract = resolve_turn_execution_contract(
         question=original,

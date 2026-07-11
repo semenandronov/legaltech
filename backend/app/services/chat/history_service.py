@@ -19,13 +19,27 @@ from app.services.chat.editor_session import is_editor_session_id
 
 logger = logging.getLogger(__name__)
 
+# Namespaces stored in chat_messages but not shown as case-assistant threads.
+_NON_CASE_ASSISTANT_SESSION_PREFIXES = (
+    "editor:%",
+    "tabular:%",
+    "operations:%",
+)
 
-def _exclude_editor_sessions(query):
-    """Case assistant history must not include document-editor threads."""
-    return query.filter(
-        (ChatMessage.session_id.is_(None))
-        | (~ChatMessage.session_id.like("editor:%"))
-    )
+
+def _exclude_scoped_chat_sessions(query):
+    """Case assistant list/history must not include editor/tabular/operations threads."""
+    filtered = query
+    for prefix in _NON_CASE_ASSISTANT_SESSION_PREFIXES:
+        filtered = filtered.filter(
+            (ChatMessage.session_id.is_(None))
+            | (~ChatMessage.session_id.like(prefix))
+        )
+    return filtered
+
+
+# Backward-compatible alias used by older call sites / tests.
+_exclude_editor_sessions = _exclude_scoped_chat_sessions
 
 
 class ChatHistoryService:

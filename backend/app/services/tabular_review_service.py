@@ -625,10 +625,15 @@ class TabularReviewService:
                     "cell_value": cell_value,
                     "verbatim_extract": cell.verbatim_extract if cell else None,
                     "reasoning": cell.reasoning if cell else None,
+                    "source_references": self._coerce_source_references(cell.source_references) if cell else [],
                     "confidence_score": float(cell.confidence_score) if cell and cell.confidence_score else None,
                     "source_page": cell.source_page if cell else None,
                     "source_section": cell.source_section if cell else None,
                     "status": cell.status if cell else "pending",
+                    "primary_source_doc_id": getattr(cell, "primary_source_doc_id", None) if cell else None,
+                    "primary_source_char_start": getattr(cell, "primary_source_char_start", None) if cell else None,
+                    "primary_source_char_end": getattr(cell, "primary_source_char_end", None) if cell else None,
+                    "verified_flag": getattr(cell, "verified_flag", None) if cell else None,
                 }
             
             table_rows.append(row)

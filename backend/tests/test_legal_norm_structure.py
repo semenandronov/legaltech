@@ -12,6 +12,7 @@ from app.services.legal_norm_structure import (
     extract_chapters_from_parent_path,
     make_chapter_node_key,
     make_law_node_key,
+    normalize_article_text_for_clause_split,
     split_article_into_clauses,
 )
 
@@ -31,6 +32,35 @@ def test_split_article_into_clauses_basic():
     assert "1" in refs
     assert "2" in refs
     assert "3" in refs
+
+
+ARTICLE_33_GARANT_SNIPPET = (
+    "Статья 33. Подсудность дел о банкротстве 1 . Дела о банкротстве юридических лиц и граждан, "
+    "в том числе индивидуальных предпринимателей, рассматривает арбитражный суд по месту нахождения "
+    "должника - юридического лица или по месту жительства гражданина. 2. Заявление о признании "
+    "должника банкротом принимается арбитражным судом, если требования к должнику - юридическому лицу "
+    "в совокупности составляют не менее чем два миллиона рублей, к должнику-гражданину - не менее чем "
+    "пятьсот тысяч рублей и указанные требования не исполнены в течение трех месяцев с даты, когда они "
+    "должны были быть исполнены, если иное не предусмотрено настоящим Федеральным законом.\n"
+    "3. Дело о банкротстве не может быть передано на рассмотрение в третейский суд."
+)
+
+
+def test_normalize_garant_spaced_clause_dot():
+    out = normalize_article_text_for_clause_split("банкротстве 1 . Дела")
+    assert "1 ." not in out
+    assert "1. Дела" in out or "1.\nДела" in out or "\n1. Дела" in out
+
+
+def test_split_article_33_garant_inline_clauses():
+    pieces = split_article_into_clauses(ARTICLE_33_GARANT_SNIPPET)
+    refs = [p.clause_ref for p in pieces]
+    assert refs.count("1") == 1
+    assert refs.count("2") == 1
+    assert refs.count("3") == 1
+    by_ref = {p.clause_ref: p.text for p in pieces}
+    assert "два миллиона" in by_ref["2"]
+    assert "третейский суд" in by_ref["3"]
 
 
 def test_expand_article_always_clause_level():

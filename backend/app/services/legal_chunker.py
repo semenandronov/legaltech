@@ -345,19 +345,29 @@ class LegalChunkerV2:
         loader_did_ocr: bool = False,
         loader_native_text: bool = False,
         loader_documents: Optional[List[Document]] = None,
+        prepared_pdf_text: Optional[str] = None,
     ) -> List[Document]:
         """Article/clause-level chunking для GLOBAL_LEGAL_CORPUS (фаза A)."""
         if not isinstance(base_metadata, dict):
             base_metadata = dict(base_metadata or {})
 
+        pdf_text = (prepared_pdf_text or "").strip() or None
+        text_first = bool(getattr(config, "LEGAL_CORPUS_PDF_TEXT_FIRST", False))
+        ext = _file_ext(filename)
+        use_pdf_text_only = bool(text_first and pdf_text and ext == ".pdf")
+
+        primary_fallback = pdf_text or fallback_text
+        content_for_docling = None if use_pdf_text_only else content_bytes
+        native_text = loader_native_text and not use_pdf_text_only
+
         segments, full_text, preseg_strategy, profile = _collect_legal_segments(
-            content_bytes=content_bytes,
+            content_bytes=content_for_docling,
             filename=filename,
             doc_type=doc_type or "legal_reference",
             case_id=case_id or "GLOBAL_LEGAL_CORPUS",
-            fallback_text=fallback_text,
+            fallback_text=primary_fallback,
             loader_did_ocr=loader_did_ocr,
-            loader_native_text=loader_native_text,
+            loader_native_text=native_text,
             loader_documents=loader_documents,
         )
         if not segments:
@@ -373,6 +383,36 @@ class LegalChunkerV2:
         )
         if not documents:
             raise ValueError(f"LegalChunkerV2: norm layer is empty for {filename}")
+
+        if pdf_text and not use_pdf_text_only and not _norm_documents_look_structured(documents):
+            logger.info(
+                "[LegalChunkerV2] PDF norm structure weak for %s — retry with PyMuPDF text extract",
+                filename,
+            )
+            segments2, full_text2, preseg2, profile2 = _collect_legal_segments(
+                content_bytes=None,
+                filename=filename,
+                doc_type=doc_type or "legal_reference",
+                case_id=case_id or "GLOBAL_LEGAL_CORPUS",
+                fallback_text=pdf_text,
+                loader_did_ocr=False,
+                loader_native_text=False,
+                loader_documents=None,
+            )
+            if segments2:
+                documents2 = _build_norm_documents_from_segments(
+                    segments=segments2,
+                    profile=profile2,
+                    base_metadata=base_metadata,
+                    full_text=full_text2,
+                    preseg_strategy=preseg2,
+                    filename=filename,
+                )
+                if documents2 and (
+                    _norm_documents_look_structured(documents2)
+                    or len(documents2) > len(documents)
+                ):
+                    documents = documents2
 
         _apply_hidden_embedding_context(
             documents,
@@ -1468,6 +1508,20 @@ _CLAUSE_BODY_SPLIT_RE = re.compile(
     r"(?=\n\s*(?:\d+[\.)]\s|Пункт\s+\d+|п\.\s*\d+))",
     re.IGNORECASE | re.MULTILINE,
 )
+
+
+def _norm_documents_look_structured(documents: Sequence[Document]) -> bool:
+    """Есть ли в norm-чанках реальные заголовки статей (не только fallback 1,2,3)."""
+    norm = [d for d in documents if (d.metadata or {}).get("chunk_level") == "norm"]
+    if len(norm) < 2:
+        return False
+    article_like = 0
+    for d in norm:
+        title = str((d.metadata or {}).get("section_title") or "")
+        head = ((d.page_content or "")[:160]).split("\n", 1)[0]
+        if _ARTICLE_HEADING_NUM_RE.match(title.strip()) or _ARTICLE_HEADING_NUM_RE.match(head.strip()):
+            article_like += 1
+    return article_like >= 2
 
 
 def _first_line(text: str) -> str:

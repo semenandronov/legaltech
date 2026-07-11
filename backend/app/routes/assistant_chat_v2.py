@@ -2369,9 +2369,11 @@ async def get_recent_activity(
     - case_chat: in-case assistant session
     - global_chat: global (case-free) assistant session
     - tabular_review: tabular review project
+    - operations: bank statement operations registry view
     """
     from app.models.case import Case, ChatMessage, GlobalAssistantSession
     from app.models.tabular_review import TabularReview
+    from app.models.operations_statement_session import OperationsStatementSession
     from sqlalchemy import func, desc
 
     PREVIEW = 80
@@ -2404,6 +2406,9 @@ async def get_recent_activity(
             for c in db.query(Case).filter(Case.id.in_(case_ids)).all()
         }
         for row in session_agg:
+            sid = str(row.session_id or "")
+            if sid.startswith(("editor:", "tabular:", "operations:")):
+                continue
             first_msg = (
                 db.query(ChatMessage)
                 .filter(
@@ -2462,6 +2467,25 @@ async def get_recent_activity(
             "case_id": review.case_id,
             "case_name": case_title or "Дело",
             "updated_at": review.updated_at.isoformat() if review.updated_at else None,
+        })
+
+    # ── 4. Operations registry (bank statement views) ──
+    ops_sessions = (
+        db.query(OperationsStatementSession, Case.title.label("case_title"))
+        .join(Case, Case.id == OperationsStatementSession.case_id)
+        .filter(OperationsStatementSession.user_id == current_user.id)
+        .order_by(desc(OperationsStatementSession.updated_at))
+        .limit(limit)
+        .all()
+    )
+    for session, case_title in ops_sessions:
+        items.append({
+            "type": "operations",
+            "id": session.file_id,
+            "title": session.filename or "Выписка",
+            "case_id": session.case_id,
+            "case_name": case_title or "Дело",
+            "updated_at": session.updated_at.isoformat() if session.updated_at else None,
         })
 
     items.sort(key=lambda x: x.get("updated_at") or "", reverse=True)

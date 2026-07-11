@@ -16,7 +16,7 @@ _DEBIT_STEM_RE = re.compile(
     re.IGNORECASE,
 )
 _CREDIT_STEM_RE = re.compile(
-    r"\b(?:поступлен|приход|зачислен|кредит|пополнен|внесен|входящ)\w*",
+    r"\b(?:поступлен|приход|зачислен|кредит|пополн|внесен|входящ)\w*",
     re.IGNORECASE,
 )
 

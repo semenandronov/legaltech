@@ -1,9 +1,9 @@
 "use client"
 
+import type { ReactNode } from 'react'
 import {
   Download,
   Edit2,
-  Filter,
   HelpCircle,
   MessageSquare,
   X,
@@ -30,7 +30,8 @@ export interface TabularHeaderControllerInput {
   onToggleChat: () => void
   onExport: () => void
   onOpenHelp: () => void
-  onOpenFilter: () => void
+  /** Visible Filters control (separate pill), built by TabularReviewHeader. */
+  filterAction?: ReactNode
 }
 
 /** Адаптер: наша бизнес-логика → props Mike PageHeader. */
@@ -55,7 +56,7 @@ export function buildMikeTabularHeaderProps(
     onToggleChat,
     onExport,
     onOpenHelp,
-    onOpenFilter,
+    filterAction,
   } = input
 
   const breadcrumbs: MikePageHeaderBreadcrumb[] = [
@@ -102,11 +103,6 @@ export function buildMikeTabularHeaderProps(
       icon: HelpCircle,
       onSelect: onOpenHelp,
     },
-    {
-      label: 'Фильтр',
-      icon: Filter,
-      onSelect: onOpenFilter,
-    },
   ]
 
   const actionGroups: MikePageHeaderActionGroup[] = [
@@ -122,16 +118,26 @@ export function buildMikeTabularHeaderProps(
         render: <MikeHeaderActionsMenu items={overflowItems} title="Дополнительные действия" />,
       },
     ],
-    [
-      {
-        onClick: onToggleChat,
-        disabled: processing,
-        title: showTableChat ? 'Закрыть ассистента' : 'Открыть ассистента',
-        icon: showTableChat ? <X className="h-4 w-4" /> : <MessageSquare className="h-4 w-4" />,
-        label: <span className="hidden sm:inline">Ассистент</span>,
-      },
-    ],
   ]
+
+  if (filterAction) {
+    actionGroups.push([
+      {
+        type: 'custom',
+        render: filterAction,
+      },
+    ])
+  }
+
+  actionGroups.push([
+    {
+      onClick: onToggleChat,
+      disabled: processing,
+      title: showTableChat ? 'Закрыть ассистента' : 'Открыть ассистента',
+      icon: showTableChat ? <X className="h-4 w-4" /> : <MessageSquare className="h-4 w-4" />,
+      label: <span className="hidden sm:inline">Ассистент</span>,
+    },
+  ])
 
   return {
     shrink: true,

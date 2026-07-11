@@ -83,6 +83,7 @@ def _build_pre_retrieval_task(
         "scope_mode": scope_mode,
         "confidence": confidence,
         "rationale": rationale,
+        "within_file_expand": bool(file_ids),
     }
 
 
@@ -226,6 +227,7 @@ def apply_query_plan_to_budget(
         out["rerank_tier"] = "none"
     elif plan.rerank_policy == "light_only":
         out["rerank_tier"] = "light"
+        out["rerank_enabled"] = True
 
     return out
 

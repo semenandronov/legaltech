@@ -1,13 +1,14 @@
 """
 LLM-планировщик retrieval по legal corpus (agentic RAG — фаза «понять вопрос»).
 
-Основной путь: модель анализирует вопрос и формирует запросы к векторной БД.
-Детерминированный план (legal_query_plan) — merge + fallback при ошибке LLM.
+Модель извлекает факты и короткие search_queries; номера статей не угадывает.
+Явные статьи из вопроса — детерминированный merge (extract_all_article_numbers).
 
 Ответ пользователю по-прежнему только из найденных фрагментов корпуса.
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import List, Literal, Optional, Tuple
@@ -19,8 +20,11 @@ from app.config import config
 from app.services.chat.legal_query_plan import (
     LegalRetrievalPlan,
     LegalRetrievalTopic,
+    allowed_user_article_numbers,
     build_legal_retrieval_plan,
     extract_all_article_numbers,
+    is_near_duplicate_of_question,
+    sanitize_planner_search_query,
 )
 from app.services.legal_instruments import INSTRUMENTS
 from app.services.llm_factory import create_legal_llm
@@ -44,7 +48,7 @@ _ARTICLE_RE = re.compile(r"^[0-9]{1,5}(?:\.[0-9]{1,3})?$")
 
 
 class LegalCorpusRetrievalPlanLLM(BaseModel):
-    """Structured output: план поиска по справочнику (не финальный ответ юристу)."""
+    """Structured output: факты + поисковые фразы (не финальный ответ юристу)."""
 
     user_intent_summary: str = Field(
         default="",
@@ -61,11 +65,11 @@ class LegalCorpusRetrievalPlanLLM(BaseModel):
         default_factory=list,
         description="Список id актов из реестра (fz-127, plenum-63, gk-rf, ...).",
     )
-    required_articles: List[str] = Field(
+    facts: List[str] = Field(
         default_factory=list,
         description=(
-            "Номера статей 127-ФЗ (или другого акта), без полного текста которых нельзя ответить "
-            "(например 61.2, 213.4, 223.2 — по смыслу вопроса, не по шаблону)."
+            "3–6 коротких фактов из вопроса: субъект, институт, пороги, сроки, процедура "
+            "(без номеров статей, если пользователь их не назвал)."
         ),
     )
     clause_ref: str = Field(
@@ -77,26 +81,33 @@ class LegalCorpusRetrievalPlanLLM(BaseModel):
     )
     search_queries: List[str] = Field(
         default_factory=list,
-        description="3–6 коротких поисковых фраз для hybrid/FTS (5–18 слов, русский).",
+        description=(
+            "3–5 коротких поисковых фраз для hybrid/FTS (8–14 слов). "
+            "Формулировки на языке 127-ФЗ (термины закона о несостоятельности), без номеров статей."
+        ),
     )
     rationale: str = Field(
         default="",
-        description="Кратко для логов: почему выбраны эти акты и статьи.",
+        description="Кратко для логов: почему выбраны акты и поисковые фразы.",
     )
 
-    @field_validator("required_articles", mode="before")
+    @field_validator("facts", mode="before")
     @classmethod
-    def _norm_articles(cls, v: object) -> List[str]:
+    def _norm_facts(cls, v: object) -> List[str]:
         if not v:
             return []
         out: List[str] = []
         seen: set[str] = set()
         for raw in v if isinstance(v, list) else []:
-            a = str(raw).strip().replace(",", ".")
-            if _ARTICLE_RE.match(a) and a not in seen:
-                seen.add(a)
-                out.append(a)
-        return out[:12]
+            t = str(raw).strip()
+            if not t or len(t) > 180:
+                continue
+            low = t.lower()
+            if low in seen:
+                continue
+            seen.add(low)
+            out.append(t)
+        return out[:8]
 
     @field_validator("clause_ref", mode="before")
     @classmethod
@@ -130,6 +141,36 @@ def _llm_planner_enabled() -> bool:
     return bool(getattr(config, "LEGAL_CORPUS_LLM_PLANNER_ENABLED", True))
 
 
+def _planner_timeout_sec() -> float:
+    return max(3.0, float(getattr(config, "LEGAL_CORPUS_PLANNER_TIMEOUT_SEC", 20) or 20))
+
+
+def _parse_planner_json_payload(raw: str) -> Optional[LegalCorpusRetrievalPlanLLM]:
+    text = (raw or "").strip()
+    if not text:
+        return None
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*```$", "", text)
+    try:
+        data = json.loads(text)
+    except Exception:
+        try:
+            return LegalCorpusRetrievalPlanLLM.model_validate_json(text)
+        except Exception:
+            return None
+    if isinstance(data, dict):
+        # Обратная совместимость: старый ключ required_articles → facts (не мержим как статьи)
+        if "facts" not in data and data.get("required_articles"):
+            legacy = [str(a) for a in data["required_articles"] if a]
+            data = {**data, "facts": [f"статья {a} 127-ФЗ" for a in legacy[:4]]}
+        data.pop("required_articles", None)
+    try:
+        return LegalCorpusRetrievalPlanLLM.model_validate(data)
+    except Exception:
+        return None
+
+
 def _instruments_catalog_blurb() -> str:
     lines = []
     for iid in sorted(_VALID_INSTRUMENT_IDS):
@@ -138,34 +179,60 @@ def _instruments_catalog_blurb() -> str:
     return "\n".join(lines)
 
 
+def _bankruptcy_legal_lexicon_blurb() -> str:
+    """Термины 127-ФЗ для search_queries (без номеров статей)."""
+    return (
+        "Лексика 127-ФЗ для search_queries (используй формулировки из закона, не бытовой русский):\n"
+        "- субъекты: должник, юридическое лицо, гражданин, конкурсный кредитор, уполномоченный орган\n"
+        "- институты: несостоятельность банкротство, возбуждение производства по делу о банкротстве, "
+        "признание должника банкротом, принятие заявления арбитражным судом\n"
+        "- юрлицо: признаки банкротства юридического лица, неспособность удовлетворить требования кредиторов, "
+        "совокупность требований, денежные обязательства, обязательные платежи\n"
+        "- гражданин: возбуждение производства по делу о банкротстве гражданина, "
+        "заявление конкурсного кредитора о признании гражданина банкротом\n"
+        "- пороги (если уместно по вопросу): не менее двух миллионов рублей (юрлицо), "
+        "не менее пятьсот тысяч рублей (гражданин), три месяца просрочки исполнения обязательств\n"
+        "- оспаривание: подозрительная сделка, неравноценная сделка, финансовый управляющий\n"
+        "Плохо: «порог задолженности физлица», «признаки банкротства гражданина» без процессуального контекста.\n"
+        "Хорошо: «заявление конкурсного кредитора возбуждение банкротства гражданина требования пятьсот тысяч рублей».\n"
+    )
+
+
 def _planner_system_prompt(*, max_queries: int, legal_research: bool) -> str:
-    """Инструкция планировщику: весь 127‑ФЗ и смежные акты, без перечисления частных кейсов."""
+    """Инструкция: извлечь факты и короткие поисковые фразы на языке 127-ФЗ."""
     sys = (
         "Ты — планировщик поиска по правовому справочнику банкротства (legal_corpus).\n"
         "Тебе дан вопрос пользователя. Ты НЕ отвечаешь на вопрос — только планируешь извлечение "
         "норм из векторной базы для последующего ответа юриста.\n\n"
         "Метод (по шагам):\n"
-        "1) Определи правовой институт и результат, который нужен пользователю (1–2 предложения в user_intent_summary).\n"
-        "2) Выбери акты (instrument_id) из списка ниже. Ядро — fz-127 (127‑ФЗ о банкротстве); "
-        "plenum-63 — при оспаривании сделок; gk-rf / apk-rf / gpk-rf — если вопрос явно про смежные нормы.\n"
-        "3) Укажи required_articles — номера статей, без полного текста которых ответ будет неполным "
-        "(конкретные статьи и подпункты 127‑ФЗ: гл. о гражданине, внесудебное, оспаривание сделок, ФУ, реестр и т.д.).\n"
-        "4) Сформируй search_queries — короткие поисковые фразы (не пересказ вопроса), с номерами статей и ключевыми "
-        "терминами из 127‑ФЗ, если знаешь их.\n\n"
+        "1) user_intent_summary — правовой институт и результат, который нужен (1–2 предложения).\n"
+        "2) facts — 3–6 коротких фактов из вопроса: субъект (юрлицо/гражданин), институт, "
+        "пороги, суммы, сроки, процедура. НЕ указывай номера статей, если пользователь их не назвал.\n"
+        "3) instrument_ids — акты из списка ниже (ядро fz-127; plenum-63 при оспаривании сделок).\n"
+        "4) search_queries — 3–5 коротких фраз для векторного/FTS поиска (8–14 слов). "
+        "Каждая фраза — отдельный поисковый запрос; НЕ копируй весь вопрос целиком.\n"
+        "   search_queries пиши на ЮРИДИЧЕСКОМ языке 127-ФЗ: термины из закона о несостоятельности, "
+        "как в тексте норм (см. лексикон ниже). Не используй разговорные синонимы («физлицо», «порог долга»).\n"
+        "   При сравнении гражданина и юрлица — минимум одна фраза на каждый субъект отдельно.\n"
+        "   ЗАПРЕЩЕНО писать «статья N» / «ст. N» в search_queries, если пользователь не назвал N.\n"
+        "   Примеры фраз:\n"
+        "   • «признаки банкротства юридического лица неспособность удовлетворить требования кредиторов три месяца»\n"
+        "   • «возбуждение производства банкротство гражданина заявление конкурсного кредитора пятьсот тысяч рублей»\n"
+        "   • «принятие заявления арбитражным судом совокупность требований два миллиона рублей юридическое лицо»\n\n"
+        f"{_bankruptcy_legal_lexicon_blurb()}\n"
         "Доступные акты (instrument_id):\n"
         f"{_instruments_catalog_blurb()}\n\n"
         "Правила:\n"
-        "- topic: article_lookup — если пользователь явно спросил текст/смысл конкретной статьи "
-        "или пункта статьи; укажи clause_ref при вопросе про пункт (например п. 3 ст. 61 → clause_ref=3); "
-        "challenge_transactions — оспаривание/подозрительные/предпочтительные сделки; "
-        "limitation_challenge — сроки или исковая давность по оспариванию сделок; "
-        "general_bankruptcy — любой другой вопрос по 127‑ФЗ (внесудебное, гражданин, реестр, ФУ, МФЦ, субсидиарка и т.д.); "
-        "general — вне банкротства.\n"
-        "- Не подставляй статьи «по умолчанию»: required_articles только те, что нужны для ЭТОГО вопроса.\n"
-        "- Слово «лимит» само по себе не означает оспаривание сделок — смотри на институт (долг, процедура, полномочия, срок и т.д.).\n"
+        "- topic: article_lookup — только если пользователь явно спросил текст/смысл конкретной статьи "
+        "или пункта; clause_ref — номер пункта при вопросе про пункт; "
+        "challenge_transactions — оспаривание сделок; limitation_challenge — сроки оспаривания; "
+        "general_bankruptcy — любой другой вопрос по 127‑ФЗ; general — вне банкротства.\n"
+        "- НЕ угадывай номера статей — ни в facts, ни в search_queries; поиск найдёт нормы по терминам закона.\n"
         "- instrument_id только из списка; при сомнении по банкротству — fz-127.\n"
         f"- Не более {max_queries} search_queries.\n"
-        "- Финальный ответ системы строится ТОЛЬКО по найденным фрагментам; твоя задача — максимально точно нацелить поиск.\n"
+        "- Финальный ответ строится ТОЛЬКО по найденным фрагментам.\n"
+        "- Ответ — только один JSON-объект (без markdown): user_intent_summary, topic, "
+        "instrument_ids, facts, clause_ref, search_queries, rationale.\n"
     )
     if legal_research:
         sys += "\nКонтекст: режим правового справочника (legal_research).\n"
@@ -178,7 +245,7 @@ def plan_legal_corpus_retrieval_llm(
     legal_research: bool = False,
 ) -> Optional[LegalCorpusRetrievalPlanLLM]:
     """
-    LLM анализирует вопрос и планирует поиск по legal_corpus.
+    LLM извлекает факты и search_queries для legal_corpus.
     Fail-open: None при ошибке или отключении.
     """
     if not _llm_planner_enabled():
@@ -195,6 +262,8 @@ def plan_legal_corpus_retrieval_llm(
         "use_rate_limiting": False,
         "temperature": 0.0,
         "max_tokens": 700,
+        "timeout": _planner_timeout_sec(),
+        "model_kwargs": {"reasoning_effort": "none"},
     }
     if model_name:
         llm_kwargs["model"] = model_name
@@ -204,43 +273,54 @@ def plan_legal_corpus_retrieval_llm(
 
     callbacks = get_langchain_callbacks(tags=["assistant", "legal_corpus", "retrieval_planner"])
     try:
-        if not hasattr(llm, "with_structured_output"):
-            logger.warning("[LegalRetrievalPlanner] structured_output unavailable")
-            return None
-        judge = llm.with_structured_output(LegalCorpusRetrievalPlanLLM)
-        result = judge.invoke(
+        runnable = llm.bind(response_format={"type": "json_object"})
+        response = runnable.invoke(
             [SystemMessage(content=sys), HumanMessage(content=q)],
             config={"callbacks": callbacks} if callbacks else None,
         )
+        raw = (getattr(response, "content", None) or "").strip()
+        result = _parse_planner_json_payload(raw)
         if not isinstance(result, LegalCorpusRetrievalPlanLLM):
+            logger.warning("[LegalRetrievalPlanner] invalid JSON payload from LLM")
             return None
 
-        # cap queries
         seen_q: set[str] = set()
         capped: List[str] = []
+        allowed = allowed_user_article_numbers(q)
         for sq in result.search_queries or []:
-            t = str(sq).strip()
-            if not t or len(t) > 220:
+            cleaned = sanitize_planner_search_query(str(sq).strip(), allowed)
+            if not cleaned or len(cleaned) > 220:
                 continue
-            low = t.lower()
+            if is_near_duplicate_of_question(cleaned, q):
+                continue
+            low = cleaned.lower()
             if low in seen_q:
                 continue
             seen_q.add(low)
-            capped.append(t)
+            capped.append(cleaned)
             if len(capped) >= max_q:
                 break
         result.search_queries = capped
         logger.info(
-            "[LegalRetrievalPlanner] LLM plan topic=%s instruments=%s articles=%s queries=%d",
+            "[LegalRetrievalPlanner] LLM plan topic=%s instruments=%s facts=%d queries=%d",
             result.topic,
             result.instrument_ids,
-            result.required_articles,
+            len(result.facts or []),
             len(capped),
         )
         return result
     except Exception as ex:
         logger.warning("[LegalRetrievalPlanner] LLM planner failed (fail-open): %s", ex)
         return None
+
+
+_TOPIC_RANK: dict[str, int] = {
+    "general": 1,
+    "general_bankruptcy": 2,
+    "limitation_challenge": 3,
+    "challenge_transactions": 3,
+    "article_lookup": 4,
+}
 
 
 def _normalize_topic(raw: str, fallback: LegalRetrievalTopic) -> LegalRetrievalTopic:
@@ -250,18 +330,38 @@ def _normalize_topic(raw: str, fallback: LegalRetrievalTopic) -> LegalRetrievalT
     return fallback
 
 
+def _pick_topic(llm_topic: str, det_topic: LegalRetrievalTopic) -> LegalRetrievalTopic:
+    """Берём более специфичный topic (детерминированный банкротный контекст не теряем)."""
+    lt = _normalize_topic(llm_topic, det_topic)
+    rank_l = _TOPIC_RANK.get(lt, 0)
+    rank_d = _TOPIC_RANK.get(det_topic, 0)
+    return det_topic if rank_d > rank_l else lt
+
+
+def _user_articles_only(question: str, det: LegalRetrievalPlan) -> List[str]:
+    """Статьи плана — только явно из текста пользователя."""
+    required: List[str] = []
+    seen_a: set[str] = set()
+    for art in list(det.user_articles or []) + list(extract_all_article_numbers(question)):
+        a = str(art).strip()
+        if _ARTICLE_RE.match(a) and a not in seen_a:
+            seen_a.add(a)
+            required.append(a)
+    return required
+
+
 def _merge_plans(
     question: str,
     det: LegalRetrievalPlan,
     llm: Optional[LegalCorpusRetrievalPlanLLM],
 ) -> Tuple[LegalRetrievalPlan, str]:
     """
-    Объединить LLM-план (приоритет запросов) с детерминированным (покрытие edge cases).
+    LLM даёт facts + search_queries; статьи и clause — только из вопроса пользователя.
     """
     if not llm:
         return det, "deterministic"
 
-    topic = _normalize_topic(llm.topic, det.topic)
+    topic = _pick_topic(llm.topic, det.topic)
     instruments: List[str] = []
     seen_i: set[str] = set()
     for iid in list(llm.instrument_ids or []) + list(det.instrument_ids or []):
@@ -269,34 +369,59 @@ def _merge_plans(
             seen_i.add(iid)
             instruments.append(iid)
 
-    required: List[str] = []
-    seen_a: set[str] = set()
-    for art in list(extract_all_article_numbers(question)) + list(llm.required_articles or []) + list(
-        det.required_articles or []
-    ):
-        a = str(art).strip()
-        if _ARTICLE_RE.match(a) and a not in seen_a:
-            seen_a.add(a)
-            required.append(a)
+    required = _user_articles_only(question, det)
+    allowed = allowed_user_article_numbers(question, det)
 
     queries: List[str] = []
     seen_q: set[str] = set()
-    for sq in list(llm.search_queries or []) + list(det.search_queries or []):
-        t = (sq or "").strip()
-        if not t:
+    llm_short_count = 0
+    for sq in list(llm.search_queries or []):
+        cleaned = sanitize_planner_search_query(sq, allowed)
+        if not cleaned or is_near_duplicate_of_question(cleaned, question):
             continue
-        low = t.lower()
+        low = cleaned.lower()
         if low in seen_q:
             continue
         seen_q.add(low)
-        queries.append(t)
+        queries.append(cleaned)
+        llm_short_count += 1
+
+    min_llm_before_skip_det = max(
+        2, int(getattr(config, "LEGAL_CORPUS_PLANNER_MIN_QUERIES_SKIP_ROUTE", 3) or 3)
+    )
+    skip_det_queries = llm_short_count >= min_llm_before_skip_det
+    if not skip_det_queries:
+        for sq in list(det.search_queries or []):
+            t = (sq or "").strip()
+            if not t or is_near_duplicate_of_question(t, question):
+                continue
+            cleaned = sanitize_planner_search_query(t, allowed)
+            if not cleaned:
+                continue
+            low = cleaned.lower()
+            if low in seen_q:
+                continue
+            seen_q.add(low)
+            queries.append(cleaned)
 
     cap = max(4, min(12, int(getattr(config, "LEGAL_CORPUS_MAX_HYBRID_QUERIES", 3) or 3) + 5))
     if len(queries) > cap:
         queries = queries[:cap]
 
+    facts: List[str] = []
+    seen_f: set[str] = set()
+    for f in list(llm.facts or []):
+        t = sanitize_planner_search_query(f, allowed)
+        if not t:
+            continue
+        low = t.lower()
+        if low in seen_f:
+            continue
+        seen_f.add(low)
+        facts.append(t)
+
     rationale_parts = [
-        f"planner=merged",
+        "planner=merged",
         (llm.rationale or "").strip()[:300],
         det.rationale,
     ]
@@ -306,6 +431,7 @@ def _merge_plans(
     from app.services.legal_norm_cross_ref import normalize_article_number
 
     user_clause_ref = normalize_article_number(llm.clause_ref or "") if llm else ""
+    user_articles = _user_articles_only(question, det)
 
     merged = LegalRetrievalPlan(
         topic=topic,
@@ -313,8 +439,9 @@ def _merge_plans(
         instrument_ids=instruments or det.instrument_ids,
         search_queries=queries or det.search_queries,
         rationale="; ".join(p for p in rationale_parts if p),
-        user_articles=list(det.user_articles) or extract_all_article_numbers(question),
+        user_articles=user_articles,
         user_clause_ref=user_clause_ref or det.user_clause_ref,
+        facts=facts,
     )
     return merged, "llm+deterministic"
 

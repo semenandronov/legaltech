@@ -257,7 +257,7 @@ def create_llm(
             from app.services.yandex_openai_llm import create_yandex_chat_openai_llm
 
             # reasoning_mode маппится в reasoning_effort внутри create_yandex_chat_openai_llm
-            timeout_oai = llm_kwargs.get("timeout")
+            timeout_oai = timeout if timeout is not None else llm_kwargs.get("timeout")
             if timeout_oai is not None:
                 yandex_kwargs["timeout"] = timeout_oai
             llm = create_yandex_chat_openai_llm(

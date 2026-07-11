@@ -24,6 +24,7 @@ from app.services.chat.referential_classifier import (
     needs_prior_turn_resolution,
 )
 from app.services.chat.statement_sql_plan_normalize import (
+    clears_statement_period,
     _format_dmy,
     infer_period_from_question,
 )
@@ -31,8 +32,13 @@ from app.services.chat.turn_context_evidence import PriorTurnEvidence
 
 logger = logging.getLogger(__name__)
 
-_AGGREGATE_OPS = frozenset({"count", "sum"})
-_LIST_OPS = frozenset({"list", "find"})
+_AGGREGATE_OPS = frozenset({"count", "sum", "group"})
+_LIST_OPS = frozenset({"list", "find", "top"})
+_DETAIL_RE = re.compile(
+    r"\b(?:подробн|детальн|перечисл|какие|какая|какой|покажи|пришли|выведи)\w*",
+    re.IGNORECASE,
+)
+_TOTAL_RE = re.compile(r"\b(?:общ\w+\s+сумм|итог\w*|сумма\s+всех)\b", re.IGNORECASE)
 
 
 class TurnDeltaDecision(BaseModel):
@@ -48,7 +54,7 @@ class TurnDeltaDecision(BaseModel):
         "comparison",
         "unknown",
     ] = "unknown"
-    operation: Optional[Literal["count", "sum", "list", "find"]] = Field(
+    operation: Optional[Literal["count", "sum", "list", "find", "top", "group"]] = Field(
         default=None,
         description="SQL operation when need is tabular; null to inherit prior.",
     )
@@ -109,6 +115,34 @@ def _period_hints_from_question(question: str) -> Dict[str, str]:
     return {}
 
 
+def _detail_requested(question: str) -> bool:
+    return bool(_DETAIL_RE.search((question or "").strip()))
+
+
+def _operation_override_for_follow_up(
+    *,
+    question: str,
+    prior: ConversationTurnState,
+    metric: str,
+) -> str:
+    q = (question or "").strip()
+    if not q:
+        return ""
+
+    if _detail_requested(q):
+        return "list"
+
+    if prior.operation in _LIST_OPS and metric == "sum" and not _TOTAL_RE.search(q):
+        return "list"
+    if prior.operation in _LIST_OPS and metric == "count":
+        return "list"
+    if metric == "sum":
+        return "sum"
+    if metric == "count":
+        return "count"
+    return ""
+
+
 def _is_referential_follow_up(
     question: str,
     *,
@@ -144,10 +178,15 @@ def _deterministic_delta(
         need = "tabular_aggregate"
         if prior.operation in _LIST_OPS:
             need = "tabular_list"
-        if metric == "sum":
-            op_override = "sum"
-        elif metric == "count":
-            op_override = "count"
+        op_override = _operation_override_for_follow_up(
+            question=q,
+            prior=prior,
+            metric=metric,
+        )
+        if op_override in _LIST_OPS:
+            need = "tabular_list"
+        elif op_override in _AGGREGATE_OPS:
+            need = "tabular_aggregate"
 
     if prior.domain == "document_rag":
         if referential_kind in {"scoped_deep_read", "citation_expand"}:
@@ -158,7 +197,7 @@ def _deterministic_delta(
     hints = merge_sql_plan_hints(
         prior,
         operation_override=op_override,
-        inherit_period=not bool(_period_hints_from_question(q)),
+        inherit_period=not bool(_period_hints_from_question(q)) and not clears_statement_period(q),
         inherit_file=True,
     )
     hints.update(_period_hints_from_question(q))

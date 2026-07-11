@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Literal, Optional
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage
 
 from app.config import config
 from app.services.chat.execution_tier import (
@@ -158,6 +158,10 @@ def _heuristic_grade(
         return "weak"
     if isinstance(recall_meta, dict) and int(recall_meta.get("recall_docs") or len(docs)) < 2:
         return "weak"
+    from app.services.chat.retrieval_escalation import question_anchors_covered
+
+    if not question_anchors_covered(question, docs):
+        return "weak"
     return "sufficient"
 
 
@@ -200,20 +204,47 @@ def grade_retrieval_node(state: Dict[str, Any]) -> Dict[str, Any]:
     bp = dict(state.get("budget_profile") or {})
     max_rounds = int(bp.get("max_retrieval_rounds") or 2)
     current_round = int(state.get("retrieval_round") or 0)
-    if current_round >= max_rounds - 1:
-        if tier == "instant":
-            new_tier = escalate_tier("instant")
-            bp = _rebuild_budget_for_tier(bp, new_tier, escalated_from=tier)
-            return {
-                "grade_retrieval_ok": False,
-                "execution_tier": new_tier,
-                "budget_profile": bp,
-                "escalated_from": tier,
-                "retrieval_round": current_round + 1,
-            }
-        return {"grade_retrieval_ok": True}
+    escalation_enabled = bool(
+        getattr(config, "CASE_ASSISTANT_RETRIEVAL_ESCALATION_ENABLED", True)
+    )
+    latency = bp.get("latency_path") if isinstance(bp.get("latency_path"), dict) else {}
+    is_fast = (
+        str(latency.get("kind") or "") == "fast"
+        or bp.get("skip_llm_document_scope") is True
+    )
 
-    return {"grade_retrieval_ok": False}
+    # Rounds left for another pass? (round is 0-indexed; max_rounds=2 → escalate at round 0)
+    can_escalate = escalation_enabled and current_round < max(1, max_rounds) - 1
+
+    if can_escalate:
+        logger.info(
+            "[GradeRetrieval] weak → escalate round=%s/%s fast=%s docs=%s",
+            current_round,
+            max_rounds,
+            is_fast,
+            len(docs),
+        )
+        return {"grade_retrieval_ok": False}
+
+    # Exhausted deterministic escalate: optional instant→standard for non-FAST only.
+    if (not is_fast) and tier == "instant":
+        new_tier = escalate_tier("instant")
+        bp = _rebuild_budget_for_tier(bp, new_tier, escalated_from=tier)
+        return {
+            "grade_retrieval_ok": False,
+            "execution_tier": new_tier,
+            "budget_profile": bp,
+            "escalated_from": tier,
+            "retrieval_round": current_round + 1,
+        }
+
+    logger.info(
+        "[GradeRetrieval] weak accepted (no rounds left) round=%s max=%s fast=%s",
+        current_round,
+        max_rounds,
+        is_fast,
+    )
+    return {"grade_retrieval_ok": True}
 
 
 def route_after_grade_retrieval(state: Dict[str, Any]) -> str:
@@ -221,7 +252,7 @@ def route_after_grade_retrieval(state: Dict[str, Any]) -> str:
         return "rag_quality_gate"
     if state.get("escalated_from"):
         return "extract_retrieval_task"
-    return "rewrite_search_query"
+    return "escalate_retrieval"
 
 
 def _rebuild_budget_for_tier(
@@ -239,52 +270,78 @@ def _rebuild_budget_for_tier(
     return out
 
 
-def rewrite_search_query_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    """Rewrite search_query for a second retrieval pass."""
+def escalate_retrieval_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Deterministic second-pass retrieval planner (broaden / deepen).
+
+    Skips LLM rewrite; locks scope so extract_retrieval_task is not required.
+    Graph routes this node directly to parallel_retrieval.
+    """
+    from app.services.chat.case_context_pipeline import documents_from_state_serializable
+    from app.services.chat.retrieval_escalation import (
+        build_escalated_retrieval_task,
+        bump_recall_k,
+        plan_retrieval_escalation,
+        serialize_docs_for_state,
+    )
     from app.services.chat.session_context_retrieval import question_for_retrieval
 
     question = question_for_retrieval(state)
-    rt = dict(state.get("retrieval_task") or {})
-    prev_q = str(rt.get("search_query") or question)
+    docs = documents_from_state_serializable(state.get("rag_documents"))
+    bp = dict(state.get("budget_profile") or {})
+    max_rounds = int(bp.get("max_retrieval_rounds") or 2)
+    current_round = int(state.get("retrieval_round") or 0)
+    prior_task = state.get("retrieval_task") if isinstance(state.get("retrieval_task"), dict) else {}
 
-    new_q = prev_q
-    try:
-        if bool(getattr(config, "CASE_ASSISTANT_LLM_ROUTER_ENABLED", False)):
-            from app.services.llm_factory import create_llm
+    plan = plan_retrieval_escalation(
+        question=question,
+        retrieval_task=prior_task,
+        docs=docs,
+        retrieval_round=current_round,
+        max_rounds=max_rounds,
+    )
+    if plan.action == "accept":
+        return {"grade_retrieval_ok": True}
 
-            model = getattr(config, "CASE_ASSISTANT_ROUTER_MODEL", "") or "yandexgpt-lite/latest"
-            llm = create_llm(model=model, temperature=0.0, max_tokens=256)
-            resp = llm.invoke(
-                [
-                    SystemMessage(
-                        content=(
-                            "Перепиши поисковый запрос для юридического дела. "
-                            "Только одна строка запроса, без пояснений."
-                        )
-                    ),
-                    HumanMessage(
-                        content=f"Вопрос юриста: {question}\nПредыдущий запрос: {prev_q}"
-                    ),
-                ]
-            )
-            text = resp.content if hasattr(resp, "content") else str(resp)
-            if isinstance(text, str) and text.strip():
-                new_q = text.strip()[:500]
-    except Exception as exc:
-        logger.warning("[RewriteSearchQuery] LLM rewrite failed: %s", exc)
-        new_q = f"{question} {prev_q}".strip()[:500]
-
-    rt["search_query"] = new_q
-    rt["rationale"] = (rt.get("rationale") or "") + "+rewrite_pass"
+    new_task = build_escalated_retrieval_task(
+        plan=plan,
+        question=question,
+        prior_task=prior_task,
+    )
+    bp = bump_recall_k(bp, plan.recall_k_bump)
     out: Dict[str, Any] = {
-        "retrieval_task": rt,
-        "retrieval_round": int(state.get("retrieval_round") or 0) + 1,
-        "rag_documents": [],
+        "retrieval_task": new_task,
+        "scoped_file_ids": list(new_task.get("file_ids") or []) or None,
+        "scoped_doc_type": None,
+        "retrieval_round": current_round + 1,
+        "budget_profile": bp,
+        "retrieval_escalation": plan.to_dict(),
         "rag_context": "",
         "citations": [],
+        "grade_retrieval_ok": None,
     }
-    logger.info("[RewriteSearchQuery] %s -> %s", prev_q[:80], new_q[:80])
+    if plan.merge_prior_docs and docs:
+        out["escalation_seed_documents"] = serialize_docs_for_state(docs)[:100]
+        out["rag_documents"] = []
+    else:
+        out["escalation_seed_documents"] = []
+        out["rag_documents"] = []
+
+    logger.info(
+        "[EscalateRetrieval] action=%s reason=%s files=%s recall_k=%s merge=%s",
+        plan.action,
+        plan.reason,
+        len(new_task.get("file_ids") or []),
+        bp.get("recall_k"),
+        plan.merge_prior_docs,
+    )
     return out
+
+
+def rewrite_search_query_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Legacy LLM rewrite path — prefer escalate_retrieval_node for production FAST/HEAVY."""
+    # Keep for backwards-compatible graphs/tests; delegate to deterministic escalate.
+    return escalate_retrieval_node(state)
 
 
 def parallel_retrieval_should_run(state: Dict[str, Any]) -> bool:

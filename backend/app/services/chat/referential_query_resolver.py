@@ -228,11 +228,13 @@ def resolve_referential_query(
     question: str,
     prior_evidence: PriorTurnEvidence | None,
     referential_kind: ReferentialKind,
+    allow_llm: bool = True,
 ) -> ReferentialQueryResult:
     """
     Phase 2 query expansion for referential follow-ups.
 
     Uses PriorTurnEvidence as the sole context source (not full dialog history).
+    FAST latency path sets ``allow_llm=False`` and uses deterministic enrichment only.
     """
     q = (question or "").strip()
     if referential_kind not in {"scoped_deep_read", "citation_expand"}:
@@ -253,13 +255,15 @@ def resolve_referential_query(
             resolver="unchanged",
         )
 
-    llm_result = _resolve_with_llm(
-        question=q,
-        prior=prior_evidence,
-        referential_kind=referential_kind,  # type: ignore[arg-type]
-    )
-    if llm_result is not None and llm_result.changed:
-        return llm_result
+    llm_result = None
+    if allow_llm:
+        llm_result = _resolve_with_llm(
+            question=q,
+            prior=prior_evidence,
+            referential_kind=referential_kind,  # type: ignore[arg-type]
+        )
+        if llm_result is not None and llm_result.changed:
+            return llm_result
 
     excerpt_result = _resolve_with_prior_excerpt(question=q, prior=prior_evidence)
     if excerpt_result.changed:

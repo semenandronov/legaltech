@@ -1,0 +1,259 @@
+[
+  {
+    "id": "g-01",
+    "difficulty": "easy",
+    "question": "Какой номер дела указан в возражениях?",
+    "must_include": ["А40-179003/2024"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 20000
+  },
+  {
+    "id": "g-02",
+    "difficulty": "easy",
+    "question": "Кто должники в возражениях ШАК и ШЭР?",
+    "must_include": ["Шиошвили", "Андрей", "Элина"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 20000
+  },
+  {
+    "id": "g-03",
+    "difficulty": "easy",
+    "question": "Кто заявитель кредитор в возражениях и какой у него ИНН?",
+    "must_include": ["НВ-Строй", "7743260611"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 20000
+  },
+  {
+    "id": "g-04",
+    "difficulty": "easy",
+    "question": "Кто конкурсный управляющий Иглин — укажи ФИО полностью",
+    "must_include": ["Иглин", "Сергей"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 20000
+  },
+  {
+    "id": "g-05",
+    "difficulty": "easy",
+    "question": "Какой судья указан в шапке возражений?",
+    "must_include": ["Олимова"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 20000
+  },
+  {
+    "id": "g-06",
+    "difficulty": "easy",
+    "question": "Какая сумма взыскана с должника в пользу конкурсной массы НВ-Строй?",
+    "must_include": ["2 443 000"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 20000
+  },
+  {
+    "id": "g-07",
+    "difficulty": "easy",
+    "question": "Какой датой суд признал недействительной сделку с должником?",
+    "must_include": ["09.11.2023"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 20000
+  },
+  {
+    "id": "g-08",
+    "difficulty": "easy",
+    "question": "Какая доля Шиошвили А.К. в ООО Технион Групп?",
+    "must_include": ["51"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 20000
+  },
+  {
+    "id": "g-09",
+    "difficulty": "easy",
+    "question": "На какой срок должники просят ввести реструктуризацию долгов?",
+    "must_include": ["6 месяц"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 20000
+  },
+  {
+    "id": "g-10",
+    "difficulty": "easy",
+    "question": "Какой предельный срок плана реструктуризации указывают должники по закону — 3 или 5 лет?",
+    "must_include": ["5"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 20000
+  },
+  {
+    "id": "g-11",
+    "difficulty": "easy",
+    "question": "Кто представитель должников по доверенности в возражениях?",
+    "must_include": ["Щуклин"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 20000
+  },
+  {
+    "id": "g-12",
+    "difficulty": "easy",
+    "question": "Какой номер договора поставки от 16 апреля 2024 на 5 листов?",
+    "must_include": ["54"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 20000
+  },
+  {
+    "id": "g-13",
+    "difficulty": "easy",
+    "question": "Кто продавец и кто покупатель по договору поставки №54?",
+    "must_include": ["Технион", "Кочкин"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 20000
+  },
+  {
+    "id": "g-14",
+    "difficulty": "easy",
+    "question": "Какая стоимость оборудования по договору №54?",
+    "must_include": ["2 700 000"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 20000
+  },
+  {
+    "id": "g-15",
+    "difficulty": "easy",
+    "question": "Что за оборудование по договору №54?",
+    "must_include": ["Cessna"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 20000
+  },
+  {
+    "id": "g-16",
+    "difficulty": "easy",
+    "question": "В какой срок продавец обязан передать оборудование по договору №54 после оплаты аванса?",
+    "must_include": ["90"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 20000
+  },
+  {
+    "id": "g-17",
+    "difficulty": "easy",
+    "question": "Какой номер договора поставки от 02.02.2024?",
+    "must_include": ["51"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 20000
+  },
+  {
+    "id": "g-18",
+    "difficulty": "easy",
+    "question": "Какая стоимость оборудования по договору №51 от 02.02.2024?",
+    "must_include": ["3 400 000"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 20000
+  },
+  {
+    "id": "g-19",
+    "difficulty": "easy",
+    "question": "В какой срок передать оборудование по договору №51 после оплаты аванса?",
+    "must_include": ["110"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 20000
+  },
+  {
+    "id": "g-20",
+    "difficulty": "easy",
+    "question": "Какой номер договора с УК Кембридж Сервис от 16.04.2024?",
+    "must_include": ["98/2024"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 20000
+  },
+  {
+    "id": "g-21",
+    "difficulty": "easy",
+    "question": "Кто заказчик и кто подрядчик по договору №98/2024?",
+    "must_include": ["КЕМБРИДЖ", "Технион"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 20000
+  },
+  {
+    "id": "g-22",
+    "difficulty": "easy",
+    "question": "Какой кадастровый номер участка указан в договоре №98/2024?",
+    "must_include": ["50:08:0050402:6344"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 20000
+  },
+  {
+    "id": "g-23",
+    "difficulty": "medium",
+    "question": "Почему должники возражают против введения реализации имущества гражданина?",
+    "must_include": ["реструктуризац"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 25000
+  },
+  {
+    "id": "g-24",
+    "difficulty": "medium",
+    "question": "Когда ООО НВ-Строй было объявлено банкротом и кто был первым конкурсным управляющим?",
+    "must_include": ["21.04.2021", "Кошман"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 25000
+  },
+  {
+    "id": "g-25",
+    "difficulty": "medium",
+    "question": "Может ли продавец по договору №54 в одностороннем порядке увеличить стоимость оборудования?",
+    "must_include": ["не"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 20000
+  },
+  {
+    "id": "g-26",
+    "difficulty": "medium",
+    "question": "В какой срок покупатель принимает оборудование по договору №54 после уведомления о готовности?",
+    "must_include": ["5"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 20000
+  },
+  {
+    "id": "g-27",
+    "difficulty": "medium",
+    "question": "Кто генеральный директор заказчика по договору №98/2024?",
+    "must_include": ["Климанов"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 20000
+  },
+  {
+    "id": "g-28",
+    "difficulty": "medium",
+    "question": "Сравни стоимость оборудования по договорам №54 и №51",
+    "must_include": ["2 700 000", "3 400 000"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 30000
+  },
+  {
+    "id": "g-29",
+    "difficulty": "hard",
+    "question": "Кратко: чего просят должники в просительной части возражений?",
+    "must_include": ["реструктуризац", "6"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 35000
+  },
+  {
+    "id": "g-30",
+    "difficulty": "hard",
+    "question": "Как договор №54 связан с возражениями должников?",
+    "must_include": ["Технион"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 35000
+  },
+  {
+    "id": "g-31",
+    "difficulty": "negative",
+    "question": "Какой ИНН у ИП Кочкина указан в договоре №54?",
+    "must_include_any": ["не указан", "не найден", "отсутств", "нет данных", "не содержит", "не привед"],
+    "must_not_include": ["7743260611"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 20000
+  },
+  {
+    "id": "g-32",
+    "difficulty": "negative",
+    "question": "Указана ли в договоре №54 неустойка 0,5 процента в день за просрочку?",
+    "must_include_any": ["не указан", "не найден", "отсутств", "нет", "не предусмотр", "не содержит"],
+    "expect_latency_path": "fast",
+    "max_total_ms": 20000
+  }
+]

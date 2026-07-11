@@ -70,6 +70,7 @@ class LegalRetrievalPlan:
     rationale: str
     user_articles: List[str] = field(default_factory=list)
     user_clause_ref: str = ""
+    facts: List[str] = field(default_factory=list)
 
 
 def extract_all_article_numbers(query: str) -> List[str]:
@@ -131,27 +132,12 @@ def _topic_limitation_challenge(ql: str) -> bool:
 
 
 def _articles_for_topic(topic: LegalRetrievalTopic) -> List[str]:
-    if topic == "challenge_transactions":
-        return ["61.1", "61.2", "61.3"]
-    if topic == "limitation_challenge":
-        return ["61.1", "61.2", "61.3", "61.9"]
+    """Статьи из плана — только из вопроса и LLM; без захардкоженных пакетов."""
     return []
 
 
 def _queries_for_topic(topic: LegalRetrievalTopic, ql: str) -> List[str]:
-    if topic == "challenge_transactions":
-        return [
-            "статья 61.1 127-ФЗ оспаривание сделки должника основания",
-            "статья 61.2 127-ФЗ подозрительная сделка срок один год три года",
-            "статья 61.3 127-ФЗ предпочтительная сделка шесть месяцев кредитор",
-            "пленум 63 оспаривание сделки должника срок",
-        ]
-    if topic == "limitation_challenge":
-        return [
-            "статья 61.9 127-ФЗ исковая давность оспаривание сделки",
-            "статья 61.2 127-ФЗ подозрительная сделка период один год три года",
-            "срок исковой давности оспаривание сделки должника арбитражный управляющий",
-        ]
+    """Поисковые запросы по теме — формирует LLM-планировщик, не детерминированный fallback."""
     return []
 
 
@@ -207,8 +193,7 @@ def build_legal_retrieval_plan(
         if art not in required:
             required.append(art)
 
-    queries: List[str] = [q]
-    queries.extend(route_queries or [])
+    queries: List[str] = list(route_queries or [])
     queries.extend(_queries_for_topic(topic, ql))
     for art in user_articles:
         queries.append(f"статья {art} 127-ФЗ")
@@ -263,10 +248,48 @@ def is_repeal_only_snippet(text: str, *, article: Optional[str] = None) -> bool:
     return True
 
 
+def _infer_comparative_bankruptcy_articles(plan: LegalRetrievalPlan, question: str = "") -> List[str]:
+    """
+    Для сравнительных вопросов гражданин vs ЮЛ — целевые статьи порогов (metadata lookup).
+    Не подставляет номера в search_queries; только structured gap-fill.
+    """
+    if plan.topic != "general_bankruptcy":
+        return []
+    blob = " ".join([question] + list(plan.facts or []) + list(plan.search_queries or [])).lower()
+    has_citizen = "гражданин" in blob
+    has_ul = "юрлиц" in blob or "юридическ" in blob
+    if not (has_citizen and has_ul):
+        return []
+    comparative = any(w in blob for w in ("отлич", "различ", "сравн", "ключев"))
+    creditor_ctx = "кредитор" in blob
+    if not comparative and not creditor_ctx:
+        return []
+    arts: List[str] = []
+    if has_ul:
+        arts.extend(["3", "33"])
+    if has_citizen:
+        arts.append("213.3")
+    return arts
+
+
+def coverage_target_articles(plan: LegalRetrievalPlan, question: str = "") -> List[str]:
+    """Явные статьи пользователя + выведенные слоты (сравнение порогов банкротства)."""
+    out: List[str] = []
+    seen: set[str] = set()
+    for a in list(structured_lookup_articles(plan) or []) + _infer_comparative_bankruptcy_articles(
+        plan, question
+    ):
+        if a not in seen:
+            seen.add(a)
+            out.append(a)
+    return out
+
+
 def plan_coverage(
     docs: Sequence,
     plan: LegalRetrievalPlan,
     *,
+    question: str = "",
     min_chars_per_article: int = 200,
 ) -> dict:
     """Какие целевые статьи покрыты — по metadata.article_number, не по тексту."""
@@ -274,8 +297,9 @@ def plan_coverage(
     missing: List[str] = []
     repeal_only: List[str] = []
     user_clause = normalize_article_number(plan.user_clause_ref or "")
+    targets = coverage_target_articles(plan, question) or list(plan.required_articles or [])
 
-    for art in plan.required_articles:
+    for art in targets:
         matching = [d for d in docs if doc_metadata_matches_article(d, art)]
         if user_clause and art in (plan.user_articles or []):
             matching = [
@@ -315,6 +339,161 @@ def plan_coverage(
     }
 
 
+def structured_lookup_articles(plan: LegalRetrievalPlan) -> List[str]:
+    """Статьи для norm tree / FTS / graph cluster — только явно из вопроса пользователя."""
+    return list(plan.user_articles or [])
+
+
+_QUERY_ARTICLE_RE = re.compile(
+    r"(?:ст\.?|статья|ст\.)\s*([0-9]{1,5}(?:\.[0-9]{1,3})?)",
+    re.IGNORECASE,
+)
+
+
+def allowed_user_article_numbers(question: str, plan: Optional[LegalRetrievalPlan] = None) -> frozenset[str]:
+    """Номера статей, которые пользователь явно назвал (для фильтра search_queries)."""
+    arts = set(extract_all_article_numbers(question))
+    if plan:
+        arts.update(plan.user_articles or [])
+    return frozenset(arts)
+
+
+def sanitize_planner_search_query(query: str, allowed_articles: frozenset[str]) -> Optional[str]:
+    """
+    Убирает фразы с «статья N», если N не назван пользователем.
+    Возвращает None, если после очистки строка пустая или только номер статьи.
+    """
+    t = (query or "").strip()
+    if not t:
+        return None
+    if not allowed_articles:
+        mentioned = _QUERY_ARTICLE_RE.findall(t)
+        if mentioned:
+            return None
+        return t
+    cleaned = t
+    for m in _QUERY_ARTICLE_RE.finditer(t):
+        art = m.group(1)
+        if art not in allowed_articles:
+            return None
+    return cleaned
+
+
+def is_near_duplicate_of_question(query: str, question: str) -> bool:
+    """True, если query — по сути полный вопрос пользователя (не короткая поисковая фраза)."""
+    q = (question or "").strip().lower()
+    t = (query or "").strip().lower()
+    if not q or not t:
+        return False
+    if t == q:
+        return True
+    if len(t) > 120 and (t in q or q in t):
+        return True
+    if len(t) >= int(len(q) * 0.85) and t[:80] == q[:80]:
+        return True
+    return False
+
+
+def _hybrid_query_cap() -> int:
+    return max(4, min(12, int(getattr(config, "LEGAL_CORPUS_MAX_HYBRID_QUERIES", 5) or 5)))
+
+
+def _legal_hybrid_phrase_from_fact(fact: str) -> str:
+    """
+    Пороговые facts планировщика → юридические поисковые фразы (лексика 127-ФЗ).
+    Без LLM; только известные шаблоны банкротства.
+    """
+    t = (fact or "").lower()
+    if "юрлиц" in t and any(x in t for x in ("2", "два", "миллион", "млн")):
+        return (
+            "признание должника банкротом принятие заявления арбитражным судом "
+            "совокупность требований не менее двух миллионов рублей юридическое лицо"
+        )
+    if "гражданин" in t and any(x in t for x in ("500", "пятьсот", "тысяч")):
+        return (
+            "возбуждение производства по делу о банкротстве гражданина "
+            "заявление конкурсного кредитора требования не менее пятисот тысяч рублей"
+        )
+    if "месяц" in t and any(x in t for x in ("3", "три", "просроч")):
+        return "срок просрочки исполнения денежных обязательств три месяца банкротство"
+    return (fact or "").strip()
+
+
+def _fact_has_retrieval_anchor(text: str) -> bool:
+    """Факт с числовым порогом/сроком — отдельный hybrid-слот (суммы, месяцы)."""
+    t = (text or "").lower()
+    return bool(re.search(r"(\d|миллион|млн|тысяч|рубл|месяц)", t))
+
+
+def build_hybrid_queries_from_plan(plan: LegalRetrievalPlan, question: str = "") -> List[str]:
+    """
+    Пул запросов для norm-hybrid: search_queries + facts (отдельный проход на каждый слот).
+    Пороговые facts (суммы, сроки) чередуются с search_queries в начале пула.
+    """
+    allowed = allowed_user_article_numbers(question, plan)
+    cap = _hybrid_query_cap()
+
+    sq_cleaned: List[str] = []
+    for sq in plan.search_queries or []:
+        cleaned = sanitize_planner_search_query(sq, allowed)
+        if cleaned:
+            sq_cleaned.append(cleaned)
+
+    fact_cleaned: List[str] = []
+    for fact in plan.facts or []:
+        cleaned = sanitize_planner_search_query(fact, allowed)
+        if cleaned:
+            fact_cleaned.append(_legal_hybrid_phrase_from_fact(cleaned))
+
+    critical_facts = [f for f in fact_cleaned if _fact_has_retrieval_anchor(f)]
+    other_facts = [f for f in fact_cleaned if f not in critical_facts]
+
+    candidates: List[str] = []
+    for i, cf in enumerate(critical_facts):
+        if i < len(sq_cleaned):
+            candidates.append(sq_cleaned[i])
+        candidates.append(cf)
+    for sq in sq_cleaned[len(critical_facts) :]:
+        candidates.append(sq)
+    candidates.extend(other_facts)
+
+    out: List[str] = []
+    seen: set[str] = set()
+    for raw in candidates:
+        t = raw.strip()
+        if not t or is_near_duplicate_of_question(t, question):
+            continue
+        low = t.lower()
+        if low in seen:
+            continue
+        seen.add(low)
+        out.append(t)
+        if len(out) >= cap:
+            break
+
+    if out:
+        return out
+    return effective_search_queries(plan, question)
+
+
+def effective_search_queries(plan: LegalRetrievalPlan, question: str = "") -> List[str]:
+    """Короткие поисковые фразы плана; без полного текста вопроса."""
+    if plan.search_queries:
+        return list(plan.search_queries)
+    if plan.facts:
+        return _dedupe_queries(plan.facts, cap=5)
+    arts = structured_lookup_articles(plan)
+    if arts:
+        return _dedupe_queries(
+            [f"статья {a} 127-ФЗ" for a in arts],
+            cap=4,
+        )
+    q = (question or "").strip()
+    if len(q) > 160:
+        return [q[:160]]
+    return [q] if q else [" "]
+
+
 def plan_is_sufficient(
     docs: Sequence,
     plan: LegalRetrievalPlan,
@@ -322,8 +501,8 @@ def plan_is_sufficient(
     min_total_chars: int = 400,
 ) -> bool:
     """
-    Достаточность только по плану: required_articles и объём контекста.
-    Не привязываемся к фиксированным ст. 61.x при произвольном topic/required.
+    Достаточность: для явных статей пользователя — покрытие; иначе — объём контекста.
+    Номера статей из LLM-плана не участвуют (только user_articles).
     """
     if not docs:
         return False
@@ -331,23 +510,19 @@ def plan_is_sufficient(
     if total < min_total_chars:
         return False
 
-    if not plan.required_articles:
+    user_arts = structured_lookup_articles(plan)
+    if not user_arts:
         return total >= min_total_chars * 2
 
     cov = plan_coverage(docs, plan)
     missing = cov["missing"]
+
+    if plan.topic == "article_lookup":
+        return all(art not in missing for art in user_arts)
+
+    if len(user_arts) <= 2:
+        return all(art not in missing for art in user_arts)
+
     covered = cov["covered"]
-
-    # article_lookup: все статьи, явно запрошенные пользователем
-    if plan.topic == "article_lookup" and plan.user_articles:
-        for art in plan.user_articles:
-            if art in missing:
-                return False
-        return True
-
-    n_req = len(plan.required_articles)
-    if n_req <= 2:
-        return len(missing) == 0
-    # 3+ статей в плане: сильное большинство должно быть покрыто содержательно
-    need = max(1, (n_req * 2 + 2) // 3)
+    need = max(1, (len(user_arts) * 2 + 2) // 3)
     return len(covered) >= need

@@ -1,4 +1,4 @@
-import type { CellDetails, SourceReference } from '@/services/tabularReviewApi'
+import type { CellDetails, SourceReference, TabularCell } from '@/services/tabularReviewApi'
 import { normalizeCellSourceReferences } from '@/utils/tabularCellViewerData'
 import { preprocessTabularCitations } from '@/utils/tabularCitationUtils'
 
@@ -12,7 +12,15 @@ export interface CellCitationItem {
 /** Список цитат: столько ссылок, сколько цитат в ответе ИИ (или в source_references). */
 export function buildCellCitationList(
   cellValue: string,
-  details?: CellDetails | null,
+  details?: Pick<
+    CellDetails,
+    'cell_value' | 'source_references' | 'verbatim_extract' | 'source_page' | 'source_section'
+  > |
+    Pick<
+      TabularCell,
+      'cell_value' | 'source_references' | 'verbatim_extract' | 'source_page' | 'source_section'
+    > |
+    null,
 ): CellCitationItem[] {
   const sourceText = (details?.cell_value ?? cellValue) || ''
   const { citations: parsed } = preprocessTabularCitations(sourceText)

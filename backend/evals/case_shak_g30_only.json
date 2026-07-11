@@ -1,0 +1,77 @@
+{
+  "summary": {
+    "case_id": "0604cbe5-d37d-473f-aa90-d4ad7e7a26fc",
+    "n": 1,
+    "passed": 1,
+    "pass_rate": 1.0,
+    "path_ok": 1,
+    "path_ok_rate": 1.0,
+    "sla_ok": 0,
+    "sla_ok_rate": 0.0,
+    "with_citations": 1,
+    "answers_with_citation_markers": 1,
+    "false_not_found": 0,
+    "total_ms_p50": 47765,
+    "total_ms_avg": 47765,
+    "total_ms_max": 47765,
+    "ttft_ms_p50": 43332,
+    "prep_ms_p50": 75,
+    "prep_ms_avg": 75,
+    "by_difficulty": {
+      "hard": {
+        "n": 1,
+        "passed": 1,
+        "total_ms_p50": 47765
+      }
+    }
+  },
+  "results": [
+    {
+      "id": "g-30",
+      "difficulty": "hard",
+      "question": "Как договор №54 связан с возражениями должников?",
+      "passed": true,
+      "cover": 1.0,
+      "misses": [],
+      "hits": [
+        "Технион"
+      ],
+      "total_ms": 47765,
+      "prep_ms": 75,
+      "ttft_ms": 43332,
+      "latency_path": "fast",
+      "execution_tier": "instant",
+      "router_resolver": "latency_path_fast",
+      "citations": 1,
+      "citation_sources": [
+        {
+          "n": 1,
+          "file_name": "00. возражения ШАК и ШЭР реализация на 6л.pdf",
+          "page": 6,
+          "source_type": "document",
+          "quote_preview": "III. Просительная часть\n\nНа основании изложенного ранее, Шиошвили А.К. просит суд:\n\n● ввести в отношении Шиошвили Андрея Константиновича процедуру реструктуризации долгов гражданин"
+        }
+      ],
+      "citation_usage": {
+        "markers_in_answer": [
+          1
+        ],
+        "cited_in_text": [
+          1
+        ],
+        "unused_sources": [],
+        "dangling_markers": [],
+        "all_sources_used_in_text": true,
+        "has_citation_markers": true
+      },
+      "looks_not_found": false,
+      "false_not_found": false,
+      "content_sync": true,
+      "sla_ok": false,
+      "answer_preview": "Договор поставки №54 от 16.04.2024 между ООО «Технион Групп» и ИП Кочкиным О.Н. на поставку оборудования (имитатора полета самолета) включен в перечень приложений к возражениям должников Шиошвили А.К. и Шиошвили Э.Р. [1]. Данный документ приложен к ходатайству о введении процедур",
+      "answer": "Договор поставки №54 от 16.04.2024 между ООО «Технион Групп» и ИП Кочкиным О.Н. на поставку оборудования (имитатора полета самолета) включен в перечень приложений к возражениям должников Шиошвили А.К. и Шиошвили Э.Р. [1]. Данный документ приложен к ходатайству о введении процедуры реструктуризации долгов гражданина сроком на 6 месяцев в рамках дела о банкротстве [1].",
+      "expect_latency_path": "fast",
+      "path_ok": true
+    }
+  ]
+}

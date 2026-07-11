@@ -12,6 +12,8 @@ from app.models.document_template import DocumentTemplate  # Import document tem
 from app.models.draft_template_field_catalog import DraftTemplateFieldCatalog  # Draft template field catalog
 from app.models.agent_run import AgentRun  # noqa: F401 — register agent_runs table
 from app.models.agent_run_event import AgentRunEvent  # noqa: F401 — register agent_run_events table
+from app.models.case_file_transaction import CaseFileTransaction  # noqa: F401 — register case_file_transactions
+from app.models.operations_statement_session import OperationsStatementSession  # noqa: F401
 import logging
 
 logger = logging.getLogger(__name__)
@@ -1027,6 +1029,101 @@ def init_db():
                 logger.info("✅ Added global_assistant_messages.reasoning_steps")
     except Exception as e:
         logger.warning(f"Could not add reasoning_steps to global_assistant_messages: {e}", exc_info=True)
+
+    # case_file_transactions: source columns for operations PDF row contract (migration 037)
+    try:
+        inspector_cft = inspect(engine)
+        if "case_file_transactions" in inspector_cft.get_table_names():
+            cft_cols = {c["name"] for c in inspector_cft.get_columns("case_file_transactions")}
+            needed = ("verbatim_row_text", "source_references", "flow_direction")
+            if any(col not in cft_cols for col in needed):
+                logger.info(
+                    "Applying migration: case_file_transactions source columns (037)"
+                )
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE case_file_transactions "
+                            "ADD COLUMN IF NOT EXISTS verbatim_row_text TEXT"
+                        )
+                    )
+                    conn.execute(
+                        text(
+                            "ALTER TABLE case_file_transactions "
+                            "ADD COLUMN IF NOT EXISTS source_references JSONB"
+                        )
+                    )
+                    conn.execute(
+                        text(
+                            "ALTER TABLE case_file_transactions "
+                            "ADD COLUMN IF NOT EXISTS flow_direction VARCHAR(16)"
+                        )
+                    )
+                    conn.execute(
+                        text(
+                            "CREATE INDEX IF NOT EXISTS idx_cft_file_flow "
+                            "ON case_file_transactions(file_id, flow_direction)"
+                        )
+                    )
+                logger.info("✅ case_file_transactions source columns ready")
+        else:
+            from pathlib import Path
+
+            migration_path = (
+                Path(__file__).parent.parent / "migrations" / "036_case_file_transactions.sql"
+            )
+            if migration_path.exists():
+                logger.info("Applying migration: create case_file_transactions (036)")
+                with engine.begin() as conn:
+                    with open(migration_path, "r", encoding="utf-8") as f:
+                        migration_sql = f.read()
+                    for statement in migration_sql.split(";"):
+                        statement = statement.strip()
+                        if statement and not statement.startswith("--"):
+                            try:
+                                conn.execute(text(statement))
+                            except Exception as stmt_error:
+                                if "already exists" not in str(stmt_error).lower():
+                                    logger.warning(
+                                        "Migration statement error (may be expected): %s",
+                                        stmt_error,
+                                    )
+                # 037 columns on fresh table
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE case_file_transactions "
+                            "ADD COLUMN IF NOT EXISTS verbatim_row_text TEXT"
+                        )
+                    )
+                    conn.execute(
+                        text(
+                            "ALTER TABLE case_file_transactions "
+                            "ADD COLUMN IF NOT EXISTS source_references JSONB"
+                        )
+                    )
+                    conn.execute(
+                        text(
+                            "ALTER TABLE case_file_transactions "
+                            "ADD COLUMN IF NOT EXISTS flow_direction VARCHAR(16)"
+                        )
+                    )
+                    conn.execute(
+                        text(
+                            "CREATE INDEX IF NOT EXISTS idx_cft_file_flow "
+                            "ON case_file_transactions(file_id, flow_direction)"
+                        )
+                    )
+                logger.info("✅ case_file_transactions table created")
+    except Exception as e:
+        logger.warning(f"Could not ensure case_file_transactions schema: {e}", exc_info=True)
+
+    # operations_statement_sessions: persisted UI state for operations registry
+    try:
+        OperationsStatementSession.__table__.create(bind=engine, checkfirst=True)
+        logger.info("✅ operations_statement_sessions table ready")
+    except Exception as e:
+        logger.warning(f"Could not ensure operations_statement_sessions table: {e}", exc_info=True)
 
     # Setup LangGraph checkpointer tables
     try:

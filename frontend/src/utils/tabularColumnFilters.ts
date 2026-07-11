@@ -1,5 +1,6 @@
 import type { TabularColumn, TabularRow } from "@/services/tabularReviewApi"
 import { isDateColumn, parseTabularDateMs } from "./tabularDateUtils"
+import { isNumericColumn, parseFilterNumber, parseNumericCellValue } from "./tabularNumericUtils"
 
 export const EMPTY_VALUE_KEY = ""
 export const EMPTY_VALUE_LABEL = "—"
@@ -12,6 +13,9 @@ export type ColumnFilterOperator =
   | "date_after"
   | "date_before"
   | "date_between"
+  | "number_greater_than"
+  | "number_less_than"
+  | "number_between"
 
 export interface ColumnValueFilterCondition {
   columnId: string
@@ -20,6 +24,10 @@ export interface ColumnValueFilterCondition {
   textQuery: string
   dateFrom: string | null
   dateTo: string | null
+  /** Порог для number_greater_than / number_less_than */
+  numberFrom: string | null
+  /** Верхняя граница для number_between */
+  numberTo: string | null
 }
 
 export interface FilterOperatorOption {
@@ -43,6 +51,15 @@ const DATE_OPERATORS: FilterOperatorOption[] = [
   { value: "date_between", label: "От — до" },
 ]
 
+const NUMBER_OPERATORS: FilterOperatorOption[] = [
+  { value: "equals", label: "Равно" },
+  { value: "not_equals", label: "Не равно" },
+  { value: "not_empty", label: "Не пусто" },
+  { value: "number_greater_than", label: "Больше" },
+  { value: "number_less_than", label: "Меньше" },
+  { value: "number_between", label: "От — до" },
+]
+
 export function emptyFilterCondition(): ColumnValueFilterCondition {
   return {
     columnId: "",
@@ -51,6 +68,8 @@ export function emptyFilterCondition(): ColumnValueFilterCondition {
     textQuery: "",
     dateFrom: null,
     dateTo: null,
+    numberFrom: null,
+    numberTo: null,
   }
 }
 
@@ -69,6 +88,9 @@ export function getOperatorsForColumn(column: TabularColumn | undefined): Filter
   if (column && isDateColumn(column.column_type, column.column_label)) {
     return DATE_OPERATORS
   }
+  if (column && isNumericColumn(column.column_type, column.column_label)) {
+    return NUMBER_OPERATORS
+  }
   return TEXT_OPERATORS
 }
 
@@ -78,6 +100,14 @@ export function defaultOperatorForColumn(column: TabularColumn | undefined): Col
 
 export function isDateOperator(operator: ColumnFilterOperator): boolean {
   return operator === "date_after" || operator === "date_before" || operator === "date_between"
+}
+
+export function isNumberOperator(operator: ColumnFilterOperator): boolean {
+  return (
+    operator === "number_greater_than" ||
+    operator === "number_less_than" ||
+    operator === "number_between"
+  )
 }
 
 export function isFilterConditionComplete(
@@ -96,14 +126,26 @@ export function isFilterConditionComplete(
       if (column && isDateColumn(column.column_type, column.column_label)) {
         return Boolean(cond.dateFrom)
       }
+      if (column && isNumericColumn(column.column_type, column.column_label)) {
+        return parseFilterNumber(cond.numberFrom) != null
+      }
       return cond.selectedValues.length > 0
+    case "number_greater_than":
+    case "number_less_than":
+      return parseFilterNumber(cond.numberFrom) != null
+    case "number_between":
+      return (
+        parseFilterNumber(cond.numberFrom) != null && parseFilterNumber(cond.numberTo) != null
+      )
     case "date_after":
     case "date_before":
       return Boolean(cond.dateFrom)
     case "date_between":
       return Boolean(cond.dateFrom && cond.dateTo)
-    default:
-      return false
+    default: {
+      const _exhaustive: never = cond.operator
+      return _exhaustive
+    }
   }
 }
 
@@ -142,6 +184,12 @@ export function evaluateColumnValueFilter(
         if (cellMs === null || filterMs === null) return false
         return cellMs === filterMs
       }
+      if (column && isNumericColumn(column.column_type, column.column_label)) {
+        const cellNum = parseNumericCellValue(cellValue)
+        const filterNum = parseFilterNumber(cond.numberFrom)
+        if (cellNum === null || filterNum === null) return false
+        return cellNum === filterNum
+      }
       return cond.selectedValues.includes(normalized)
 
     case "not_equals":
@@ -152,7 +200,38 @@ export function evaluateColumnValueFilter(
         if (cellMs === null) return true
         return cellMs !== filterMs
       }
+      if (column && isNumericColumn(column.column_type, column.column_label)) {
+        const cellNum = parseNumericCellValue(cellValue)
+        const filterNum = parseFilterNumber(cond.numberFrom)
+        if (filterNum === null) return true
+        if (cellNum === null) return true
+        return cellNum !== filterNum
+      }
       return !cond.selectedValues.includes(normalized)
+
+    case "number_greater_than": {
+      const cellNum = parseNumericCellValue(cellValue)
+      const filterNum = parseFilterNumber(cond.numberFrom)
+      if (cellNum === null || filterNum === null) return false
+      return cellNum > filterNum
+    }
+
+    case "number_less_than": {
+      const cellNum = parseNumericCellValue(cellValue)
+      const filterNum = parseFilterNumber(cond.numberFrom)
+      if (cellNum === null || filterNum === null) return false
+      return cellNum < filterNum
+    }
+
+    case "number_between": {
+      const cellNum = parseNumericCellValue(cellValue)
+      const fromNum = parseFilterNumber(cond.numberFrom)
+      const toNum = parseFilterNumber(cond.numberTo)
+      if (cellNum === null || fromNum === null || toNum === null) return false
+      const lo = Math.min(fromNum, toNum)
+      const hi = Math.max(fromNum, toNum)
+      return cellNum >= lo && cellNum <= hi
+    }
 
     case "date_after": {
       const cellMs = cellDateMs(cellValue)
@@ -178,8 +257,10 @@ export function evaluateColumnValueFilter(
       return cellMs >= lo && cellMs <= hi
     }
 
-    default:
-      return true
+    default: {
+      const _exhaustive: never = cond.operator
+      return _exhaustive
+    }
   }
 }
 
@@ -222,13 +303,23 @@ export function formatFilterConditionSummary(
       return `${colLabel}: ${op} ${cond.dateFrom ?? ""}`
     case "date_between":
       return `${colLabel}: ${op} ${cond.dateFrom ?? ""} — ${cond.dateTo ?? ""}`
+    case "number_greater_than":
+    case "number_less_than":
+      return `${colLabel}: ${op} ${cond.numberFrom ?? ""}`
+    case "number_between":
+      return `${colLabel}: ${op} ${cond.numberFrom ?? ""} — ${cond.numberTo ?? ""}`
     case "equals":
     case "not_equals":
       if (column && isDateColumn(column.column_type, column.column_label)) {
         return `${colLabel}: ${op} ${cond.dateFrom ?? ""}`
       }
+      if (column && isNumericColumn(column.column_type, column.column_label)) {
+        return `${colLabel}: ${op} ${cond.numberFrom ?? ""}`
+      }
       return `${colLabel}: ${op} ${cond.selectedValues.map(displayFilterValue).join(", ")}`
-    default:
-      return colLabel
+    default: {
+      const _exhaustive: never = cond.operator
+      return _exhaustive
+    }
   }
 }

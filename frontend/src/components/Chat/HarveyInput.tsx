@@ -214,7 +214,7 @@ function HarveyInputSettingsMenu({
   if (!isOpen) return null
 
   const showAskDraftMode = productFeatures.draftMode
-  const showLegalCorpusControl = productFeatures.legalCorpus
+  const showLegalCorpusControl = productFeatures.legalCorpus && variant === 'global'
   const showCourtPracticeControl = productFeatures.courtPractice
   const showInstrumentToggles =
     !isDraftMode && (showLegalCorpusControl || showCourtPracticeControl)
@@ -337,7 +337,7 @@ function HarveyInputSettingsMenu({
       {showCourtPracticeControl && (
         <button
           type="button"
-          disabled={!canEnableCourtPractice(isDraftMode) || useLegalCorpus}
+          disabled={!canEnableCourtPractice(isDraftMode) || (variant === 'global' && useLegalCorpus)}
           onClick={() => onUseCourtPracticeChange(!useCourtPractice)}
           className="ws-dropdown-item"
           title={isDraftMode ? 'Недоступно в режиме Draft' : undefined}
@@ -721,33 +721,11 @@ export function HarveyInput(props: HarveyInputProps) {
               {productFeatures.courtPractice && (
                 <MikeInstrumentToggle
                   active={useCourtPractice}
-                  disabled={!canEnableCourtPractice(isDraftMode) || useLegalCorpus}
+                  disabled={!canEnableCourtPractice(isDraftMode)}
                   onClick={() => onUseCourtPracticeChange(!useCourtPractice)}
                   icon={Gavel}
                   label="Судебная практика"
-                  title={
-                    isDraftMode
-                      ? 'Недоступно в режиме Draft'
-                      : useLegalCorpus
-                        ? 'Нельзя включить вместе с законодательством'
-                        : undefined
-                  }
-                />
-              )}
-              {productFeatures.legalCorpus && (
-                <MikeInstrumentToggle
-                  active={useLegalCorpus}
-                  disabled={!canEnableLegalResearch(isDraftMode) || useCourtPractice}
-                  onClick={() => onUseLegalCorpusChange(!useLegalCorpus)}
-                  icon={BookOpen}
-                  label="Законодательство (127 фз)"
-                  title={
-                    isDraftMode
-                      ? 'Недоступно в режиме Draft'
-                      : useCourtPractice
-                        ? 'Нельзя включить вместе с судебной практикой'
-                        : undefined
-                  }
+                  title={isDraftMode ? 'Недоступно в режиме Draft' : undefined}
                 />
               )}
             </>

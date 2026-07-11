@@ -245,11 +245,13 @@ def classify_referential_kind_judge(
     dialog_history: str = "",
     conversation_summary: str = "",
     anchor_filenames: Sequence[str] = (),
+    allow_llm: bool = True,
 ) -> ReferentialJudgeResult:
     """
     Primary turn router: LLM judge with regex fallback and safety merge.
 
     When prior assistant turn exists, LLM sees full recent transcript (not only regex patterns).
+    FAST latency path passes ``allow_llm=False`` to avoid a network round-trip.
     """
     q = (question or "").strip()
     if not q:
@@ -269,6 +271,15 @@ def classify_referential_kind_judge(
     # Structural classifier matched — deterministic routing wins (no LLM override).
     if regex_result.referential_kind != "none":
         return regex_result
+
+    if not allow_llm:
+        return ReferentialJudgeResult(
+            referential_kind="none",
+            needs_document_retrieval=True,
+            confidence=max(0.55, regex_result.confidence),
+            reason="latency_path_skip_llm_judge",
+            resolver="regex_fallback",
+        )
 
     prompt = _build_judge_prompt(
         question=q,

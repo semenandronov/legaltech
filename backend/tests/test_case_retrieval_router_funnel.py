@@ -46,11 +46,66 @@ def test_small_case_full_corpus(mock_db, monkeypatch):
         "app.services.chat.retrieval_router._count_case_files",
         lambda db, case_id: 3,
     )
-    router = CaseRetrievalRouter(llm=MagicMock())
-    task = router.route(question="срок оплаты", case_id="c1", db=mock_db)
+    monkeypatch.setattr(
+        "app.services.chat.case_file_catalog_cache.get_case_file_catalog_cached",
+        lambda db, case_id, limit=80: [
+            _catalog_entry("f1", "pretenzija.pdf"),
+            _catalog_entry("f2", "vstrechnyj isk.pdf"),
+        ],
+    )
+    monkeypatch.setattr(
+        "app.services.chat.retrieval_router._resolve_small_case_scope",
+        lambda **kwargs: None,
+    )
+    # No LLM: fall through to full corpus (legacy small-case behaviour).
+    router = CaseRetrievalRouter(llm=None)
+    task = router.route(
+        question="срок оплаты",
+        case_id="c1",
+        db=mock_db,
+        allow_llm_scope=True,
+    )
     assert task.scope_mode == "full_case"
     assert task.rationale == "small_case_full_corpus"
     assert not task.file_ids
+
+
+def test_small_case_llm_scope_before_full_corpus(mock_db, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.chat.retrieval_router._count_case_files",
+        lambda db, case_id: 3,
+    )
+    monkeypatch.setattr(
+        "app.services.chat.case_file_catalog_cache.get_case_file_catalog_cached",
+        lambda db, case_id, limit=80: [
+            _catalog_entry("f-pret", "03. pretenzija 5l.pdf"),
+            _catalog_entry("f-isk", "00. vstrechnyj isk.pdf"),
+        ],
+    )
+    monkeypatch.setattr(
+        "app.services.chat.retrieval_router._resolve_small_case_scope",
+        lambda **kwargs: None,
+    )
+    llm_task = RetrievalTask(
+        search_query="сумма претензии",
+        file_ids=["f-pret"],
+        scope_mode="resolved",
+        confidence=0.9,
+        rationale="pretension",
+    )
+    mock_llm = MagicMock()
+    mock_llm.with_structured_output.return_value.invoke.return_value = llm_task
+    router = CaseRetrievalRouter(llm=mock_llm)
+    task = router.route(
+        question="Какая общая сумма задолженности указана в претензии?",
+        case_id="c1",
+        db=mock_db,
+        allow_llm_scope=True,
+    )
+    assert task.file_ids == ["f-pret"]
+    assert task.scope_mode == "resolved"
+    assert task.within_file_expand is True
+    assert "llm_scope" in task.rationale
 
 
 def test_summary_resolved_skips_llm(mock_db, large_case_env, monkeypatch):

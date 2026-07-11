@@ -44,6 +44,10 @@ class RetrievalTask(BaseModel):
     scope_mode: ScopeMode = "full_case"
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     rationale: str = ""
+    # When True, extract_retrieval_task must not re-route (escalation pass owns scope).
+    escalation_lock: bool = False
+    # When True, hybrid recall merges a within-file lexical channel for compact files.
+    within_file_expand: bool = False
 
 
 class CaseFileCatalogEntry(BaseModel):
@@ -135,6 +139,26 @@ def _small_case_task(question: str) -> RetrievalTask:
     )
 
 
+def _try_document_ref_scope(
+    catalog: List[CaseFileCatalogEntry],
+    question: str,
+) -> Optional[RetrievalTask]:
+    """Deterministic №N → file_ids from catalog (filename/summary/key_points)."""
+    from app.services.chat.document_ref_scope import resolve_document_ref_file_ids
+
+    matched = resolve_document_ref_file_ids(catalog, question, limit=3)
+    if not matched:
+        return None
+    return RetrievalTask(
+        search_query=question.strip(),
+        file_ids=matched,
+        scope_mode="resolved",
+        confidence=0.94,
+        rationale="document_ref_catalog_match",
+        within_file_expand=True,
+    )
+
+
 def _match_catalog_files_by_question(
     catalog: List[CaseFileCatalogEntry],
     question: str,
@@ -143,6 +167,13 @@ def _match_catalog_files_by_question(
     q = (question or "").strip().lower()
     if not q or not catalog:
         return []
+
+    # Prefer exact document-number matches before fuzzy filename tokens.
+    from app.services.chat.document_ref_scope import resolve_document_ref_file_ids
+
+    ref_matched = resolve_document_ref_file_ids(catalog, question, limit=3)
+    if ref_matched:
+        return ref_matched
 
     date_match = re.search(r"(\d{2})[./](\d{2})[./](\d{2,4})", q)
     date_variants: List[str] = []
@@ -181,6 +212,14 @@ def _match_catalog_files_by_question(
     return [fid for _, fid in scored[:3]]
 
 
+def _is_near_full_case_scope(file_ids: List[str], case_file_count: int) -> bool:
+    """True when 'scoped' IDs cover the whole corpus — not a useful file pick."""
+    n = len([str(x).strip() for x in (file_ids or []) if str(x).strip()])
+    if n <= 0 or case_file_count <= 0:
+        return False
+    return n >= int(case_file_count)
+
+
 def _resolve_small_case_scope(
     *,
     db: Session,
@@ -201,13 +240,24 @@ def _resolve_small_case_scope(
                 question=q,
                 case_file_count=case_file_count,
             )
-            if scope_result.file_ids and scope_result.scope_hint in ("resolved", "relaxed"):
+            if (
+                scope_result.file_ids
+                and scope_result.scope_hint in ("resolved", "relaxed")
+                and not _is_near_full_case_scope(scope_result.file_ids, case_file_count)
+            ):
                 return _task_from_summary_scope(
                     q,
                     file_ids=scope_result.file_ids,
                     reason=scope_result.reason,
                     top_score=scope_result.top_score,
                     scope_hint=scope_result.scope_hint,
+                )
+            if scope_result.file_ids and _is_near_full_case_scope(
+                scope_result.file_ids, case_file_count
+            ):
+                logger.info(
+                    "[CaseRouter] small_case summary covers all %s files → skip (need LLM)",
+                    case_file_count,
                 )
         except Exception as exc:
             logger.debug("Small case summary scope failed: %s", exc)
@@ -220,14 +270,18 @@ def _resolve_small_case_scope(
             case_id,
             limit=max(5, case_file_count + 2),
         )
+        ref_task = _try_document_ref_scope(catalog, q)
+        if ref_task is not None:
+            return ref_task
         matched = _match_catalog_files_by_question(catalog, q)
-        if matched:
+        if matched and not _is_near_full_case_scope(matched, case_file_count):
             return RetrievalTask(
                 search_query=q,
                 file_ids=matched,
                 scope_mode="resolved",
                 confidence=0.78,
                 rationale="small_case_filename_match",
+                within_file_expand=True,
             )
     except Exception as exc:
         logger.debug("Small case catalog match failed: %s", exc)
@@ -312,6 +366,7 @@ def _normalize_llm_task(
         scope_mode=scope_mode,
         confidence=float(task.confidence or 0.5),
         rationale=str(task.rationale or "llm_scope"),
+        within_file_expand=bool(task.within_file_expand) or bool(file_ids),
     )
 
 
@@ -322,6 +377,7 @@ def _accept_llm_task(task: RetrievalTask, *, question: str) -> Optional[Retrieva
     if task.file_ids and task.confidence >= min_conf:
         task.scope_mode = "resolved"
         task.rationale = f"llm_scope_{task.rationale or 'resolved'}"
+        task.within_file_expand = True
         return task
 
     if task.doc_type and task.scope_mode == "doc_type" and task.confidence >= min_conf:
@@ -343,6 +399,15 @@ def _accept_llm_task(task: RetrievalTask, *, question: str) -> Optional[Retrieva
     return None
 
 
+def _llm_scope_ready(*, allow_llm_scope: bool, llm) -> bool:
+    return bool(
+        allow_llm_scope
+        and _llm_scope_enabled()
+        and llm
+        and _llm_secondary_enabled()
+    )
+
+
 class CaseRetrievalRouter:
     """Maps natural language questions to scoped retrieval tasks."""
 
@@ -359,6 +424,7 @@ class CaseRetrievalRouter:
         document_id: Optional[str] = None,
         corpus_size: int = 0,
         editor_attach_only: bool = False,
+        allow_llm_scope: bool = True,
     ) -> RetrievalTask:
         q = (question or "").strip()
         if not q:
@@ -377,6 +443,7 @@ class CaseRetrievalRouter:
                 scope_mode="attached",
                 confidence=0.98,
                 rationale="attached_file_ids",
+                within_file_expand=True,
             )
 
         if editor_attach_only:
@@ -396,12 +463,37 @@ class CaseRetrievalRouter:
                 scope_mode="resolved",
                 confidence=0.85,
                 rationale="active_document_id",
+                within_file_expand=True,
             )
 
         try:
             case_file_count = _count_case_files(db, case_id)
         except Exception:
             case_file_count = corpus_size or 0
+
+        from app.services.chat.case_file_catalog_cache import get_case_file_catalog_cached
+
+        catalog = get_case_file_catalog_cached(
+            db,
+            case_id,
+            limit=int(
+                getattr(config, "CASE_ASSISTANT_ROUTER_MAX_CATALOG_FILES", 80) or 80
+            )
+            if not _is_small_case(case_file_count)
+            else max(5, case_file_count + 2),
+        )
+
+        # Document-number resolve runs before summary hybrid / LLM (FAST-safe).
+        ref_task = _try_document_ref_scope(catalog, q)
+        if ref_task is not None:
+            logger.info(
+                "[CaseRouter] document_ref files=%s refs_bound=1",
+                len(ref_task.file_ids),
+            )
+            return ref_task
+
+        llm_ready = _llm_scope_ready(allow_llm_scope=allow_llm_scope, llm=self.llm)
+        llm_search_query = q
 
         if _is_small_case(case_file_count):
             scoped = _resolve_small_case_scope(
@@ -418,22 +510,22 @@ class CaseRetrievalRouter:
                     scoped.rationale,
                 )
                 return scoped
+            # Same secretary as large cases: lite LLM picks file(s) before full corpus.
+            if llm_ready:
+                llm_hit, rewrite = self._try_llm_scope(
+                    question=q,
+                    catalog=catalog,
+                    corpus_size=corpus_size or case_file_count,
+                )
+                if rewrite:
+                    llm_search_query = rewrite
+                if llm_hit is not None:
+                    return llm_hit
             logger.info(
                 "[CaseRouter] small_case files=%s → full_corpus chunk search",
                 case_file_count,
             )
             return _small_case_task(q)
-
-        from app.services.chat.case_file_catalog_cache import get_case_file_catalog_cached
-
-        catalog = get_case_file_catalog_cached(
-            db,
-            case_id,
-            limit=int(getattr(config, "CASE_ASSISTANT_ROUTER_MAX_CATALOG_FILES", 80) or 80),
-        )
-
-        llm_ready = _llm_scope_enabled() and self.llm and _llm_secondary_enabled()
-        llm_search_query = q
 
         from app.services.file_summary_index import (
             FileScopeResult,
@@ -450,19 +542,27 @@ class CaseRetrievalRouter:
                 case_file_count=case_file_count,
             )
             if scope_result.file_ids and scope_result.scope_hint == "resolved":
-                logger.info(
-                    "[CaseRouter] summary_hybrid files=%s top=%.2f reason=%s",
-                    len(scope_result.file_ids),
-                    scope_result.top_score,
-                    scope_result.reason,
-                )
-                return _task_from_summary_scope(
-                    q,
-                    file_ids=scope_result.file_ids,
-                    reason=scope_result.reason,
-                    top_score=scope_result.top_score,
-                    scope_hint=scope_result.scope_hint,
-                )
+                if _is_near_full_case_scope(scope_result.file_ids, case_file_count):
+                    logger.info(
+                        "[CaseRouter] summary_hybrid covers all %s files → llm/relaxed",
+                        case_file_count,
+                    )
+                else:
+                    logger.info(
+                        "[CaseRouter] summary_hybrid files=%s top=%.2f reason=%s",
+                        len(scope_result.file_ids),
+                        scope_result.top_score,
+                        scope_result.reason,
+                    )
+                    task = _task_from_summary_scope(
+                        q,
+                        file_ids=scope_result.file_ids,
+                        reason=scope_result.reason,
+                        top_score=scope_result.top_score,
+                        scope_hint=scope_result.scope_hint,
+                    )
+                    task.within_file_expand = True
+                    return task
 
             logger.info(
                 "[CaseRouter] summary miss hint=%s reason=%s top=%.2f → llm/relaxed",
@@ -472,27 +572,15 @@ class CaseRetrievalRouter:
             )
 
         if llm_ready:
-            try:
-                raw_llm = self._route_with_llm(
-                    question=q,
-                    catalog=catalog,
-                    corpus_size=corpus_size or case_file_count,
-                )
-                llm_task = _normalize_llm_task(raw_llm, catalog=catalog, question=q)
-                rewritten = str(llm_task.search_query or "").strip()
-                if rewritten and rewritten != q:
-                    llm_search_query = rewritten
-                accepted = _accept_llm_task(llm_task, question=q)
-                if accepted is not None:
-                    logger.info(
-                        "[CaseRouter] llm_scope mode=%s files=%s conf=%.2f",
-                        accepted.scope_mode,
-                        len(accepted.file_ids),
-                        accepted.confidence,
-                    )
-                    return accepted
-            except Exception as e:
-                logger.warning("LLM retrieval scope failed: %s", e)
+            llm_hit, rewrite = self._try_llm_scope(
+                question=q,
+                catalog=catalog,
+                corpus_size=corpus_size or case_file_count,
+            )
+            if rewrite:
+                llm_search_query = rewrite
+            if llm_hit is not None:
+                return llm_hit
 
         if scope_result is not None and scope_result.file_ids and scope_result.scope_hint == "relaxed":
             logger.info(
@@ -530,6 +618,42 @@ class CaseRetrievalRouter:
             rationale="weak_scope_fallback",
         )
 
+    def _try_llm_scope(
+        self,
+        *,
+        question: str,
+        catalog: List[CaseFileCatalogEntry],
+        corpus_size: int,
+    ) -> tuple[Optional[RetrievalTask], Optional[str]]:
+        """
+        Lite LLM catalog secretary.
+
+        Returns (accepted_task_or_None, rewritten_query_or_None).
+        Rewrite is kept even when the task is rejected, so relaxed/full_case
+        fallbacks can still use the improved search_query.
+        """
+        try:
+            raw_llm = self._route_with_llm(
+                question=question,
+                catalog=catalog,
+                corpus_size=corpus_size,
+            )
+            llm_task = _normalize_llm_task(raw_llm, catalog=catalog, question=question)
+            rewritten = str(llm_task.search_query or "").strip()
+            rewrite_out = rewritten if rewritten and rewritten != question.strip() else None
+            accepted = _accept_llm_task(llm_task, question=question)
+            if accepted is not None:
+                logger.info(
+                    "[CaseRouter] llm_scope mode=%s files=%s conf=%.2f",
+                    accepted.scope_mode,
+                    len(accepted.file_ids),
+                    accepted.confidence,
+                )
+            return accepted, rewrite_out
+        except Exception as e:
+            logger.warning("LLM retrieval scope failed: %s", e)
+            return None, None
+
     def _route_with_llm(
         self,
         *,
@@ -557,6 +681,8 @@ class CaseRetrievalRouter:
 }}
 Правила:
 - file_ids: id из каталога (до {max_files}), если ответ скорее в конкретных документах.
+- Смотри и filename, и summary: «претензия» ≠ «встречный иск» ≠ «позиция/пояснения» ≠ «договор», даже если стороны и суммы похожи.
+- Если вопрос явно про претензию / встречный иск / позицию / отзыв / договор — выбирай соответствующий файл.
 - doc_type: если вопрос про все документы одного типа (например все договоры) — без file_ids.
 - scope_mode=full_case только если нужен обзор по всему делу, сравнение всех документов или явно неясно где искать.
 - search_query: суть для полнотекстового/семантического поиска по чанкам.

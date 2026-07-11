@@ -92,6 +92,10 @@ export interface SourceReference {
   page?: number | null
   section?: string | null
   text: string
+  doc_id?: string | null
+  char_start?: number | null
+  char_end?: number | null
+  verified?: boolean | null
   bbox?: {
     x0: number
     y0: number

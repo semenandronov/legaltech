@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, Fragment, useCallback, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
-  MessageSquare, FolderOpen, FileText, Table,
+  MessageSquare, FolderOpen, FileText, Table, Receipt,
   Search, Upload, Plus, ChevronRight, File, Loader2, Cloud,
   MoreHorizontal, Trash2, ArrowRight, Check, X, Pencil, AlertCircle,
 } from 'lucide-react'
@@ -22,7 +22,9 @@ import {
   type PostCreatePendingRow,
 } from '../lib/postCreatePendingFiles'
 import { tabularReviewApi } from '../services/tabularReviewApi'
+import { operationsApi, type OperationsAvailableFile, type OperationsSessionSummary } from '../services/operationsApi'
 import { CaseTabularHubModal } from '../components/TabularReview/CaseTabularHubModal'
+import { CaseOperationsHubModal } from '../components/Operations/CaseOperationsHubModal'
 import { CaseOverviewPageHeader } from '../components/CaseOverview/CaseOverviewPageHeader'
 import { MikeTableToolbar } from '../components/TabularReview/mike/MikeTableToolbar'
 import { TABLE_CHECKBOX_CLASS } from '../components/TabularReview/mike/mikeTablePrimitives'
@@ -104,6 +106,12 @@ const PRESETS = [
     path: (id: string) => `/cases/${id}/chat`,
   },
   {
+    id: 'operations',
+    title: 'Операции',
+    description: 'Операции из одной банковской выписки',
+    path: (id: string) => `/cases/${id}/operations`,
+  },
+  {
     id: 'tabular',
     title: 'Таблица',
     description: 'Один вопрос — ко всем документам дела',
@@ -112,7 +120,11 @@ const PRESETS = [
 ] as const
 
 function isCaseAssistantChatSession(sessionId: string): boolean {
-  return !sessionId.startsWith('tabular:')
+  return (
+    !sessionId.startsWith('tabular:') &&
+    !sessionId.startsWith('operations:') &&
+    !sessionId.startsWith('editor:')
+  )
 }
 
 const CaseOverviewPage = () => {
@@ -147,10 +159,13 @@ const CaseOverviewPage = () => {
     updated_at?: string
     created_at?: string
   }>>([])
+  const [operationsSessions, setOperationsSessions] = useState<OperationsSessionSummary[]>([])
+  const [operationsFiles, setOperationsFiles] = useState<OperationsAvailableFile[]>([])
   const [loadingCase, setLoadingCase] = useState(true)
   const [loadingFiles, setLoadingFiles] = useState(true)
   const [loadingSessions, setLoadingSessions] = useState(true)
   const [loadingReviews, setLoadingReviews] = useState(true)
+  const [loadingOperationsSessions, setLoadingOperationsSessions] = useState(true)
   const [fileSearch, setFileSearch] = useState('')
   const [uploading, setUploading] = useState(false)
   const [creatingFolder, setCreatingFolder] = useState(false)
@@ -207,6 +222,7 @@ const CaseOverviewPage = () => {
   const [pickerSearch, setPickerSearch] = useState('')
   const [creatingReview, setCreatingReview] = useState(false)
   const [showTabularHub, setShowTabularHub] = useState(false)
+  const [showOperationsHub, setShowOperationsHub] = useState(false)
 
   useEffect(() => {
     if (!caseId) return
@@ -272,13 +288,16 @@ const CaseOverviewPage = () => {
     setLoadingFiles(true)
     setLoadingSessions(true)
     setLoadingReviews(true)
+    setLoadingOperationsSessions(true)
     try {
-      const [caseRes, docsRes, foldersRes, sessionsRes, reviewsRes] = await Promise.allSettled([
+      const [caseRes, docsRes, foldersRes, sessionsRes, reviewsRes, opsSessionsRes, opsFilesRes] = await Promise.allSettled([
         getCase(caseId),
         getDocuments(caseId),
         getCaseFolders(caseId),
         getChatSessionsForCase(caseId),
         tabularReviewApi.listReviews(caseId, 0, 100),
+        operationsApi.listSessions(caseId),
+        operationsApi.listAvailableFiles(caseId),
       ])
       if (caseRes.status === 'fulfilled') setCaseData(caseRes.value)
       if (docsRes.status === 'fulfilled') setFiles(mapCaseDocuments(docsRes.value.documents || []))
@@ -287,11 +306,16 @@ const CaseOverviewPage = () => {
       else setSessions([])
       if (reviewsRes.status === 'fulfilled') setReviews(reviewsRes.value.reviews || [])
       else setReviews([])
+      if (opsSessionsRes.status === 'fulfilled') setOperationsSessions(opsSessionsRes.value)
+      else setOperationsSessions([])
+      if (opsFilesRes.status === 'fulfilled') setOperationsFiles(opsFilesRes.value)
+      else setOperationsFiles([])
     } finally {
       setLoadingCase(false)
       setLoadingFiles(false)
       setLoadingSessions(false)
       setLoadingReviews(false)
+      setLoadingOperationsSessions(false)
     }
   }
 
@@ -583,6 +607,10 @@ const CaseOverviewPage = () => {
                         setShowTabularHub(true)
                         return
                       }
+                      if (preset.id === 'operations') {
+                        setShowOperationsHub(true)
+                        return
+                      }
                       navigate(preset.path(caseId!))
                     }}
                     className="flex min-h-[88px] flex-col items-start gap-2 rounded-lg border border-gray-200 bg-white p-4 text-left transition-colors hover:border-gray-300 hover:bg-[#fafbfc]"
@@ -601,16 +629,16 @@ const CaseOverviewPage = () => {
             <section className="mb-8">
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-xs font-medium text-gray-500">Последние действия</h2>
-                {(assistantSessions.length + reviews.length) > 5 && (
+                {(assistantSessions.length + reviews.length + operationsSessions.length) > 5 && (
                   <button
                     onClick={() => setShowAllActions(true)}
                     className="text-xs text-gray-400 transition-colors hover:text-gray-600"
                   >
-                    Все действия ({assistantSessions.length + reviews.length})
+                    Все действия ({assistantSessions.length + reviews.length + operationsSessions.length})
                   </button>
                 )}
               </div>
-              {(loadingSessions || loadingReviews) ? (
+              {(loadingSessions || loadingReviews || loadingOperationsSessions) ? (
                 <div className="space-y-2">
                   {[...Array(3)].map((_, i) => (
                     <div key={i} className="h-10 animate-pulse rounded-lg bg-gray-100" />
@@ -620,6 +648,7 @@ const CaseOverviewPage = () => {
                 type ActionItem =
                   | { kind: 'chat'; session_id: string; first_message: string; last_message_at: string | null; message_count: number; date: number }
                   | { kind: 'review'; id: string; name: string; status: string; date: number }
+                  | { kind: 'operations'; file_id: string; name: string; date: number }
 
                 const chatItems: ActionItem[] = assistantSessions.map(s => ({
                   kind: 'chat' as const,
@@ -631,7 +660,13 @@ const CaseOverviewPage = () => {
                   ...r,
                   date: r.updated_at ? new Date(r.updated_at).getTime() : (r.created_at ? new Date(r.created_at).getTime() : 0),
                 }))
-                const allItems = [...chatItems, ...reviewItems]
+                const operationsItems: ActionItem[] = operationsSessions.map((s) => ({
+                  kind: 'operations' as const,
+                  file_id: s.file_id,
+                  name: s.filename || 'Выписка',
+                  date: s.updated_at ? new Date(s.updated_at).getTime() : 0,
+                }))
+                const allItems = [...chatItems, ...reviewItems, ...operationsItems]
                   .sort((a, b) => b.date - a.date)
                   .slice(0, 5)
 
@@ -645,10 +680,17 @@ const CaseOverviewPage = () => {
                   <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
                     {allItems.map((item, i) => (
                       <button
-                        key={item.kind === 'chat' ? `chat-${item.session_id}` : `review-${item.id}`}
+                        key={
+                          item.kind === 'chat'
+                            ? `chat-${item.session_id}`
+                            : item.kind === 'review'
+                              ? `review-${item.id}`
+                              : `ops-${item.file_id}`
+                        }
                         onClick={() => {
                           if (item.kind === 'chat') navigate(`/cases/${caseId}/chat?session=${item.session_id}`)
-                          else navigate(`/cases/${caseId}/tabular-review/${item.id}`)
+                          else if (item.kind === 'review') navigate(`/cases/${caseId}/tabular-review/${item.id}`)
+                          else navigate(`/cases/${caseId}/operations?file=${item.file_id}`)
                         }}
                         className={`flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-gray-50 ${
                           i < allItems.length - 1 ? 'border-b border-gray-50' : ''
@@ -657,8 +699,10 @@ const CaseOverviewPage = () => {
                         <div className="flex min-w-0 items-center gap-3">
                           {item.kind === 'chat' ? (
                             <MessageSquare className="h-3.5 w-3.5 shrink-0 text-gray-400" />
-                          ) : (
+                          ) : item.kind === 'review' ? (
                             <Table className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                          ) : (
+                            <Receipt className="h-3.5 w-3.5 shrink-0 text-gray-400" />
                           )}
                           <span className="truncate text-sm text-gray-800">
                             {item.kind === 'chat' ? (item.first_message || 'Сессия') : item.name}
@@ -669,13 +713,17 @@ const CaseOverviewPage = () => {
                             className={`rounded px-1.5 py-0.5 text-xs ${
                               item.kind === 'chat'
                                 ? 'bg-indigo-50 text-indigo-600'
-                                : 'bg-emerald-50 text-emerald-600'
+                                : item.kind === 'review'
+                                  ? 'bg-emerald-50 text-emerald-600'
+                                  : 'bg-amber-50 text-amber-700'
                             }`}
                           >
-                            {item.kind === 'chat' ? 'Ассистент' : 'Таблица'}
+                            {item.kind === 'chat' ? 'Ассистент' : item.kind === 'review' ? 'Таблица' : 'Выписка'}
                           </span>
                           <span className="text-xs text-gray-400">
-                            {item.kind === 'chat' ? formatDate(item.last_message_at) : formatDate(item.date ? new Date(item.date).toISOString() : undefined)}
+                            {item.kind === 'chat'
+                              ? formatDate(item.last_message_at)
+                              : formatDate(item.date ? new Date(item.date).toISOString() : undefined)}
                           </span>
                         </div>
                       </button>
@@ -1703,6 +1751,7 @@ const CaseOverviewPage = () => {
               type ActionItem =
                 | { kind: 'chat'; session_id: string; first_message: string; last_message_at: string | null; message_count: number; date: number }
                 | { kind: 'review'; id: string; name: string; status: string; date: number }
+                | { kind: 'operations'; file_id: string; name: string; date: number }
 
               const chatItems: ActionItem[] = assistantSessions.map(s => ({
                 kind: 'chat' as const, ...s,
@@ -1712,7 +1761,13 @@ const CaseOverviewPage = () => {
                 kind: 'review' as const, ...r,
                 date: r.updated_at ? new Date(r.updated_at).getTime() : (r.created_at ? new Date(r.created_at).getTime() : 0),
               }))
-              const allItems = [...chatItems, ...reviewItems].sort((a, b) => b.date - a.date)
+              const operationsItems: ActionItem[] = operationsSessions.map((s) => ({
+                kind: 'operations' as const,
+                file_id: s.file_id,
+                name: s.filename || 'Выписка',
+                date: s.updated_at ? new Date(s.updated_at).getTime() : 0,
+              }))
+              const allItems = [...chatItems, ...reviewItems, ...operationsItems].sort((a, b) => b.date - a.date)
 
               if (allItems.length === 0) {
                 return (
@@ -1726,11 +1781,18 @@ const CaseOverviewPage = () => {
                 <div>
                   {allItems.map((item) => (
                     <button
-                      key={item.kind === 'chat' ? `chat-${item.session_id}` : `review-${item.id}`}
+                      key={
+                        item.kind === 'chat'
+                          ? `chat-${item.session_id}`
+                          : item.kind === 'review'
+                            ? `review-${item.id}`
+                            : `ops-${item.file_id}`
+                      }
                       onClick={() => {
                         setShowAllActions(false)
                         if (item.kind === 'chat') navigate(`/cases/${caseId}/chat?session=${item.session_id}`)
-                        else navigate(`/cases/${caseId}/tabular-review/${item.id}`)
+                        else if (item.kind === 'review') navigate(`/cases/${caseId}/tabular-review/${item.id}`)
+                        else navigate(`/cases/${caseId}/operations?file=${item.file_id}`)
                       }}
                       className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-[var(--color-bg-hover)] transition-colors"
                       style={{ borderBottom: '1px solid var(--color-border)' }}
@@ -1738,8 +1800,10 @@ const CaseOverviewPage = () => {
                       <div className="flex items-center gap-3 min-w-0">
                         {item.kind === 'chat' ? (
                           <MessageSquare className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />
-                        ) : (
+                        ) : item.kind === 'review' ? (
                           <Table className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />
+                        ) : (
+                          <Receipt className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />
                         )}
                         <span className="text-sm truncate" style={{ color: 'var(--color-text-primary)' }}>
                           {item.kind === 'chat' ? (item.first_message || 'Сессия') : item.name}
@@ -1749,11 +1813,19 @@ const CaseOverviewPage = () => {
                         <span
                           className="text-xs px-1.5 py-0.5 rounded"
                           style={{
-                            color: item.kind === 'chat' ? 'var(--color-accent)' : 'rgba(16,185,129,0.9)',
-                            backgroundColor: item.kind === 'chat' ? 'var(--color-accent-subtle, rgba(99,102,241,0.08))' : 'rgba(16,185,129,0.08)',
+                            color: item.kind === 'chat'
+                              ? 'var(--color-accent)'
+                              : item.kind === 'review'
+                                ? 'rgba(16,185,129,0.9)'
+                                : 'rgba(217,119,6,0.9)',
+                            backgroundColor: item.kind === 'chat'
+                              ? 'var(--color-accent-subtle, rgba(99,102,241,0.08))'
+                              : item.kind === 'review'
+                                ? 'rgba(16,185,129,0.08)'
+                                : 'rgba(217,119,6,0.08)',
                           }}
                         >
-                          {item.kind === 'chat' ? 'Ассистент' : 'Таблица'}
+                          {item.kind === 'chat' ? 'Ассистент' : item.kind === 'review' ? 'Таблица' : 'Выписка'}
                         </span>
                         <span className="text-xs flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>
                           {formatDate(item.date ? new Date(item.date).toISOString() : undefined)}
@@ -1767,6 +1839,21 @@ const CaseOverviewPage = () => {
           </div>
         </div>
       </Drawer>
+
+      {caseId && (
+        <CaseOperationsHubModal
+          open={showOperationsHub}
+          onClose={() => setShowOperationsHub(false)}
+          sessions={operationsSessions}
+          loadingSessions={loadingOperationsSessions}
+          files={operationsFiles}
+          loadingFiles={loadingOperationsSessions}
+          onOpenFile={(fileId) => {
+            setShowOperationsHub(false)
+            navigate(`/cases/${caseId}/operations?file=${fileId}`)
+          }}
+        />
+      )}
 
       {caseId && (
         <CaseTabularHubModal
