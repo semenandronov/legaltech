@@ -27,6 +27,16 @@ class OperationsAvailableFilesResponse(BaseModel):
     files: List[OperationsAvailableFile]
 
 
+class OperationsExportRequest(BaseModel):
+    """Export the visible/filtered operation set (WYSIWYG)."""
+
+    file_id: str = Field(..., min_length=1)
+    format: Literal["excel", "csv"] = "excel"
+    # When set, export exactly these rows in this order (current UI filter result).
+    # When omitted/empty, export the full statement for file_id.
+    transaction_ids: Optional[List[str]] = None
+
+
 from app.services.transaction_source import resolve_row_source_for_db_row
 from app.services.tabular_review_models import SourceReference
 

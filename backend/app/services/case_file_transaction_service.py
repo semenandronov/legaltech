@@ -656,6 +656,31 @@ class CaseFileTransactionService:
         return TransactionQueryPage(rows=rows, total=total)
 
     @staticmethod
+    def fetch_ordered_by_ids(
+        db: Session,
+        *,
+        case_id: str,
+        file_id: str,
+        transaction_ids: Sequence[str],
+    ) -> List[CaseFileTransaction]:
+        """Load transactions for export in the exact UI order; drop unknown ids."""
+        ordered_ids = [str(tid).strip() for tid in transaction_ids if str(tid).strip()]
+        if not ordered_ids:
+            return []
+        ordered_ids = ordered_ids[:10_000]
+        rows = (
+            db.query(CaseFileTransaction)
+            .filter(
+                CaseFileTransaction.case_id == case_id,
+                CaseFileTransaction.file_id == file_id,
+                CaseFileTransaction.id.in_(ordered_ids),
+            )
+            .all()
+        )
+        by_id = {row.id: row for row in rows}
+        return [by_id[tid] for tid in ordered_ids if tid in by_id]
+
+    @staticmethod
     def aggregate_totals(
         db: Session,
         *,

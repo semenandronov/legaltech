@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { extractErrorMessage } from './api'
 import type { ColumnValueFilterCondition } from '@/utils/tabularColumnFilters'
+import { assertDownloadBlob, extractBlobErrorMessage } from '@/utils/fileDownload'
 
 const BASE_URL = import.meta.env.VITE_API_URL || ''
 
@@ -162,13 +163,30 @@ export const operationsApi = {
 
   async exportTransactions(
     caseId: string,
-    params: OperationsListParams & { format: 'excel' | 'csv' },
+    params: {
+      fileId: string
+      format: 'excel' | 'csv'
+      /** IDs of currently visible (filtered) rows — WYSIWYG export. */
+      transactionIds?: string[]
+    },
   ): Promise<Blob> {
-    const response = await apiClient.get(`/api/cases/${caseId}/operations/export`, {
-      params: { ...buildQueryParams(params), format: params.format },
-      responseType: 'blob',
-    })
-    return response.data
+    if (!params.fileId?.trim()) {
+      throw new Error('Не выбрана выписка для экспорта')
+    }
+    try {
+      const response = await apiClient.post(
+        `/api/cases/${caseId}/operations/export`,
+        {
+          file_id: params.fileId,
+          format: params.format,
+          transaction_ids: params.transactionIds?.length ? params.transactionIds : null,
+        },
+        { responseType: 'blob' },
+      )
+      return await assertDownloadBlob(response, [params.format === 'csv' ? 'csv' : 'excel'])
+    } catch (error) {
+      throw new Error(await extractBlobErrorMessage(error, 'Не удалось экспортировать операции'))
+    }
   },
 
   async listSessions(caseId: string): Promise<OperationsSessionSummary[]> {

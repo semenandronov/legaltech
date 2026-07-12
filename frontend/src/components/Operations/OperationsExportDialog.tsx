@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { X } from 'lucide-react'
 import { operationsApi } from '@/services/operationsApi'
-import type { OperationsListParams } from '@/services/operationsApi'
+import { downloadBlob } from '@/utils/fileDownload'
 import { toast } from 'sonner'
 
 interface OperationsExportDialogProps {
@@ -9,7 +9,10 @@ interface OperationsExportDialogProps {
   onClose: () => void
   caseId: string
   caseTitle: string
-  listParams: OperationsListParams
+  fileId: string
+  /** Transaction IDs currently visible after UI filters (WYSIWYG). */
+  transactionIds: string[]
+  totalInStatement: number
 }
 
 export function OperationsExportDialog({
@@ -17,29 +20,42 @@ export function OperationsExportDialog({
   onClose,
   caseId,
   caseTitle,
-  listParams,
+  fileId,
+  transactionIds,
+  totalInStatement,
 }: OperationsExportDialogProps) {
   const [format, setFormat] = useState<'excel' | 'csv'>('excel')
   const [isExporting, setIsExporting] = useState(false)
 
   if (!open) return null
 
+  const filteredCount = transactionIds.length
+  const isFiltered = filteredCount !== totalInStatement
+
   const handleExport = async () => {
+    if (!fileId?.trim()) {
+      toast.error('Сначала выберите выписку')
+      return
+    }
+    if (filteredCount === 0) {
+      toast.error('Нет операций для экспорта по текущим фильтрам')
+      return
+    }
     setIsExporting(true)
     try {
       const blob = await operationsApi.exportTransactions(caseId, {
-        ...listParams,
+        fileId,
         format,
+        transactionIds,
       })
       const ext = format === 'excel' ? 'xlsx' : 'csv'
-      const filename = `${caseTitle || 'operations'}.${ext}`
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = filename
-      link.click()
-      URL.revokeObjectURL(url)
-      toast.success('Файл скачан')
+      const suffix = isFiltered ? `_фильтр_${filteredCount}` : ''
+      downloadBlob(blob, `${caseTitle || 'operations'}${suffix}.${ext}`)
+      toast.success(
+        isFiltered
+          ? `Скачано ${filteredCount} операций (с учётом фильтров)`
+          : `Скачано ${filteredCount} операций`,
+      )
       onClose()
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Не удалось экспортировать'
@@ -61,7 +77,14 @@ export function OperationsExportDialog({
         </div>
 
         <p className="text-sm text-gray-600 mb-4">
-          Будут выгружены все операции из выбранной выписки.
+          {isFiltered ? (
+            <>
+              Будут выгружены <strong>{filteredCount}</strong> операций с учётом текущих фильтров
+              {totalInStatement > 0 ? <> (из {totalInStatement} в выписке)</> : null}.
+            </>
+          ) : (
+            <>Будут выгружены все операции выбранной выписки ({filteredCount}).</>
+          )}
         </p>
 
         <div className="space-y-2 mb-6">
@@ -84,8 +107,10 @@ export function OperationsExportDialog({
           </button>
           <button
             type="button"
-            onClick={handleExport}
-            disabled={isExporting}
+            onClick={() => {
+              void handleExport()
+            }}
+            disabled={isExporting || filteredCount === 0}
             className="px-4 py-2 text-sm rounded-lg bg-gray-900 text-white disabled:opacity-50"
           >
             {isExporting ? 'Экспорт…' : 'Скачать'}

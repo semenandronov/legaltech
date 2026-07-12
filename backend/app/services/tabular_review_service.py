@@ -38,6 +38,25 @@ from datetime import datetime, timedelta
 logger = logging.getLogger(__name__)
 
 
+def sanitize_sheet_title(name: str) -> str:
+    """Excel sheet title: max 31 chars, no \\ / ? * [ ]."""
+    cleaned = re.sub(r'[\\/*?:\[\]]+', " ", (name or "").strip())
+    cleaned = re.sub(r"\s+", " ", cleaned).strip() or "Export"
+    return cleaned[:31]
+
+
+def _column_additional_context(col: Dict[str, Any]) -> str:
+    """Optional per-column context from column_config (forward-compatible)."""
+    cfg = col.get("column_config")
+    if not isinstance(cfg, dict):
+        return ""
+    for key in ("additional_context", "context", "extra_context"):
+        value = cfg.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
 class TabularReviewService:
     """Service for managing tabular reviews"""
     
@@ -654,6 +673,7 @@ class TabularReviewService:
                     "column_label": col.column_label,
                     "column_type": col.column_type,
                     "prompt": col.prompt,
+                    "column_config": getattr(col, "column_config", None),
                     "order_index": col.order_index,
                 }
                 for col in columns
@@ -2520,88 +2540,122 @@ class TabularReviewService:
             return ""
         return stripped
 
-    def export_to_csv(self, review_id: str, user_id: str) -> str:
-        """Export tabular review to CSV format"""
+    def export_to_csv(
+        self,
+        review_id: str,
+        user_id: str,
+        *,
+        include_question: bool = False,
+        include_context: bool = False,
+    ) -> bytes:
+        """Export tabular review to CSV (UTF-8 with BOM for Excel)."""
         import csv
         import io
 
         data = self.get_table_data(review_id, user_id)
-
+        columns = data["columns"]
         output = io.StringIO()
         writer = csv.writer(output)
 
-        # Write header
-        header = ["Document"] + [col["column_label"] for col in data["columns"]]
-        writer.writerow(header)
+        writer.writerow(["Документ"] + [col["column_label"] for col in columns])
+        if include_question:
+            writer.writerow(
+                ["Вопрос"] + [str(col.get("prompt") or "").strip() for col in columns]
+            )
+        if include_context:
+            writer.writerow(
+                ["Контекст"]
+                + [_column_additional_context(col) for col in columns]
+            )
 
-        # Write rows
         for row in data["rows"]:
             csv_row = [row["file_name"]]
-            for col in data["columns"]:
+            for col in columns:
                 cell = row["cells"].get(col["id"], {})
                 csv_row.append(self._clean_export_value(cell.get("cell_value")))
             writer.writerow(csv_row)
-        
+
+        return output.getvalue().encode("utf-8-sig")
+
+    def export_to_excel(
+        self,
+        review_id: str,
+        user_id: str,
+        *,
+        include_question: bool = False,
+        include_context: bool = False,
+    ) -> bytes:
+        """Export tabular review to Excel (.xlsx). Requires openpyxl."""
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, Alignment
+        import io
+
+        data = self.get_table_data(review_id, user_id)
+        columns = data["columns"]
+
+        wb = Workbook()
+        ws = wb.active
+        review_name = str((data.get("review") or {}).get("name") or "Tabular Review")
+        ws.title = sanitize_sheet_title(review_name)
+
+        header_rows: List[List[str]] = [
+            ["Документ"] + [col["column_label"] for col in columns]
+        ]
+        if include_question:
+            header_rows.append(
+                ["Вопрос"] + [str(col.get("prompt") or "").strip() for col in columns]
+            )
+        if include_context:
+            header_rows.append(
+                ["Контекст"] + [_column_additional_context(col) for col in columns]
+            )
+
+        for row_idx, values in enumerate(header_rows, start=1):
+            for col_num, value in enumerate(values, start=1):
+                cell = ws.cell(row=row_idx, column=col_num, value=value)
+                if row_idx == 1:
+                    cell.font = Font(bold=True)
+                    cell.alignment = Alignment(horizontal="center", wrap_text=True)
+                else:
+                    cell.font = Font(italic=True, color="555555")
+                    cell.alignment = Alignment(wrap_text=True)
+
+        data_start = len(header_rows) + 1
+        for offset, row in enumerate(data["rows"]):
+            row_num = data_start + offset
+            ws.cell(row=row_num, column=1, value=row["file_name"])
+            for col_num, col in enumerate(columns, start=2):
+                cell = row["cells"].get(col["id"], {})
+                ws.cell(
+                    row=row_num,
+                    column=col_num,
+                    value=self._clean_export_value(cell.get("cell_value")),
+                )
+
+        for column_cells in ws.columns:
+            max_length = 0
+            column_letter = column_cells[0].column_letter
+            for cell in column_cells:
+                try:
+                    max_length = max(max_length, len(str(cell.value or "")))
+                except Exception:
+                    pass
+            ws.column_dimensions[column_letter].width = min(max_length + 2, 50)
+
+        output = io.BytesIO()
+        wb.save(output)
         return output.getvalue()
-    
-    def export_to_excel(self, review_id: str, user_id: str) -> bytes:
-        """Export tabular review to Excel format"""
-        try:
-            from openpyxl import Workbook
-            from openpyxl.styles import Font, Alignment
-            import io
-            
-            data = self.get_table_data(review_id, user_id)
-            
-            # Create workbook
-            wb = Workbook()
-            ws = wb.active
-            ws.title = "Tabular Review"
-            
-            # Write header
-            header = ["Document"] + [col["column_label"] for col in data["columns"]]
-            for col_num, value in enumerate(header, start=1):
-                cell = ws.cell(row=1, column=col_num, value=value)
-                cell.font = Font(bold=True)
-                cell.alignment = Alignment(horizontal='center')
-            
-            # Write rows
-            for row_num, row in enumerate(data["rows"], start=2):
-                ws.cell(row=row_num, column=1, value=row["file_name"])
-                for col_num, col in enumerate(data["columns"], start=2):
-                    cell = row["cells"].get(col["id"], {})
-                    ws.cell(row=row_num, column=col_num, value=self._clean_export_value(cell.get("cell_value")))
-            
-            # Auto-adjust column widths
-            for column in ws.columns:
-                max_length = 0
-                column_letter = column[0].column_letter
-                for cell in column:
-                    try:
-                        if len(str(cell.value)) > max_length:
-                            max_length = len(str(cell.value))
-                    except:
-                        pass
-                adjusted_width = min(max_length + 2, 50)  # Cap at 50 characters
-                ws.column_dimensions[column_letter].width = adjusted_width
-            
-            # Save to bytes
-            output = io.BytesIO()
-            wb.save(output)
-            output.seek(0)
-            return output.read()
-            
-        except ImportError:
-            logger.warning("openpyxl not installed, falling back to CSV")
-            # Fallback to CSV if openpyxl not available
-            csv_content = self.export_to_csv(review_id, user_id)
-            return csv_content.encode('utf-8')
-    
-    def export_to_word(self, review_id: str, user_id: str) -> bytes:
+
+    def export_to_word(
+        self,
+        review_id: str,
+        user_id: str,
+        *,
+        include_question: bool = False,
+        include_context: bool = False,
+    ) -> bytes:
         """Export tabular review to Word (.docx) format"""
         from docx import Document
-        from docx.shared import Pt, Inches
-        from docx.oxml.ns import qn
         import io
 
         data = self.get_table_data(review_id, user_id)
@@ -2609,48 +2663,43 @@ class TabularReviewService:
         rows = data["rows"]
 
         doc = Document()
-
-        # Title
         doc.add_heading(data["review"]["name"], level=1)
 
-        # Table: 1 header row + data rows, 1 col for doc name + columns
+        meta_rows = 1 + (1 if include_question else 0) + (1 if include_context else 0)
         num_cols = len(columns) + 1
-        num_rows = len(rows) + 1
+        num_rows = meta_rows + len(rows)
 
         table = doc.add_table(rows=num_rows, cols=num_cols)
         table.style = "Table Grid"
 
-        # Header row
-        hdr_cells = table.rows[0].cells
-        hdr_cells[0].text = "Document"
+        table.rows[0].cells[0].text = "Документ"
         for i, col in enumerate(columns):
-            hdr_cells[i + 1].text = col["column_label"]
+            table.rows[0].cells[i + 1].text = col["column_label"]
 
-        # Bold header cells
-        for cell in hdr_cells:
-            for para in cell.paragraphs:
-                for run in para.runs:
-                    run.bold = True
-                    run.font.size = Pt(10)
+        row_cursor = 1
+        if include_question:
+            table.rows[row_cursor].cells[0].text = "Вопрос"
+            for i, col in enumerate(columns):
+                table.rows[row_cursor].cells[i + 1].text = str(col.get("prompt") or "").strip()
+            row_cursor += 1
+        if include_context:
+            table.rows[row_cursor].cells[0].text = "Контекст"
+            for i, col in enumerate(columns):
+                table.rows[row_cursor].cells[i + 1].text = _column_additional_context(col)
+            row_cursor += 1
 
-        # Data rows
-        for row_idx, row in enumerate(rows, start=1):
-            row_cells = table.rows[row_idx].cells
-            row_cells[0].text = row["file_name"]
-            for col_idx, col in enumerate(columns):
-                cell_data = row["cells"].get(col["id"], {})
-                row_cells[col_idx + 1].text = cell_data.get("cell_value") or ""
-
-        # Set narrow column widths so table fits on page
-        col_width = Inches(1.5)
-        for row in table.rows:
-            for cell in row.cells:
-                cell.width = col_width
+        for row in rows:
+            table.rows[row_cursor].cells[0].text = str(row["file_name"] or "")
+            for i, col in enumerate(columns):
+                cell = row["cells"].get(col["id"], {})
+                table.rows[row_cursor].cells[i + 1].text = self._clean_export_value(
+                    cell.get("cell_value")
+                )
+            row_cursor += 1
 
         output = io.BytesIO()
         doc.save(output)
-        output.seek(0)
-        return output.read()
+        return output.getvalue()
 
     def create_timeline_table_from_results(
         self,

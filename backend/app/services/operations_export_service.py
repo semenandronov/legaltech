@@ -67,11 +67,8 @@ def export_transactions_excel(
     single_file: bool,
     sheet_name: str = "Операции",
 ) -> bytes:
-    try:
-        from openpyxl import Workbook
-        from openpyxl.styles import Font
-    except ImportError:
-        return export_transactions_csv(rows, single_file=single_file)
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
 
     extra_headers = collect_column_headers(rows, single_file=single_file)
     headers = _base_headers(single_file=single_file, extra_headers=extra_headers)

@@ -6,6 +6,7 @@ from typing import Optional, List
 from pydantic import BaseModel
 from app.utils.database import get_db
 from app.utils.auth import get_current_user
+from app.utils.content_disposition import content_disposition_attachment
 from app.models.user import User
 from app.services.tabular_review_service import TabularReviewService
 import logging
@@ -126,6 +127,12 @@ class BulkColumnsRequest(BaseModel):
 class TableModeUpdateRequest(BaseModel):
     table_mode: str  # 'document', 'entity', 'fact'
     entity_config: Optional[dict] = None
+
+
+class TabularExportRequest(BaseModel):
+    include_question: bool = False
+    include_context: bool = False
+
 
 @router.post("/")
 async def create_review(
@@ -1592,67 +1599,110 @@ async def resolve_conflict(
 @router.post("/{review_id}/export/csv")
 async def export_csv(
     review_id: str,
+    body: TabularExportRequest = TabularExportRequest(),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Export tabular review to CSV"""
+    """Export tabular review to CSV (UTF-8 BOM)."""
     try:
         service = TabularReviewService(db)
-        csv_content = service.export_to_csv(review_id, current_user.id)
+        csv_content = service.export_to_csv(
+            review_id,
+            current_user.id,
+            include_question=body.include_question,
+            include_context=body.include_context,
+        )
+
         return Response(
             content=csv_content,
-            media_type="text/csv",
-            headers={"Content-Disposition": f"attachment; filename=tabular_review_{review_id}.csv"}
+            media_type="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": content_disposition_attachment(
+                    f"tabular_review_{review_id}.csv"
+                )
+            },
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         logger.error(f"Error exporting CSV: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to export CSV")
+        raise HTTPException(status_code=500, detail="Не удалось экспортировать CSV")
 
 
 @router.post("/{review_id}/export/excel")
 async def export_excel(
     review_id: str,
+    body: TabularExportRequest = TabularExportRequest(),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Export tabular review to Excel"""
+    """Export tabular review to Excel (.xlsx)."""
     try:
         service = TabularReviewService(db)
-        excel_content = service.export_to_excel(review_id, current_user.id)
+        excel_content = service.export_to_excel(
+            review_id,
+            current_user.id,
+            include_question=body.include_question,
+            include_context=body.include_context,
+        )
+
         return Response(
             content=excel_content,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f"attachment; filename=tabular_review_{review_id}.xlsx"}
+            headers={
+                "Content-Disposition": content_disposition_attachment(
+                    f"tabular_review_{review_id}.xlsx"
+                )
+            },
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="Экспорт Excel недоступен: не установлен openpyxl",
+        )
     except Exception as e:
         logger.error(f"Error exporting Excel: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to export Excel")
+        raise HTTPException(status_code=500, detail="Не удалось экспортировать Excel")
 
 
 @router.post("/{review_id}/export/word")
 async def export_word(
     review_id: str,
+    body: TabularExportRequest = TabularExportRequest(),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Export tabular review to Word (.docx)"""
+    """Export tabular review to Word (.docx)."""
     try:
         service = TabularReviewService(db)
-        word_content = service.export_to_word(review_id, current_user.id)
+        word_content = service.export_to_word(
+            review_id,
+            current_user.id,
+            include_question=body.include_question,
+            include_context=body.include_context,
+        )
+
         return Response(
             content=word_content,
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            headers={"Content-Disposition": f"attachment; filename=tabular_review_{review_id}.docx"}
+            headers={
+                "Content-Disposition": content_disposition_attachment(
+                    f"tabular_review_{review_id}.docx"
+                )
+            },
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="Экспорт Word недоступен: не установлен python-docx",
+        )
     except Exception as e:
         logger.error(f"Error exporting Word: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to export Word")
+        raise HTTPException(status_code=500, detail="Не удалось экспортировать Word")
 
 
 @router.get("/")

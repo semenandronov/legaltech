@@ -18,6 +18,7 @@ from app.schemas.operations import (
     OperationsChatHistoryResponse,
     OperationsChatMessage,
     OperationsChatRequest,
+    OperationsExportRequest,
     OperationsSessionResponse,
     OperationsSessionSaveRequest,
     OperationsSessionSummary,
@@ -47,6 +48,7 @@ from app.services.operations_session_service import (
     touch_session,
 )
 from app.utils.auth import get_current_user
+from app.utils.content_disposition import content_disposition_attachment
 from app.utils.database import SessionLocal, get_db
 
 logger = logging.getLogger(__name__)
@@ -147,7 +149,7 @@ async def list_transactions(
 
 
 @router.get("/{case_id}/operations/export")
-async def export_transactions(
+async def export_transactions_get(
     case_id: str,
     file_id: str = Query(..., min_length=1, description="ID оцифрованной выписки"),
     date_from: Optional[str] = Query(None),
@@ -160,6 +162,7 @@ async def export_transactions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Full-statement export (server-side filters only). Prefer POST for UI filters."""
     _require_feature()
     case = _get_user_case(db, case_id, str(current_user.id))
     resolved_file_id = resolve_statement_file_id(db, case_id=case_id, file_id=file_id)
@@ -177,21 +180,90 @@ async def export_transactions(
         limit=10_000,
         offset=0,
     )
+    return _operations_export_response(
+        case_title=case.title or "operations",
+        rows=page.rows,
+        format=format,
+    )
 
-    safe_title = (case.title or "operations").replace("/", "-")[:80]
+
+@router.post("/{case_id}/operations/export")
+async def export_transactions_post(
+    case_id: str,
+    body: OperationsExportRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """WYSIWYG export: when transaction_ids is set, export exactly the filtered UI rows."""
+    _require_feature()
+    case = _get_user_case(db, case_id, str(current_user.id))
+    resolved_file_id = resolve_statement_file_id(db, case_id=case_id, file_id=body.file_id)
+
+    ids = [str(x).strip() for x in (body.transaction_ids or []) if str(x).strip()]
+    if ids:
+        rows = CaseFileTransactionService.fetch_ordered_by_ids(
+            db,
+            case_id=case_id,
+            file_id=resolved_file_id,
+            transaction_ids=ids,
+        )
+        if not rows:
+            raise HTTPException(
+                status_code=400,
+                detail="Нет операций для экспорта по текущим фильтрам",
+            )
+    else:
+        page = CaseFileTransactionService.query_page(
+            db,
+            case_id=case_id,
+            file_id=resolved_file_id,
+            limit=10_000,
+            offset=0,
+        )
+        rows = page.rows
+
+    return _operations_export_response(
+        case_title=case.title or "operations",
+        rows=rows,
+        format=body.format,
+    )
+
+
+def _operations_export_response(*, case_title: str, rows, format: str) -> Response:
+    safe_title = case_title.replace("/", "-")[:80]
+
     if format == "csv":
-        content = export_transactions_csv(page.rows, single_file=True)
+        content = export_transactions_csv(rows, single_file=True)
         return Response(
             content=content,
             media_type="text/csv; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{safe_title}_operations.csv"'},
+            headers={
+                "Content-Disposition": content_disposition_attachment(
+                    f"{safe_title}_operations.csv"
+                )
+            },
         )
 
-    content = export_transactions_excel(page.rows, single_file=True)
+    try:
+        content = export_transactions_excel(rows, single_file=True)
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="Экспорт Excel недоступен: не установлен openpyxl",
+        )
+    if content[:2] != b"PK":
+        raise HTTPException(
+            status_code=500,
+            detail="Экспорт Excel вернул некорректный файл",
+        )
     return Response(
         content=content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{safe_title}_operations.xlsx"'},
+        headers={
+            "Content-Disposition": content_disposition_attachment(
+                f"{safe_title}_operations.xlsx"
+            )
+        },
     )
 
 

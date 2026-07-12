@@ -1,6 +1,7 @@
 // Import the existing extractErrorMessage from api.ts
 import { extractErrorMessage } from './api'
 import axios from 'axios'
+import { assertDownloadBlob, extractBlobErrorMessage } from '../utils/fileDownload'
 
 const BASE_URL = import.meta.env.VITE_API_URL || ''
 
@@ -699,44 +700,62 @@ export const tabularReviewApi = {
   },
 
   // Export to CSV
-  async exportToCSV(reviewId: string): Promise<Blob> {
+  async exportToCSV(
+    reviewId: string,
+    options?: { includeQuestion?: boolean; includeContext?: boolean },
+  ): Promise<Blob> {
     try {
       const response = await apiClient.post(
         `/api/tabular-review/${reviewId}/export/csv`,
-        {},
-        { responseType: 'blob' }
+        {
+          include_question: Boolean(options?.includeQuestion),
+          include_context: Boolean(options?.includeContext),
+        },
+        { responseType: 'blob' },
       )
-      return response.data
+      return await assertDownloadBlob(response, ['csv'])
     } catch (error) {
-      throw new Error(extractErrorMessage(error))
+      throw new Error(await extractBlobErrorMessage(error, extractErrorMessage(error)))
     }
   },
 
   // Export to Word
-  async exportToWord(reviewId: string): Promise<Blob> {
+  async exportToWord(
+    reviewId: string,
+    options?: { includeQuestion?: boolean; includeContext?: boolean },
+  ): Promise<Blob> {
     try {
       const response = await apiClient.post(
         `/api/tabular-review/${reviewId}/export/word`,
-        {},
-        { responseType: 'blob' }
+        {
+          include_question: Boolean(options?.includeQuestion),
+          include_context: Boolean(options?.includeContext),
+        },
+        { responseType: 'blob' },
       )
-      return response.data
+      return await assertDownloadBlob(response, ['word'])
     } catch (error) {
-      throw new Error(extractErrorMessage(error))
+      throw new Error(await extractBlobErrorMessage(error, extractErrorMessage(error)))
     }
   },
 
   // Export to Excel
-  async exportToExcel(reviewId: string): Promise<Blob> {
+  async exportToExcel(
+    reviewId: string,
+    options?: { includeQuestion?: boolean; includeContext?: boolean },
+  ): Promise<Blob> {
     try {
       const response = await apiClient.post(
         `/api/tabular-review/${reviewId}/export/excel`,
-        {},
-        { responseType: 'blob' }
+        {
+          include_question: Boolean(options?.includeQuestion),
+          include_context: Boolean(options?.includeContext),
+        },
+        { responseType: 'blob' },
       )
-      return response.data
+      return await assertDownloadBlob(response, ['excel'])
     } catch (error) {
-      throw new Error(extractErrorMessage(error))
+      throw new Error(await extractBlobErrorMessage(error, extractErrorMessage(error)))
     }
   },
 

@@ -407,7 +407,12 @@ const OperationsPage = () => {
         onClose={() => setShowExport(false)}
         caseId={caseId}
         caseTitle={statementName || caseName || 'operations'}
-        listParams={{ fileId: selectedFileId || '' }}
+        fileId={selectedFileId || ''}
+        transactionIds={filteredRows.map((row) => {
+          const tx = (row as { _transaction?: { id?: string } })._transaction
+          return String(tx?.id || row.file_id || '')
+        }).filter(Boolean)}
+        totalInStatement={transactions.length}
       />
 
       <OperationsHelpPanel open={showHelp} onClose={() => setShowHelp(false)} />
