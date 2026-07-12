@@ -88,7 +88,6 @@ def infer_file_identity_bundle(
             filenames[key] = src
         parts = [
             src,
-            str(md.get("contextual_label") or ""),
             str(md.get("section_title") or ""),
             " > ".join(str(p) for p in (md.get("parent_path") or []) if p),
             str(md.get("doc_summary_short") or md.get("file_summary") or "")[:400],

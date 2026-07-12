@@ -8,6 +8,11 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 
 from app.models.case_file_transaction import CaseFileTransaction
+from app.services.table_schema_normalize import (
+    coalesce_header_union,
+    normalize_stored_row_columns,
+    project_row_columns_to_headers,
+)
 
 
 class OperationsAvailableFile(BaseModel):
@@ -117,14 +122,23 @@ def _iso_date(value) -> Optional[str]:
     return value.isoformat()
 
 
-def serialize_transaction(row: CaseFileTransaction) -> OperationTransactionRow:
+def serialize_transaction(
+    row: CaseFileTransaction,
+    *,
+    column_headers: Optional[List[str]] = None,
+) -> OperationTransactionRow:
     amount: Optional[float] = None
     if row.amount_rub is not None:
         amount = float(row.amount_rub)
-    columns = row.row_columns if isinstance(row.row_columns, dict) else {}
+    raw_columns = row.row_columns if isinstance(row.row_columns, dict) else {}
+    columns = normalize_stored_row_columns(
+        {str(k): str(v) for k, v in raw_columns.items() if k and v is not None}
+    )
+    if column_headers:
+        columns = project_row_columns_to_headers(columns, column_headers)
     stored_refs = row.source_references if isinstance(row.source_references, list) else None
     verbatim, refs, fragments = resolve_row_source_for_db_row(
-        row_columns={str(k): str(v) for k, v in columns.items() if k and v is not None},
+        row_columns=columns,
         verbatim_row_text=row.verbatim_row_text,
         source_references=stored_refs,
         page_start=row.page_start,
@@ -143,7 +157,7 @@ def serialize_transaction(row: CaseFileTransaction) -> OperationTransactionRow:
         amount_rub=amount,
         amount_raw=row.amount_raw,
         description=row.description,
-        row_columns={str(k): str(v) for k, v in columns.items() if k and v is not None},
+        row_columns=columns,
         page_start=row.page_start,
         flow_direction=flow,
         verbatim_row_text=verbatim or None,
@@ -167,7 +181,7 @@ def collect_column_headers(rows: List[CaseFileTransaction], *, single_file: bool
         return []
     headers: List[str] = []
     seen: set[str] = set()
-    for row in rows[:50]:
+    for row in rows:
         columns = row.row_columns if isinstance(row.row_columns, dict) else {}
         for key in columns:
             key_str = str(key).strip()
@@ -175,7 +189,7 @@ def collect_column_headers(rows: List[CaseFileTransaction], *, single_file: bool
                 continue
             seen.add(key_str)
             headers.append(key_str)
-    return headers
+    return coalesce_header_union(headers)
 
 
 def build_summary(

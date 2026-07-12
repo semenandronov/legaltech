@@ -22,6 +22,16 @@ from app.services.legal_chunker import (
     _parse_markdown_pipe_table,
     _select_profile,
 )
+from app.services.table_schema_normalize import (
+    ParsedPipeTable,
+    align_values_to_schema,
+    extract_ordered_cells,
+    lock_or_align_schema,
+    normalize_header_schema,
+    parse_markdown_pipe_table_schema,
+    remap_row_columns_to_canonical,
+    repair_parsed_table,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +86,8 @@ class _IndexingCursor:
     char_offset: int = 0
     global_row_index: int = 0
     table_index: int = 0
+    # File-level locked column schema (shared across multi-page table segments).
+    canonical_columns: Tuple[str, ...] = ()
 
 
 def _stamp_hybrid_file_profile(documents: Sequence[Document]) -> List[Document]:
@@ -118,6 +130,7 @@ def _renumber_documents(
         char_offset=char_offset,
         global_row_index=cursor.global_row_index,
         table_index=cursor.table_index,
+        canonical_columns=cursor.canonical_columns,
     )
 
 
@@ -202,7 +215,7 @@ class StructuredTableIndexer:
         for seg in segments:
             if is_transaction_table_segment(seg):
                 flush_narrative()
-                row_docs = self._index_table_segment(
+                row_docs, next_canonical = self._index_table_segment(
                     seg=seg,
                     table_index=cursor.table_index,
                     global_row_index_start=cursor.global_row_index,
@@ -210,6 +223,7 @@ class StructuredTableIndexer:
                     preseg_strategy=preseg_strategy,
                     filename=filename,
                     doc_id=doc_id,
+                    canonical_columns=list(cursor.canonical_columns),
                 )
                 row_docs = _stamp_hybrid_file_profile(row_docs)
                 renumbered, cursor = _renumber_documents(
@@ -223,6 +237,7 @@ class StructuredTableIndexer:
                     char_offset=cursor.char_offset,
                     global_row_index=cursor.global_row_index + len(row_docs),
                     table_index=cursor.table_index + 1,
+                    canonical_columns=tuple(next_canonical),
                 )
                 continue
 
@@ -264,30 +279,60 @@ class StructuredTableIndexer:
         preseg_strategy: str,
         filename: str,
         doc_id: str,
-    ) -> List[Document]:
-        parsed = _parse_markdown_pipe_table(seg.text or "")
+        canonical_columns: Optional[Sequence[str]] = None,
+    ) -> Tuple[List[Document], List[str]]:
+        parsed = parse_markdown_pipe_table_schema(seg.text or "")
         if not parsed:
-            logger.warning(
-                "[StructuredTableIndexer] table segment %s has no parseable markdown; skipping",
-                table_index,
+            # Fallback: legacy single-header parser for odd markdown, then same repair path.
+            legacy = _parse_markdown_pipe_table(seg.text or "")
+            if not legacy:
+                logger.warning(
+                    "[StructuredTableIndexer] table segment %s has no parseable markdown; skipping",
+                    table_index,
+                )
+                return [], list(canonical_columns or [])
+            header_line, _sep, data_lines = legacy
+            raw_headers = _parse_header_columns(header_line)
+            local_columns, value_indices = normalize_header_schema(raw_headers)
+            provisional = ParsedPipeTable(
+                columns=local_columns,
+                data_rows=[_split_pipe_row(line) for line in data_lines],
+                raw_header_cells=list(raw_headers),
+                value_indices=value_indices,
             )
-            return []
+            parsed = repair_parsed_table(provisional)
 
-        header_line, _sep, data_lines = parsed
-        columns = _parse_header_columns(header_line)
+        local_columns = list(parsed.columns)
+        value_indices = list(parsed.value_indices or range(len(parsed.columns)))
+        data_rows = list(parsed.data_rows)
+
+        schema, established = lock_or_align_schema(
+            local_columns=local_columns,
+            canonical=list(canonical_columns) if canonical_columns else None,
+        )
+        if not schema:
+            return [], list(canonical_columns or [])
+
+        next_canonical = schema if established or not canonical_columns else list(canonical_columns)
+
         documents: List[Document] = []
-
-        for row_index, line in enumerate(data_lines):
-            values = _split_pipe_row(line)
-            if not any(values):
+        for row_index, values in enumerate(data_rows):
+            if not any(str(v or "").strip() for v in values):
                 continue
 
-            row_columns = {
-                columns[i]: values[i]
-                for i in range(min(len(columns), len(values)))
-                if columns[i]
-            }
-            body = _format_row_content(columns, values)
+            ordered_cells = extract_ordered_cells(values, value_indices)
+            if len(ordered_cells) == len(schema):
+                # Same arity as locked schema → positional map onto canonical names.
+                row_columns = align_values_to_schema(ordered_cells, schema)
+            else:
+                provisional = align_values_to_schema(ordered_cells, local_columns)
+                row_columns = remap_row_columns_to_canonical(provisional, schema)
+
+            if not row_columns:
+                continue
+
+            ordered_vals = [row_columns.get(c, "") for c in schema]
+            body = _format_row_content(list(schema), ordered_vals)
             if not body.strip():
                 continue
 
@@ -305,10 +350,12 @@ class StructuredTableIndexer:
                 row_index=row_index,
                 global_row_index=global_row_index_start + row_index,
                 row_columns=row_columns,
+                column_roles=list(parsed.column_roles or ()),
+                schema_quality=float(parsed.quality_score or 1.0),
             )
             documents.append(Document(page_content=chunk_text, metadata=metadata))
 
-        return documents
+        return documents, next_canonical
 
     @staticmethod
     def _build_row_metadata(
@@ -325,6 +372,8 @@ class StructuredTableIndexer:
         row_index: int,
         global_row_index: int,
         row_columns: Dict[str, str],
+        column_roles: Optional[Sequence[str]] = None,
+        schema_quality: float = 1.0,
     ) -> Dict[str, Any]:
         md: Dict[str, Any] = dict(base_metadata)
         md["source_file"] = filename
@@ -347,6 +396,9 @@ class StructuredTableIndexer:
         md["row_index"] = int(row_index)
         md["global_row_index"] = int(global_row_index)
         md["row_columns"] = row_columns
+        if column_roles:
+            md["column_roles"] = list(column_roles)
+        md["schema_quality"] = float(schema_quality)
 
         if page_no is not None:
             md["page_start"] = int(page_no)

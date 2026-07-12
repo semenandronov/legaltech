@@ -54,7 +54,10 @@ export function CaseFileStagingList({
               key={`proc-${pf.id}`}
               filename={pf.filename}
               icon={pf.status === 'ready' ? 'ready' : pf.status === 'error' ? 'error' : 'busy'}
-              subtitle={processingStatusLabel(pf.status) + (pf.error ? ` — ${pf.error}` : '')}
+              subtitle={
+                processingStatusLabel(pf.status, false, pf.progress) +
+                (pf.error ? ` — ${pf.error}` : '')
+              }
             />
           )
         }

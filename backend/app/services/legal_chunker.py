@@ -35,6 +35,7 @@ from langchain_core.documents import Document
 
 from app.config import config
 from app.services.chunk_ids import generate_chunk_id
+from app.services.docling_table_geometry import export_table_item_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -463,16 +464,55 @@ def _extract_page_sizes_from_doc(doc: Any) -> Dict[int, Dict[str, float]]:
     return page_sizes
 
 
-def _docling_pre_segmentation(
-    content_bytes: bytes, filename: str, ext: str, *, do_ocr: bool = True
-) -> Tuple[List[_Segment], str]:
-    """Парсит документ через Docling и собирает плоский список AST-сегментов."""
-
+def _convert_docling_bytes_to_segments(
+    *,
+    converter: Any,
+    content_bytes: bytes,
+    filename: str,
+    ext: str,
+    max_pages: int,
+    max_size: int,
+) -> List[_Segment]:
+    """One Docling convert() → flat segments. Caller holds docling_slot."""
     try:
         from docling.datamodel.base_models import DocumentStream
     except Exception as exc:
         logger.debug("[LegalChunkerV2] docling not importable: %s", exc)
-        return [], ""
+        return []
+
+    source = DocumentStream(name=filename or "input", stream=BytesIO(content_bytes))
+    try:
+        try:
+            result = converter.convert(
+                source=source, max_num_pages=max_pages, max_file_size=max_size
+            )
+        except TypeError:
+            result = converter.convert(source=source)
+
+        doc = getattr(result, "document", None)
+        if doc is None:
+            return []
+
+        page_sizes = _extract_page_sizes_from_doc(doc)
+        return list(
+            _iter_docling_segments(
+                doc,
+                page_sizes=page_sizes,
+                pdf_bytes=content_bytes if ext == ".pdf" else None,
+            )
+        )
+    finally:
+        source.stream.close()
+
+
+def _docling_pre_segmentation(
+    content_bytes: bytes, filename: str, ext: str, *, do_ocr: bool = True
+) -> Tuple[List[_Segment], str]:
+    """Парсит документ через Docling и собирает плоский список AST-сегментов.
+
+    Large PDFs are converted in page windows (see DOCLING_PDF_BATCH_*) so a
+    weak VM never loads a 500-page DoclingDocument in one shot.
+    """
 
     converter = _build_docling_converter(ext, do_ocr=do_ocr)
     if ext == ".pdf" and not do_ocr:
@@ -489,29 +529,143 @@ def _docling_pre_segmentation(
         int(getattr(config, "DOCLING_MAX_FILE_SIZE_BYTES", 60 * 1024 * 1024) or 60 * 1024 * 1024),
     )
 
+    from app.services.docling_page_batch import (
+        convert_pdf_in_page_batches,
+        pdf_page_count,
+        should_batch_pdf,
+    )
     from app.services.file_processing_concurrency import docling_slot
+    from app.services.ingest_progress import IngestProgress, report_ingest_progress
 
-    source = DocumentStream(name=filename or "input", stream=BytesIO(content_bytes))
+    batch_enabled = bool(getattr(config, "DOCLING_PDF_BATCH_ENABLED", True))
+    batch_pages = max(1, int(getattr(config, "DOCLING_PDF_BATCH_PAGES", 30) or 30))
+    batch_min_pages = max(2, int(getattr(config, "DOCLING_PDF_BATCH_MIN_PAGES", 40) or 40))
+
+    def _one_shot() -> List[_Segment]:
+        return _convert_docling_bytes_to_segments(
+            converter=converter,
+            content_bytes=content_bytes,
+            filename=filename,
+            ext=ext,
+            max_pages=max_pages,
+            max_size=max_size,
+        )
+
     try:
         with docling_slot():
-            try:
-                result = converter.convert(
-                    source=source, max_num_pages=max_pages, max_file_size=max_size
+            if ext == ".pdf":
+                total_pages = pdf_page_count(content_bytes)
+                if total_pages > max_pages:
+                    logger.warning(
+                        "[LegalChunkerV2] PDF %s has %s pages; capping to DOCLING_MAX_PAGES_PER_DOC=%s",
+                        filename,
+                        total_pages,
+                        max_pages,
+                    )
+                    # Page batching respects max_pages via truncated byte extract below.
+                    content_for_convert = content_bytes
+                    try:
+                        from app.services.docling_page_batch import extract_pdf_page_range_bytes
+
+                        content_for_convert = extract_pdf_page_range_bytes(
+                            content_bytes, 0, max_pages
+                        )
+                        total_pages = max_pages
+                    except Exception as cap_exc:
+                        logger.warning(
+                            "[LegalChunkerV2] could not truncate PDF to max_pages: %s",
+                            cap_exc,
+                        )
+                        content_for_convert = content_bytes
+                else:
+                    content_for_convert = content_bytes
+
+                if should_batch_pdf(
+                    total_pages=total_pages,
+                    min_pages=batch_min_pages,
+                    enabled=batch_enabled,
+                ):
+                    logger.info(
+                        "[LegalChunkerV2] page-batched Docling for %s (%s pages, batch=%s)",
+                        filename,
+                        total_pages,
+                        batch_pages,
+                    )
+                    report_ingest_progress(
+                        IngestProgress(
+                            stage="docling",
+                            percent=35,
+                            message=f"Структурный разбор PDF ({total_pages} стр.)",
+                            pages_done=0,
+                            pages_total=total_pages,
+                        )
+                    )
+
+                    def _convert_batch(batch_bytes: bytes, batch_name: str) -> Tuple[List[_Segment], str]:
+                        segs = _convert_docling_bytes_to_segments(
+                            converter=converter,
+                            content_bytes=batch_bytes,
+                            filename=batch_name,
+                            ext=ext,
+                            # Each window is small; allow full window through Docling limits.
+                            max_pages=max(batch_pages + 5, 50),
+                            max_size=max_size,
+                        )
+                        return segs, ""
+
+                    def _on_batch_done(batch: Any, batch_i: int, batch_n: int) -> None:
+                        pages_done = int(getattr(batch, "end", 0) or 0)
+                        pct = 35 + int(50 * (batch_i / max(1, batch_n)))
+                        report_ingest_progress(
+                            IngestProgress(
+                                stage="docling",
+                                percent=min(85, pct),
+                                message=f"Docling: страницы {getattr(batch, 'label', '?')} ({batch_i}/{batch_n})",
+                                pages_done=pages_done,
+                                pages_total=total_pages,
+                                batch_index=batch_i,
+                                batch_count=batch_n,
+                            )
+                        )
+
+                    segments, _ = convert_pdf_in_page_batches(
+                        pdf_bytes=content_for_convert,
+                        filename=filename,
+                        batch_pages=batch_pages,
+                        convert_batch=_convert_batch,
+                        on_batch_done=_on_batch_done,
+                    )
+                    if segments:
+                        segments = _renumber_segment_offsets(list(segments))
+                else:
+                    report_ingest_progress(
+                        IngestProgress(
+                            stage="docling",
+                            percent=40,
+                            message="Структурный разбор документа",
+                            pages_total=total_pages or None,
+                        )
+                    )
+                    segments = _convert_docling_bytes_to_segments(
+                        converter=converter,
+                        content_bytes=content_for_convert,
+                        filename=filename,
+                        ext=ext,
+                        max_pages=max_pages,
+                        max_size=max_size,
+                    )
+            else:
+                report_ingest_progress(
+                    IngestProgress(
+                        stage="docling",
+                        percent=40,
+                        message="Структурный разбор документа",
+                    )
                 )
-            except TypeError:
-                result = converter.convert(source=source)
-
-            doc = getattr(result, "document", None)
-            if doc is None:
-                return [], ""
-
-            page_sizes = _extract_page_sizes_from_doc(doc)
-            segments = list(_iter_docling_segments(doc, page_sizes=page_sizes))
+                segments = _one_shot()
     except Exception as exc:
         logger.warning("[LegalChunkerV2] Docling convert() failed for %s: %s", filename, exc)
         return [], ""
-    finally:
-        source.stream.close()
 
     if not segments:
         return [], ""
@@ -524,10 +678,12 @@ def _iter_docling_segments(
     doc: Any,
     *,
     page_sizes: Optional[Dict[int, Dict[str, float]]] = None,
+    pdf_bytes: Optional[bytes] = None,
 ) -> Iterable[_Segment]:
     """Обходим DoclingDocument, собирая heading/paragraph/list/table в _Segment.
 
     char_start/char_end заполняем последовательно по порядку обхода.
+    For PDF tables, prefer geometry-refined markdown over lossy export_to_markdown.
     """
     try:
         from docling_core.types.doc.document import (
@@ -607,14 +763,12 @@ def _iter_docling_segments(
             text = f"{marker} {inner}".strip() if marker else inner
 
         elif isinstance(item, TableItem):
-            try:
-                md = item.export_to_markdown(doc=doc)
-            except Exception:
-                try:
-                    df = item.export_to_dataframe(doc=doc)
-                    md = df.to_markdown(index=False)
-                except Exception:
-                    md = ""
+            md = export_table_item_markdown(
+                item,
+                doc=doc,
+                pdf_bytes=pdf_bytes,
+                page_no=int(page_no) if page_no is not None else None,
+            )
             text = _clean_text(md or "")
 
         elif isinstance(item, CodeItem):

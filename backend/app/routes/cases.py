@@ -1066,6 +1066,7 @@ async def get_processing_status(
         FileModel.processing_status,
         FileModel.processing_error,
         FileModel.processing_started_at,
+        FileModel.processing_progress,
     ).filter(FileModel.case_id == case_id).all()
     file_statuses = [
         {
@@ -1074,6 +1075,7 @@ async def get_processing_status(
             "status": f.processing_status or "ready",
             "error": f.processing_error,
             "processing_started_at": f.processing_started_at.isoformat() if f.processing_started_at else None,
+            "progress": f.processing_progress,
         }
         for f in files
     ]

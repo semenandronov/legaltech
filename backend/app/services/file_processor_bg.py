@@ -216,10 +216,7 @@ def _process_one_file(
     case_id: str,
     document_processor,
 ) -> List[Document]:
-    from app.services.langchain_loaders import DocumentLoaderService
-    from app.services.document_passport_hint import infer_doc_type_hint_from_filename
-    from app.services.chat.entity_index_service import merge_case_entity_index
-    from app.models.case import Case, File as FileModel
+    from app.models.case import File as FileModel
 
     _reconnect(db)
 
@@ -256,10 +253,43 @@ def _process_one_file(
 
     file_model.processing_status = "processing"
     file_model.processing_started_at = _dt.utcnow()
+    file_model.processing_progress = {
+        "stage": "load",
+        "percent": 5,
+        "message": "Чтение файла",
+    }
     db.commit()
     logger.info("▶ Processing file %s (%s), %s bytes", file_id, filename, len(content))
 
+    from app.services.ingest_progress import ingest_progress_scope
+
+    with ingest_progress_scope(_make_progress_sink(db, file_id)):
+        return _process_one_file_body(
+            db,
+            file_id=file_id,
+            case_id=case_id,
+            document_processor=document_processor,
+            filename=filename,
+            content=content,
+        )
+
+
+def _process_one_file_body(
+    db: Session,
+    *,
+    file_id: str,
+    case_id: str,
+    document_processor,
+    filename: str,
+    content: bytes,
+) -> List[Document]:
+    from app.services.langchain_loaders import DocumentLoaderService
+    from app.services.document_passport_hint import infer_doc_type_hint_from_filename
+    from app.services.chat.entity_index_service import merge_case_entity_index
+    from app.models.case import Case, File as FileModel
+
     try:
+        _report_stage(stage="load", percent=8, message="Извлечение текста")
         langchain_docs = DocumentLoaderService.load_document(content, filename)
     except Exception as e:
         logger.error("OCR failed for %s (%s): %s", filename, file_id, e, exc_info=True)
@@ -298,6 +328,7 @@ def _process_one_file(
         return []
 
     try:
+        _report_stage(stage="passport", percent=15, message="Генерация паспорта документа")
         (
             passport_summary,
             passport_key_points,
@@ -390,6 +421,7 @@ def _process_one_file(
     logger.info("✅ Text saved for %s (%s), %s chars", filename, file_id, len(text))
 
     try:
+        _report_stage(stage="index", percent=35, message="Индексация и структурный разбор")
         ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "unknown"
         metadata = {
             "case_id": case_id,
@@ -418,6 +450,7 @@ def _process_one_file(
             )
             return []
 
+        _report_stage(stage="store", percent=90, message="Запись в векторный индекс")
         _reconnect(db)
         document_processor.store_in_vector_db(
             case_id=case_id,
@@ -444,6 +477,11 @@ def _process_one_file(
     if file_model:
         file_model.processing_status = "ready"
         file_model.processing_error = None
+        file_model.processing_progress = {
+            "stage": "ready",
+            "percent": 100,
+            "message": "Готово",
+        }
         db.commit()
     logger.info("✅ File %s (%s) is ready", file_id, filename)
     return file_documents
@@ -458,9 +496,50 @@ def _set_error(db: Session, file_id: str, message: str) -> None:
         if file_model:
             file_model.processing_status = "error"
             file_model.processing_error = message
+            file_model.processing_progress = {
+                "stage": "error",
+                "percent": 100,
+                "message": message[:200],
+            }
             db.commit()
     except Exception as e:
         logger.error("Could not set error status for file %s: %s", file_id, e)
+
+
+def _make_progress_sink(db: Session, file_id: str):
+    """Persist IngestProgress onto File.processing_progress (best-effort)."""
+
+    def _sink(progress) -> None:
+        from app.models.case import File as FileModel
+
+        try:
+            _reconnect(db)
+            file_model = db.query(FileModel).filter(FileModel.id == file_id).first()
+            if not file_model:
+                return
+            if file_model.processing_status == "cancelled":
+                return
+            payload = progress.as_dict() if hasattr(progress, "as_dict") else dict(progress)
+            file_model.processing_progress = payload
+            db.commit()
+        except Exception as exc:
+            logger.debug("progress sink failed for %s: %s", file_id, exc)
+
+    return _sink
+
+
+def _report_stage(
+    *,
+    stage: str,
+    percent: int,
+    message: str,
+    **extra,
+) -> None:
+    from app.services.ingest_progress import IngestProgress, report_ingest_progress
+
+    report_ingest_progress(
+        IngestProgress(stage=stage, percent=percent, message=message, **extra)
+    )
 
 
 def _update_case_stats(db: Session, case_id: str) -> None:

@@ -8,6 +8,7 @@ from typing import List, Sequence
 
 from app.models.case_file_transaction import CaseFileTransaction
 from app.schemas.operations import collect_column_headers
+from app.services.table_schema_normalize import lookup_column_value
 
 
 def _base_headers(*, single_file: bool, extra_headers: Sequence[str]) -> List[str]:
@@ -30,7 +31,7 @@ def _row_values(
     if single_file and extra_headers:
         values = [str(index), date_text]
         for header in extra_headers:
-            values.append(str(columns.get(header, "") or ""))
+            values.append(lookup_column_value(columns, header))
         return values
 
     amount = row.amount_raw or (str(row.amount_rub) if row.amount_rub is not None else "")

@@ -10,6 +10,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from app.models.case_file_transaction import CaseFileTransaction
 from app.services.case_file_transaction_service import parse_operation_date, parse_amount_rub
+from app.services.table_schema_normalize import coalesce_header_union, lookup_column_value
 from app.services.transaction_description_match import any_field_description_token_match
 
 _EMPTY_VALUES = {"", "-", "—", "N/A"}
@@ -51,7 +52,7 @@ def collect_operations_column_headers(
             if header and header not in seen:
                 seen.add(header)
                 headers.append(header)
-    return headers
+    return coalesce_header_union(headers)
 
 
 def filter_operations_scope(
@@ -91,7 +92,7 @@ def _cell_map(row: CaseFileTransaction, column_headers: Sequence[str]) -> Dict[s
         "op_description": str(row.description or ""),
     }
     for index, header in enumerate(column_headers):
-        cells[f"op_col_{index}"] = str(row_columns.get(header) or "")
+        cells[f"op_col_{index}"] = lookup_column_value(row_columns, header)
     return cells
 
 

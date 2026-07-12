@@ -135,11 +135,14 @@ async def list_transactions(
         offset=offset,
     )
 
-    serialized = [serialize_transaction(row) for row in page.rows]
+    column_headers = collect_column_headers(page.rows, single_file=True)
+    serialized = [
+        serialize_transaction(row, column_headers=column_headers) for row in page.rows
+    ]
     return OperationsTransactionsResponse(
         transactions=serialized,
         summary=build_summary(page.rows, total=page.total, file_id=resolved_file_id),
-        column_headers=collect_column_headers(page.rows, single_file=True),
+        column_headers=column_headers,
     )
 
 

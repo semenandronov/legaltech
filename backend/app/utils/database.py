@@ -488,6 +488,11 @@ def ensure_schema():
                         "ALTER TABLE files ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMP"
                     ))
                     logger.info("✅ Added processing_started_at column to files table")
+                if "processing_progress" not in columns:
+                    conn.execute(text(
+                        "ALTER TABLE files ADD COLUMN IF NOT EXISTS processing_progress JSON"
+                    ))
+                    logger.info("✅ Added processing_progress column to files table")
 
             # Reset stuck files (pending/processing) left over from a crashed/restarted process.
             # В serverless несколько инстансов: см. RESET_STUCK_FILES_ON_STARTUP и STUCK_FILE_RESET_MIN_AGE_MINUTES в config.
@@ -504,7 +509,8 @@ def ensure_schema():
                             result = conn.execute(
                                 text(
                                     "UPDATE files SET processing_status = 'error', "
-                                    "processing_error = :msg "
+                                    "processing_error = :msg, "
+                                    "processing_progress = NULL "
                                     "WHERE processing_status IN ('pending', 'processing')"
                                 ),
                                 {"msg": err_txt},
@@ -513,7 +519,8 @@ def ensure_schema():
                             result = conn.execute(
                                 text(
                                     "UPDATE files SET processing_status = 'error', "
-                                    "processing_error = :msg "
+                                    "processing_error = :msg, "
+                                    "processing_progress = NULL "
                                     "WHERE processing_status IN ('pending', 'processing') "
                                     "AND COALESCE(processing_started_at, created_at) < "
                                     " (NOW() - (CAST(:mins AS INTEGER) * INTERVAL '1 minute'))"

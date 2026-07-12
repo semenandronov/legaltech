@@ -54,9 +54,38 @@ def test_collect_column_headers_single_file():
     assert "Кредит" in headers
 
 
-def test_collect_column_headers_multi_file_empty():
-    rows = [_row(row_columns={"Дебет": "100"})]
-    assert collect_column_headers(rows, single_file=False) == []
+def test_collect_column_headers_coalesces_noisy_union():
+    rows = [
+        _row(
+            row_columns={
+                "Дата операции<br>¹": "10.01.2024",
+                "Сумма в валюте карты": "-100",
+            }
+        ),
+        _row(
+            row_columns={
+                "Дата операции ¹ Дата операции (МСК)": "11.01.2024",
+                "Сумма в валюте карты Сумма списания": "-50",
+            }
+        ),
+    ]
+    headers = collect_column_headers(rows, single_file=True)
+    assert headers == ["Дата операции", "Сумма в валюте карты"]
+
+
+def test_serialize_transaction_normalizes_column_keys():
+    payload = serialize_transaction(
+        _row(
+            row_columns={
+                "Дата операции<br>¹": "15.03.2024",
+                "Описание операции⁴": "Оплата",
+            }
+        )
+    )
+    assert payload.row_columns == {
+        "Дата операции": "15.03.2024",
+        "Описание операции": "Оплата",
+    }
 
 
 def test_build_summary():

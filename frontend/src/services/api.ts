@@ -581,12 +581,23 @@ export const importFilesFromGoogleDrive = async (
   return response.data
 }
 
+export interface FileProcessingProgress {
+  stage?: string
+  percent?: number
+  message?: string
+  pages_done?: number | null
+  pages_total?: number | null
+  batch_index?: number | null
+  batch_count?: number | null
+}
+
 export interface FileProcessingStatus {
   id: string
   filename: string
   status: 'pending' | 'processing' | 'ready' | 'error' | 'cancelled'
   error?: string | null
   processing_started_at?: string | null
+  progress?: FileProcessingProgress | null
 }
 
 export interface ProcessingStatusResponse {

@@ -298,8 +298,8 @@ class Config:
     API_TITLE: str = "Legal AI Vault MVP"
     API_VERSION: str = "0.1.0"
     
-    # File Upload
-    MAX_FILE_SIZE: int = 30 * 1024 * 1024  # 30 MB (default for case files)
+    # File Upload (env MAX_FILE_SIZE_MB; default 30. Raise for multi-hundred-page statements.)
+    MAX_FILE_SIZE: int = int(os.getenv("MAX_FILE_SIZE_MB", "30") or "30") * 1024 * 1024
     # Отдельный лимит для Справочника: кодексы в PDF могут быть тяжелее 30 МБ.
     LEGAL_CORPUS_MAX_FILE_SIZE: int = int(
         os.getenv("LEGAL_CORPUS_MAX_FILE_SIZE_MB", "50") or "50"
@@ -756,6 +756,16 @@ class Config:
     )
     DOCLING_MAX_FILE_SIZE_BYTES: int = int(
         os.getenv("DOCLING_MAX_FILE_SIZE_BYTES", str(60 * 1024 * 1024)) or str(60 * 1024 * 1024)
+    )
+    # Large-PDF ingest: convert page windows instead of one-shot DoclingDocument.
+    # Defaults tuned for weak/medium Yandex VMs (Docling parallel=1, limited RAM).
+    DOCLING_PDF_BATCH_ENABLED: bool = (
+        os.getenv("DOCLING_PDF_BATCH_ENABLED", "true").strip().lower() == "true"
+    )
+    DOCLING_PDF_BATCH_PAGES: int = int(os.getenv("DOCLING_PDF_BATCH_PAGES", "30") or "30")
+    # Only batch when page count reaches this threshold (small PDFs stay one-shot).
+    DOCLING_PDF_BATCH_MIN_PAGES: int = int(
+        os.getenv("DOCLING_PDF_BATCH_MIN_PAGES", "40") or "40"
     )
     DOCLING_PDF_TABLE_MODE: str = os.getenv("DOCLING_PDF_TABLE_MODE", "accurate").strip().lower()
     DOCLING_PDF_TABLE_STRUCTURE: bool = (

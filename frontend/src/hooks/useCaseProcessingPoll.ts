@@ -10,15 +10,23 @@ const DEFAULT_POLL_MS = 3000
 
 function mergeProcessingFiles(
   prev: FileProcessingStatus[],
-  incoming: Array<{ id: string; filename: string; processing_status?: string; error?: string | null }>,
+  incoming: Array<{
+    id: string
+    filename: string
+    processing_status?: string
+    status?: string
+    error?: string | null
+    progress?: FileProcessingStatus['progress']
+  }>,
 ): FileProcessingStatus[] {
   const map = new Map(prev.map((f) => [f.id, f]))
   for (const f of incoming) {
     map.set(f.id, {
       id: f.id,
       filename: f.filename,
-      status: (f.processing_status as FileProcessingStatus['status']) || 'pending',
+      status: ((f.status || f.processing_status) as FileProcessingStatus['status']) || 'pending',
       error: f.error ?? null,
+      progress: f.progress ?? null,
     })
   }
   return Array.from(map.values())
@@ -142,20 +150,29 @@ export function useCaseProcessingPoll(
 export function processingStatusLabel(
   status?: FileProcessingStatus['status'],
   staged?: boolean,
+  progress?: FileProcessingStatus['progress'] | null,
 ): string {
   if (staged) return 'Будет загружен при создании дела'
   switch (status) {
     case 'ready':
       return 'Готово'
-    case 'processing':
-      return 'Обработка…'
+    case 'processing': {
+      const pct = typeof progress?.percent === 'number' ? ` ${progress.percent}%` : ''
+      const msg = progress?.message?.trim()
+      if (msg) return `${msg}${pct}`
+      return `Обработка…${pct}`
+    }
     case 'pending':
       return 'В очереди'
     case 'error':
       return 'Ошибка'
     case 'cancelled':
       return 'Отменено'
-    default:
+    case undefined:
       return 'Ожидает загрузки'
+    default: {
+      const _exhaustive: never = status
+      return _exhaustive
+    }
   }
 }

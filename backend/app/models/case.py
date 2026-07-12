@@ -137,6 +137,8 @@ class File(Base):
     processing_status = Column(String(50), default="ready")  # pending, processing, ready, error, cancelled
     processing_error = Column(Text, nullable=True)
     processing_started_at = Column(DateTime, nullable=True)
+    # {stage, percent, message, pages_done, pages_total, batch_index, batch_count}
+    processing_progress = Column(JSON, nullable=True)
     structured_text = Column(Text, nullable=True)
     structured_text_format = Column(String(32), nullable=True)
     doc_summary_short = Column(Text, nullable=True)
