@@ -110,7 +110,7 @@ export function findQuoteMatchInPlain(
 
 export function buildQuoteSearchCandidates(
   primary?: string | null,
-  alternates?: Array<string | null | undefined>,
+  alternates?: Array<string | null | undefined> | null,
 ): string[] {
   const out: string[] = []
   const seen = new Set<string>()
@@ -341,7 +341,7 @@ export function highlightTableRowInContainer(
 export function highlightQuoteInHtml(
   html: string,
   quote: string,
-  alternates?: Array<string | null | undefined>,
+  alternates?: Array<string | null | undefined> | null,
 ): string {
   const candidates = buildQuoteSearchCandidates(quote, alternates)
   if (candidates.length === 0) return html
