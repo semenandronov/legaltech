@@ -33,6 +33,11 @@ set -a
 source .env
 set +a
 
+if [[ -n "${YC_REGISTRY_IAM_TOKEN:-}" ]]; then
+  echo "==> Registry login (fresh IAM token)"
+  echo "${YC_REGISTRY_IAM_TOKEN}" | sudo docker login --username iam --password-stdin cr.yandex
+fi
+
 echo "==> Pull ${IMAGE}"
 sudo docker pull "${IMAGE}"
 

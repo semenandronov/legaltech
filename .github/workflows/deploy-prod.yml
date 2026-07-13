@@ -159,16 +159,24 @@ jobs:
           source: docker-compose.vm.yml
           target: ${{ env.VM_REMOTE_DIR }}/
 
+      - name: Yandex IAM token for VM registry pull
+        id: iam
+        uses: yc-actions/yc-iam-token@v1
+        with:
+          yc-sa-json-credentials: ${{ secrets.YC_SA_JSON_CREDENTIALS }}
+          mask-token: false
+
       - name: Roll out container
         uses: appleboy/ssh-action@v1.2.0
         env:
           LEGAL_AI_IMAGE: ${{ needs.build.outputs.image }}
           VM_REMOTE_DIR: ${{ env.VM_REMOTE_DIR }}
+          YC_REGISTRY_IAM_TOKEN: ${{ steps.iam.outputs.token }}
         with:
           host: ${{ secrets.VM_HOST }}
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_PRIVATE_KEY }}
-          envs: LEGAL_AI_IMAGE,VM_REMOTE_DIR
+          envs: LEGAL_AI_IMAGE,VM_REMOTE_DIR,YC_REGISTRY_IAM_TOKEN
           script_stop: true
           script_path: scripts/ci/vm-remote-rollout.sh
 
