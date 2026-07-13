@@ -24,13 +24,36 @@ def test_build_verbatim_row_text_from_columns():
     assert "Оплата" in text
 
 
-def test_build_highlight_fragments_includes_cells_and_joined():
+def test_build_highlight_fragments_prefers_cell_values_before_labeled_verbatim():
     fragments = build_highlight_fragments(
-        {"Дебет": "500 000,00", "Назначение": "Перевод"},
-        verbatim_row_text="Дебет: 500 000,00",
+        {
+            "Дата": "15.03.2024",
+            "Дебет": "500 000,00",
+            "Назначение платежа": "Перевод контрагенту",
+        },
+        verbatim_row_text="Дата: 15.03.2024\nДебет: 500 000,00\nНазначение платежа: Перевод контрагенту",
     )
-    assert any("500 000" in f for f in fragments)
-    assert any("Перевод" in f for f in fragments)
+    assert fragments[0] == "Перевод контрагенту"
+    assert "500 000,00" in fragments
+    assert fragments[-1].startswith("Дата:")
+
+
+def test_highlight_targets_from_row_metadata_excel_chunk():
+    from app.services.transaction_source import highlight_targets_from_row_metadata
+
+    targets = highlight_targets_from_row_metadata(
+        {
+            "chunk_level": "row",
+            "row_columns": {
+                "Дата": "24.06.2026",
+                "Сумма": "1000.50",
+                "Назначение платежа": "Оплата по договору 1",
+            },
+        },
+        page_content="Дата: 24.06.2026\nСумма: 1000.50\nНазначение платежа: Оплата по договору 1",
+    )
+    assert targets[0] == "Оплата по договору 1"
+    assert "1000.50" in targets
 
 
 def test_resolve_row_source_legacy_row_without_db_fields():

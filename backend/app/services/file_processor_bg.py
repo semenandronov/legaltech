@@ -458,6 +458,32 @@ def _process_one_file_body(
             db=db,
             bm25_after_store="invalidate_only",
         )
+        # Structured Excel/registers: store row text as original_text so tools/expand
+        # never treat the loader sheet dump as citable evidence.
+        row_docs = [
+            d
+            for d in file_documents
+            if str((d.metadata or {}).get("chunk_level") or "") == "row"
+            and (
+                str((d.metadata or {}).get("index_profile") or "") == "structured_table"
+                or str((d.metadata or {}).get("preseg_strategy") or "") == "xlsx_openpyxl_grid"
+            )
+        ]
+        if row_docs:
+            structured_text = "\n\n".join(
+                str(d.page_content or "").strip() for d in row_docs if str(d.page_content or "").strip()
+            )
+            if structured_text.strip():
+                _reconnect(db)
+                file_for_text = db.query(FileModel).filter(FileModel.id == file_id).first()
+                if file_for_text:
+                    file_for_text.original_text = structured_text
+                    db.commit()
+                    logger.info(
+                        "original_text replaced with %s structured row chunk(s) for %s",
+                        len(row_docs),
+                        filename,
+                    )
         docling_count = sum(
             1 for d in file_documents if d.metadata.get("chunk_level") == "docling"
         )

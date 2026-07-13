@@ -115,6 +115,7 @@ export interface AssistantMessageProps {
     page?: number
     quote: string
     quote_anchor?: string
+    highlight_targets?: string[]
     text_preview?: string
     chunk_id?: string
     char_start?: number
@@ -164,6 +165,7 @@ export const AssistantMessage = React.memo(function AssistantMessage({
         citation_id: citation.citation_id,
         text_preview: citation.text_preview || citation.quote_anchor || citation.quote,
         quote_anchor: citation.quote_anchor,
+        highlight_targets: citation.highlight_targets,
         chunk_id: citation.chunk_id,
         char_start: citation.char_start,
         char_end: citation.char_end,
@@ -208,6 +210,7 @@ export const AssistantMessage = React.memo(function AssistantMessage({
       page: c.page,
       quote: c.quote,
       quote_anchor: c.quote_anchor,
+      highlight_targets: c.highlight_targets,
       text_preview: c.text_preview,
       chunk_id: c.chunk_id,
       char_start: c.char_start,

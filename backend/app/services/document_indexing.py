@@ -14,6 +14,10 @@ from app.services.legal_chunker import (
     _normalize_docling_segments,
 )
 from app.services.structured_table_indexer import StructuredTableIndexer
+from app.services.xlsx_structured_indexer import (
+    is_excel_filename,
+    try_index_xlsx_as_structured_table,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +40,7 @@ def build_index_chunks(
     Run Docling pre-segmentation once, route to structured-table or narrative indexer.
 
     OCR / corpus norm paths bypass structured routing and delegate to LegalChunkerV2.
+    Native Excel workbooks use openpyxl grid → structured_table when they look like registers.
     """
     if use_norm_corpus:
         return LegalChunkerV2().chunk_corpus_norms(
@@ -50,6 +55,22 @@ def build_index_chunks(
             loader_documents=loader_documents,
             prepared_pdf_text=prepared_pdf_text,
         )
+
+    # Excel statements/registers: grid → row chunks (Operations + RAG), skip Docling.
+    if content_bytes and is_excel_filename(filename) and not use_norm_corpus:
+        xlsx_docs = try_index_xlsx_as_structured_table(
+            content_bytes=content_bytes,
+            filename=filename,
+            base_metadata=base_metadata,
+            doc_type=doc_type,
+        )
+        if xlsx_docs:
+            logger.info(
+                "[document_indexing] %s → structured_table (xlsx_openpyxl_grid, rows=%s)",
+                filename,
+                sum(1 for d in xlsx_docs if d.metadata.get("chunk_level") == "row"),
+            )
+            return xlsx_docs
 
     if loader_did_ocr:
         return LegalChunkerV2().chunk(

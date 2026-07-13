@@ -8,6 +8,7 @@ import {
   buildOperationsViewerCellData,
   operationsHighlightRevision,
 } from '@/utils/operationsViewerCellData'
+import { fileTypeFromName } from '@/utils/fileType'
 
 interface OperationsSidePanelProps {
   caseId: string
@@ -24,6 +25,7 @@ export function OperationsSidePanel({
 }: OperationsSidePanelProps) {
   const cellData = useMemo(() => buildOperationsViewerCellData(transaction), [transaction])
   const highlightRevision = useMemo(() => operationsHighlightRevision(transaction), [transaction])
+  const fileType = fileTypeFromName(fileName)
 
   return (
     <aside className="ws-tabular-aside min-h-0">
@@ -42,7 +44,7 @@ export function OperationsSidePanel({
             fileId={transaction.file_id}
             caseId={caseId}
             fileName={fileName}
-            fileType="pdf"
+            fileType={fileType}
             citationPreview
             highlightRevision={highlightRevision}
             cellData={cellData}

@@ -23,6 +23,7 @@ from app.services.chat.scoped_file_expand import (
     scoped_file_expand_enabled,
     scoped_file_expand_max_files,
 )
+from app.services.chat.tabular_citation_policy import filter_docs_for_tabular_citations
 from app.services.observability.case_assistant_langfuse_tracing import (
     case_assistant_span,
     summarize_case_documents,
@@ -541,8 +542,10 @@ def assemble_rag_output(
         input_payload={"docs_in": len(docs), "max_context_chars": max_context_chars},
         metadata={"case_id": case_id},
     ) as span_out:
+        # Excel/registers: never number whole-sheet dumps as citation sources.
+        docs_for_prompt = filter_docs_for_tabular_citations(docs)
         context, included_docs = rag_service.format_sources_for_prompt_with_docs(
-            docs, max_context_chars=max_context_chars
+            docs_for_prompt, max_context_chars=max_context_chars
         )
 
         originals = {}

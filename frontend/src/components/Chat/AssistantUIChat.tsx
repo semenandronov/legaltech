@@ -254,6 +254,7 @@ interface Message {
     page?: number
     quote: string
     quote_anchor?: string
+    highlight_targets?: string[]
     /** Полный текст чанка (как в chunk-lab) для подсветки в PDF */
     text_preview?: string
     chunk_id?: string
@@ -905,7 +906,8 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
         web_search: false, // Веб-поиск отключен
         legal_research: draftMode ? false : legalResearch,
         use_legal_corpus: draftMode ? false : legalResearch,
-        court_practice: draftMode ? false : courtPractice,
+        // Case/internal assistant: court practice UI is hidden; never send the flag.
+        court_practice: globalMode ? (draftMode ? false : courtPractice) : false,
         draft_mode: draftMode,
         trace_id: crypto.randomUUID(),
       }
@@ -1151,6 +1153,9 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                             page: (citation.page ?? citation.source_page) ?? undefined,
                             quote: citation.quote || '',
                             quote_anchor: citation.quote_anchor || undefined,
+                            highlight_targets: Array.isArray(citation.highlight_targets)
+                              ? citation.highlight_targets
+                              : undefined,
                             text_preview: citation.text_preview || undefined,
                             chunk_id: citation.chunk_id || undefined,
                             char_start: citation.char_start,
@@ -1624,6 +1629,9 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
               page: (citation.page as number) ?? (citation.source_page as number) ?? undefined,
               quote: String(citation.quote ?? ''),
               quote_anchor: (citation.quote_anchor as string) || undefined,
+              highlight_targets: Array.isArray(citation.highlight_targets)
+                ? (citation.highlight_targets as string[])
+                : undefined,
               chunk_id: (citation.chunk_id as string) || undefined,
               char_start: citation.char_start as number,
               char_end: citation.char_end as number,
@@ -1829,6 +1837,7 @@ export const AssistantUIChat = forwardRef<AssistantUIChatRef, AssistantUIChatPro
                         char_end: c.char_end,
                         quote: c.quote,
                         quote_anchor: (c as any).quote_anchor,
+                        highlight_targets: (c as any).highlight_targets,
                         source_id: c.source_id,
                         chunk_id: (c as any).chunk_id,
                         bbox: (c as any).bbox,

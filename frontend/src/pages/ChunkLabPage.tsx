@@ -5,6 +5,7 @@ import { Upload, RefreshCw } from 'lucide-react'
 import api, { getApiUrl } from '../services/api'
 import { TabularDocumentViewer } from '../components/TabularReview/TabularDocumentViewer'
 import { buildChunkLabViewerCellData } from '../utils/chunkLabViewerCellData'
+import { fileTypeFromName } from '../utils/fileType'
 import { buildMainNavItems } from '../lib/mainNavItems'
 
 type CitationPayload = {
@@ -35,11 +36,8 @@ type IndexedChunksResponse = {
   total: number
 }
 
-function viewerFileType(filename: string): 'pdf' | 'docx' | 'txt' {
-  const lower = filename.toLowerCase()
-  if (lower.endsWith('.pdf')) return 'pdf'
-  if (lower.endsWith('.docx')) return 'docx'
-  return 'txt'
+function viewerFileType(filename: string): string {
+  return fileTypeFromName(filename)
 }
 
 const ChunkLabPage = () => {

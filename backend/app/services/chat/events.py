@@ -32,6 +32,13 @@ class Citation(BaseModel):
         None,
         description="Полный текст чанка (page_content) для подсветки в PDF, как на странице chunk-lab",
     )
+    highlight_targets: Optional[List[str]] = Field(
+        None,
+        description=(
+            "Ordered DOM-search candidates for table/Excel rows "
+            "(bare cell values; prefer over labeled Col: value chunk text)"
+        ),
+    )
     chunk_id: Optional[str] = Field(None, description="Идентификатор чанка (дедуп/диагностика)")
     char_start: Optional[int] = Field(None, description="Начало цитаты в документе")
     char_end: Optional[int] = Field(None, description="Конец цитаты в документе")

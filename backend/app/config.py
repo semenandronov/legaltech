@@ -767,6 +767,10 @@ class Config:
     DOCLING_PDF_BATCH_MIN_PAGES: int = int(
         os.getenv("DOCLING_PDF_BATCH_MIN_PAGES", "40") or "40"
     )
+    # Native Excel → structured_table / Operations registry (openpyxl grid).
+    XLSX_STRUCTURED_TABLE_ENABLED: bool = (
+        os.getenv("XLSX_STRUCTURED_TABLE_ENABLED", "true").strip().lower() == "true"
+    )
     DOCLING_PDF_TABLE_MODE: str = os.getenv("DOCLING_PDF_TABLE_MODE", "accurate").strip().lower()
     DOCLING_PDF_TABLE_STRUCTURE: bool = (
         os.getenv("DOCLING_PDF_TABLE_STRUCTURE", "true").strip().lower() == "true"

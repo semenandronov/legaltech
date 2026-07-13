@@ -31,6 +31,7 @@ import { DocumentHighlighter } from '@/components/Documents/DocumentHighlighter'
 import { TextHighlighter } from '@/components/TabularReview/TextHighlighter'
 import { CitationQuoteBanner } from '@/components/Documents/CitationQuoteBanner'
 import { findQuoteMatchInPlain, highlightQuoteInHtml, CITATION_HIGHLIGHT_MARK_ID } from '@/utils/citationHighlight'
+import { fileTypeFromName, isHtmlPreviewFileType } from '@/utils/fileType'
 
 const FILE_LIST_TTL_MS = 5 * 60 * 1000
 type CachedFileList = { ts: number; documents: any[] }
@@ -43,18 +44,7 @@ const authHeaders = () => ({
   'X-Access-Token': localStorage.getItem('access_token') || ''
 })
 
-const extToType = (name?: string): string => {
-  const file = (name || '').toLowerCase()
-  if (file.endsWith('.pdf')) return 'pdf'
-  if (file.endsWith('.docx')) return 'docx'
-  if (file.endsWith('.txt')) return 'txt'
-  if (file.endsWith('.html')) return 'html'
-  if (file.endsWith('.md')) return 'md'
-  if (file.endsWith('.json')) return 'json'
-  if (file.endsWith('.xml')) return 'xml'
-  if (file.endsWith('.csv')) return 'csv'
-  return 'txt'
-}
+const extToType = (name?: string): string => fileTypeFromName(name)
 
 const normalizeCitationPageForViewer = (page?: number | null): number | undefined => {
   if (page == null || Number.isNaN(page)) return undefined
@@ -85,9 +75,8 @@ const prefetchSourceContent = async (apiBase: string, fileId: string, fileType: 
   const cacheKey = `${apiBase}:${fileId}`
   const fileTypeLower = fileType.toLowerCase()
   const isTextFile = ['txt', 'html', 'md', 'json', 'xml', 'csv'].includes(fileTypeLower)
-  const isDocx = fileTypeLower === 'docx'
 
-  if (isDocx) {
+  if (isHtmlPreviewFileType(fileTypeLower)) {
     if (htmlContentCache.has(cacheKey)) return
     const htmlRes = await fetch(`${apiBase}/files/${fileId}/html`, { headers: authHeaders() })
     if (htmlRes.ok) {
@@ -230,6 +219,7 @@ const DocumentPreviewSheet = ({
       quote_anchor: source.quote_anchor,
       quote: source.quote,
       text_preview: source.text_preview,
+      highlight_targets: source.highlight_targets,
       page: source.page ?? null,
       bbox: source.bbox,
       bbox_regions: source.bbox_regions,
@@ -249,12 +239,14 @@ const DocumentPreviewSheet = ({
       char_end: source.char_end,
       quote: source.quote,
       quote_anchor: source.quote_anchor,
+      highlight_targets: source.highlight_targets,
     })
   }, [source])
 
   const anchorText = chunkLabCitationCellData?.verbatimExtract
     ? String(chunkLabCitationCellData.verbatimExtract)
     : ''
+  const highlightAlternates = chunkLabCitationCellData?.verbatimAlternates ?? null
 
   const startHighlightLoad = (fileId: string, fileType: string, src: SourceInfo, delayMs = 0) => {
     if (delayedHighlightTimerRef.current !== null) {
@@ -493,7 +485,10 @@ const DocumentPreviewSheet = ({
     // char_start может быть 0 для начала документа - это валидно
     const hasCoordinates = source.char_start !== undefined && source.char_end !== undefined && 
                            source.char_end > source.char_start && source.char_end > 0
-    const hasQuote = !!anchorText && anchorText.length > 10
+    const hasQuote =
+      (!!anchorText && anchorText.length > 10) ||
+      (!!chunkLabCitationCellData?.verbatimAlternates?.length) ||
+      (!!source.highlight_targets && source.highlight_targets.length > 0)
     
     console.log('[DocumentPreview] Loading highlight data:', {
       fileType,
@@ -512,30 +507,29 @@ const DocumentPreviewSheet = ({
     try {
       const fileTypeLower = fileType.toLowerCase()
       const isTextFile = ['txt', 'html', 'md', 'json', 'xml', 'csv'].includes(fileTypeLower)
-      const isDocx = fileTypeLower === 'docx'
       const isPdf = fileTypeLower === 'pdf'
       
       const auth = authHeaders()
       const cacheKey = `${apiBase}:${fileId}`
 
-      // Для DOCX - загружаем HTML версию
-      if (isDocx) {
+      // DOCX / Excel — server HTML for preview + citation highlight
+      if (isHtmlPreviewFileType(fileTypeLower)) {
         const cachedHtml = htmlContentCache.get(cacheKey)
         if (cachedHtml !== undefined) {
           setDocumentHtml(cachedHtml)
           return
         }
         try {
-          console.log('[DocumentPreview] Loading DOCX as HTML for highlighting')
+          console.log('[DocumentPreview] Loading HTML preview for', fileTypeLower)
           const htmlRes = await fetch(`${apiBase}/files/${fileId}/html`, { headers: auth })
           if (htmlRes.ok) {
             const htmlData = await htmlRes.json()
             setDocumentHtml(htmlData.html)
             htmlContentCache.set(cacheKey, htmlData.html || '')
-            console.log('[DocumentPreview] DOCX HTML loaded, length:', htmlData.html?.length)
+            console.log('[DocumentPreview] HTML loaded, length:', htmlData.html?.length)
           }
         } catch (error) {
-          console.warn('Failed to load HTML content for DOCX highlighting:', error)
+          console.warn('Failed to load HTML content for highlighting:', error)
         }
         return
       }
@@ -589,9 +583,15 @@ const DocumentPreviewSheet = ({
   }
 
   useEffect(() => {
-    // Загружаем файл и создаем blob URL только для файлов без специализированного рендерера.
-    // PDF → TabularDocumentViewer (как chunk-lab), DOCX → HTML via getFileHtml. Остальные — blob URL + <object>.
-    if (isOpen && fileInfo && fileInfo.file_type !== 'pdf' && fileInfo.file_type !== 'docx' && fileInfo.id && (caseId || filesApiBase)) {
+    // Blob URL only for types without a specialized renderer (PDF / HTML preview).
+    if (
+      isOpen &&
+      fileInfo &&
+      fileInfo.file_type !== 'pdf' &&
+      !isHtmlPreviewFileType(fileInfo.file_type) &&
+      fileInfo.id &&
+      (caseId || filesApiBase)
+    ) {
       const loadFile = async () => {
         try {
           const cacheKey = `${apiBase}:${fileInfo.id}`
@@ -933,7 +933,7 @@ const DocumentPreviewSheet = ({
                 <Skeleton variant="text" width="50%" />
               </Stack>
             </Box>
-          ) : fileInfo && documentHtml && fileInfo.file_type === 'docx' ? (
+          ) : fileInfo && documentHtml && isHtmlPreviewFileType(fileInfo.file_type) ? (
             <Box sx={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
               {anchorText ? (
                 <CitationQuoteBanner quote={anchorText} page={source?.page} className="!bg-white" />
@@ -943,8 +943,12 @@ const DocumentPreviewSheet = ({
                   ref={docxContainerRef}
                   component="div"
                   dangerouslySetInnerHTML={{
-                    __html: anchorText
-                      ? highlightQuoteInHtml(documentHtml, anchorText)
+                    __html: anchorText || highlightAlternates?.length
+                      ? highlightQuoteInHtml(
+                          documentHtml,
+                          anchorText || highlightAlternates?.[0] || '',
+                          highlightAlternates,
+                        )
                       : documentHtml,
                   }}
                   sx={{ fontSize: '0.875rem', fontFamily: 'inherit' }}
@@ -981,8 +985,8 @@ const DocumentPreviewSheet = ({
                 </Box>
               )}
             </Box>
-          ) : fileInfo && fileInfo.file_type === 'docx' ? (
-            // DOCX HTML still loading or conversion failed — never fall through to raw binary
+          ) : fileInfo && isHtmlPreviewFileType(fileInfo.file_type) ? (
+            // HTML preview still loading or conversion failed — never fall through to raw binary
             <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', p: 3 }}>
               <Typography variant="body2" color="text.secondary" textAlign="center">
                 {loading ? 'Загрузка документа…' : 'Не удалось отобразить документ.\nСкачайте файл для просмотра.'}

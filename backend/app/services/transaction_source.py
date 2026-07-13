@@ -11,6 +11,16 @@ from app.services.rag_service import RAGService
 
 _MIN_HIGHLIGHT_FRAGMENT_LEN = 4
 _WS_RE = re.compile(r"\s+")
+_LABELED_LINE_RE = re.compile(r"^([^:\n]{1,80}):\s+(.+)$")
+_DESC_KEY_RE = re.compile(
+    r"(описан|назначен|description|purpose|контрагент|получател|плател)",
+    re.IGNORECASE,
+)
+_AMOUNT_KEY_RE = re.compile(
+    r"(сумм|amount|дебет|кредит|остаток|balance)",
+    re.IGNORECASE,
+)
+_DATE_KEY_RE = re.compile(r"(дата|date)", re.IGNORECASE)
 
 
 def build_verbatim_row_text(
@@ -42,12 +52,58 @@ def build_verbatim_row_text(
     return " | ".join(parts) if parts else ""
 
 
+def _cell_values_by_priority(row_columns: Dict[str, str]) -> List[str]:
+    """Order cell values for DOM/HTML matching: description → other → amount → date."""
+    desc: List[str] = []
+    amounts: List[str] = []
+    dates: List[str] = []
+    other: List[str] = []
+    for key, raw in row_columns.items():
+        value = _WS_RE.sub(" ", str(raw or "").strip())
+        if not value:
+            continue
+        label = key or ""
+        if _DESC_KEY_RE.search(label):
+            desc.append(value)
+        elif _AMOUNT_KEY_RE.search(label):
+            amounts.append(value)
+        elif _DATE_KEY_RE.search(label):
+            dates.append(value)
+        else:
+            other.append(value)
+
+    ordered: List[str] = []
+    for group in (desc, other, amounts, dates):
+        ordered.extend(sorted(group, key=len, reverse=True))
+    return ordered
+
+
+def _values_from_labeled_verbatim(verbatim_row_text: str) -> List[str]:
+    """Parse 'Col: value' chunk lines into bare cell values (Excel/HTML table text)."""
+    values: List[str] = []
+    for line in (verbatim_row_text or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        match = _LABELED_LINE_RE.match(stripped)
+        if match:
+            values.append(_WS_RE.sub(" ", match.group(2).strip()))
+        else:
+            values.append(_WS_RE.sub(" ", stripped))
+    return values
+
+
 def build_highlight_fragments(
     row_columns: Dict[str, str],
     *,
     verbatim_row_text: str,
 ) -> List[str]:
-    """Distinct non-empty cell values + joined row for pdf.js text-layer matching."""
+    """
+    Ordered candidates for viewer highlight (PDF text-layer + HTML table preview).
+
+    Prefer bare cell values (what appears in Excel/HTML cells). Keep full verbatim
+    last — it matches PDF rows that retain "Col: value" labels, but not HTML grids.
+    """
     seen: set[str] = set()
     fragments: List[str] = []
 
@@ -61,18 +117,56 @@ def build_highlight_fragments(
         seen.add(key)
         fragments.append(text)
 
+    columns = {
+        str(k): str(v)
+        for k, v in (row_columns or {}).items()
+        if k is not None and v is not None and str(v).strip()
+    }
+    for value in _cell_values_by_priority(columns):
+        add(value)
+
+    if not columns:
+        for value in _values_from_labeled_verbatim(verbatim_row_text):
+            add(value)
+
+    if len(columns) >= 2:
+        joined = _WS_RE.sub(
+            " ",
+            " ".join(str(v).strip() for v in columns.values() if str(v).strip()),
+        )
+        add(joined)
+
     primary = _WS_RE.sub(" ", (verbatim_row_text or "").strip())
     if primary:
         add(primary)
 
-    for value in row_columns.values():
-        add(str(value or ""))
-
-    if len(row_columns) >= 2:
-        joined = _WS_RE.sub(" ", " ".join(str(v).strip() for v in row_columns.values() if str(v).strip()))
-        add(joined)
-
     return fragments
+
+
+def highlight_targets_from_row_metadata(
+    metadata: Dict[str, Any],
+    *,
+    page_content: str = "",
+) -> List[str]:
+    """Build highlight_targets for structured_table / Excel row citation payloads."""
+    md = metadata or {}
+    if str(md.get("chunk_level") or "").strip() != "row":
+        return []
+
+    raw_columns = md.get("row_columns")
+    columns: Dict[str, str] = {}
+    if isinstance(raw_columns, dict):
+        columns = {
+            str(k): str(v)
+            for k, v in raw_columns.items()
+            if k is not None and v is not None and str(v).strip()
+        }
+
+    verbatim = (page_content or "").strip()
+    if not verbatim:
+        verbatim = build_verbatim_row_text(columns)
+
+    return build_highlight_fragments(columns, verbatim_row_text=verbatim)
 
 
 def _union_bbox(regions: Sequence[Dict[str, float]]) -> Optional[Dict[str, float]]:

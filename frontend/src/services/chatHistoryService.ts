@@ -91,6 +91,9 @@ export function citationRecordToSourceInfo(c: Record<string, unknown>): SourceIn
       (typeof qa === 'string' ? qa : undefined) ||
       (typeof q === 'string' ? q : undefined),
     quote_anchor: typeof qa === 'string' ? qa : undefined,
+    highlight_targets: Array.isArray(c.highlight_targets)
+      ? (c.highlight_targets as unknown[]).filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+      : undefined,
     source_id: typeof c.source_id === 'string' ? c.source_id : undefined,
     quote: typeof q === 'string' ? q : undefined,
     chunk_id: typeof c.chunk_id === 'string' ? c.chunk_id : undefined,

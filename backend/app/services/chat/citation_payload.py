@@ -24,6 +24,7 @@ from app.services.chat.citation_file_identity import (
 from app.services.chat.retrieval_dc_labels import compute_retrieval_dc_labels
 from app.services.prov_span_utils import narrow_char_span_to_quote
 from app.services.rag_service import RAGService
+from app.services.transaction_source import highlight_targets_from_row_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -440,6 +441,9 @@ def build_retrieval_citations(
 
         quote = (pc[:quote_max_len] + ("..." if len(pc) > quote_max_len else "")) if pc else ""
 
+        # Structured table / Excel rows: DOM search must use bare cell values, not "Col: value".
+        highlight_targets = highlight_targets_from_row_metadata(meta, page_content=pc)
+
         original = originals.get(source_id_str) if (originals and source_id_str) else None
         if original is not None:
             char_start, char_end, aligned_anchor, align_meta = _align_offsets_to_original(
@@ -455,7 +459,9 @@ def build_retrieval_citations(
                     chunk_id or "-",
                     align_meta.get("method"),
                 )
-            if aligned_anchor:
+            if highlight_targets:
+                quote_anchor = highlight_targets[0][:anchor_max_len]
+            elif aligned_anchor:
                 quote_anchor = aligned_anchor[:anchor_max_len]
             elif (
                 char_start is not None
@@ -466,7 +472,10 @@ def build_retrieval_citations(
             else:
                 quote_anchor = pc[:anchor_max_len]
         else:
-            quote_anchor = pc[:anchor_max_len]
+            if highlight_targets:
+                quote_anchor = highlight_targets[0][:anchor_max_len]
+            else:
+                quote_anchor = pc[:anchor_max_len]
             if char_start is not None and char_end is not None and original is not None:
                 if not (0 <= char_start <= char_end <= len(original)):
                     logger.debug(
@@ -514,6 +523,8 @@ def build_retrieval_citations(
             "bbox": bbox,
             "page_bbox": page_bbox,
         }
+        if highlight_targets:
+            payload["highlight_targets"] = highlight_targets
         if _is_dev_env():
             # Debug-only: show exactly what Docling provenance reported for this chunk.
             payload["debug_docling_prov_page_nos"] = _docling_prov_page_nos(meta)
@@ -636,6 +647,7 @@ def enrich_structured_citations(
         char_end = _as_int(ec.get("char_end"))
         original = originals.get(source_id) if (originals and source_id) else None
         quote_anchor: Optional[str] = None
+        highlight_targets = highlight_targets_from_row_metadata(meta, page_content=pc)
         if original is not None:
             char_start, char_end, aligned_anchor, _ = _align_offsets_to_original(
                 original=original,
@@ -643,7 +655,9 @@ def enrich_structured_citations(
                 char_start=char_start,
                 char_end=char_end,
             )
-            if aligned_anchor:
+            if highlight_targets:
+                quote_anchor = highlight_targets[0][:anchor_max_len]
+            elif aligned_anchor:
                 quote_anchor = aligned_anchor[:anchor_max_len]
             elif (
                 char_start is not None
@@ -654,7 +668,10 @@ def enrich_structured_citations(
             else:
                 quote_anchor = (ec.get("quote") or "")[:anchor_max_len] or None
         else:
-            quote_anchor = (ec.get("quote") or "")[:anchor_max_len] or None
+            if highlight_targets:
+                quote_anchor = highlight_targets[0][:anchor_max_len]
+            else:
+                quote_anchor = (ec.get("quote") or "")[:anchor_max_len] or None
 
         bbox_hs, bbox_he = _citation_bbox_char_span(
             original=original,
@@ -697,6 +714,8 @@ def enrich_structured_citations(
             "bbox": bbox,
             "page_bbox": page_bbox,
         }
+        if highlight_targets:
+            row["highlight_targets"] = highlight_targets
         if _is_dev_env():
             # Debug-only: show exactly what Docling provenance reported for this chunk.
             row["debug_docling_prov_page_nos"] = _docling_prov_page_nos(meta)

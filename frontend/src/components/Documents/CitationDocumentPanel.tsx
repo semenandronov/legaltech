@@ -7,13 +7,7 @@ import {
   buildChunkLabViewerCellData,
   citationHighlightRevision,
 } from '@/utils/chunkLabViewerCellData'
-
-function fileTypeFromName(name?: string): string {
-  const lower = (name || '').toLowerCase()
-  if (lower.endsWith('.pdf')) return 'pdf'
-  if (lower.endsWith('.docx')) return 'docx'
-  return 'txt'
-}
+import { fileTypeFromName } from '@/utils/fileType'
 
 export interface CitationDocumentPanelProps {
   source: SourceInfo
@@ -42,6 +36,7 @@ export function CitationDocumentPanel({
         quote_anchor: source.quote_anchor,
         quote: source.quote,
         text_preview: source.text_preview,
+        highlight_targets: source.highlight_targets,
         page: source.page ?? null,
         bbox: source.bbox,
         bbox_regions: source.bbox_regions,
@@ -62,6 +57,7 @@ export function CitationDocumentPanel({
         char_end: source.char_end,
         quote: source.quote,
         quote_anchor: source.quote_anchor,
+        highlight_targets: source.highlight_targets,
       }),
     [source],
   )

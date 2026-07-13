@@ -5,7 +5,8 @@ import DOCXViewer from './DOCXViewer'
 import './Documents.css'
 
 // File types that browsers cannot display inline — must be downloaded
-const DOWNLOAD_ONLY_TYPES = new Set(['xlsx', 'xls', 'csv', 'pptx', 'ppt', 'ods', 'odt'])
+const DOWNLOAD_ONLY_TYPES = new Set(['pptx', 'ppt', 'ods', 'odt'])
+const HTML_PREVIEW_TYPES = new Set(['docx', 'xlsx', 'xls', 'xlsm'])
 
 interface DocumentViewerProps {
   document: DocumentWithMetadata | null
@@ -25,9 +26,10 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
     // (DOCX загружается в DOCXViewer, PDF загружается в PDFViewer)
     const isDocx = document?.file_type === 'docx' || document?.filename.toLowerCase().endsWith('.docx')
     const ext = (document?.file_type || document?.filename?.split('.').pop() || '').toLowerCase()
+    const isHtmlPreview = HTML_PREVIEW_TYPES.has(ext) || isDocx
     const isDownloadOnly = DOWNLOAD_ONLY_TYPES.has(ext)
 
-    if (document?.id && document.file_type !== 'pdf' && !isDocx && !isDownloadOnly && caseId) {
+    if (document?.id && document.file_type !== 'pdf' && !isHtmlPreview && !isDownloadOnly && caseId) {
       const loadFile = async () => {
         try {
           const baseUrl = import.meta.env.VITE_API_URL || ''
@@ -86,9 +88,10 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
     )
   }
 
-  // Определяем, является ли файл DOCX
+  // Определяем, является ли файл DOCX / Excel (HTML preview)
   const isDocx = document.file_type === 'docx' || document.filename.toLowerCase().endsWith('.docx')
   const ext = (document.file_type || document.filename.split('.').pop() || '').toLowerCase()
+  const isHtmlPreview = HTML_PREVIEW_TYPES.has(ext) || isDocx
   const isDownloadOnly = DOWNLOAD_ONLY_TYPES.has(ext)
 
   return (
@@ -105,13 +108,13 @@ const DocumentViewer: React.FC<DocumentViewerProps> = ({
             showTabs={false}
             showAbout={false}
           />
-        ) : isDocx ? (
+        ) : isHtmlPreview ? (
           <DOCXViewer
             fileId={document.id}
             caseId={caseId}
             filename={document.filename}
             onError={(error) => {
-              console.error('DOCX viewer error:', error)
+              console.error('Document viewer error:', error)
             }}
             showAbout={false}
           />

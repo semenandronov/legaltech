@@ -28,6 +28,7 @@ from app.services.chat.citation_payload import (
     repair_citation_brackets,
 )
 from app.services.chat.response_sanitize import strip_llm_answer_leaks
+from app.services.chat.tabular_citation_policy import filter_docs_for_tabular_citations
 from app.services.chat.metrics import get_metrics
 from app.services.chat.conversation_policy_service import ConversationPolicyService
 from app.services.chat.legal_quality_gates import LegalQualityGates
@@ -1113,6 +1114,7 @@ class ChatOrchestrator:
             docs_limit = max(docs_limit, 6)
             max_context_chars = max(max_context_chars, 5200)
         docs_for_prompt = docs[:docs_limit]
+        docs_for_prompt = filter_docs_for_tabular_citations(docs_for_prompt)
         context, prompt_docs = self.rag_service.format_sources_for_prompt_with_docs(
             docs_for_prompt, max_context_chars=max_context_chars
         )

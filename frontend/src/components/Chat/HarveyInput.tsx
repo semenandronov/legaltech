@@ -215,7 +215,8 @@ function HarveyInputSettingsMenu({
 
   const showAskDraftMode = productFeatures.draftMode
   const showLegalCorpusControl = productFeatures.legalCorpus && variant === 'global'
-  const showCourtPracticeControl = productFeatures.courtPractice
+  // Court practice is a global-assistant instrument only (hidden in case/internal chat).
+  const showCourtPracticeControl = productFeatures.courtPractice && variant === 'global'
   const showInstrumentToggles =
     !isDraftMode && (showLegalCorpusControl || showCourtPracticeControl)
   const showCorpusUploader = variant === 'global' && showLegalCorpusControl && isLegalCorpusUploader
@@ -716,20 +717,7 @@ export function HarveyInput(props: HarveyInputProps) {
                 />
               )}
             </>
-          ) : isMikeCase ? (
-            <>
-              {productFeatures.courtPractice && (
-                <MikeInstrumentToggle
-                  active={useCourtPractice}
-                  disabled={!canEnableCourtPractice(isDraftMode)}
-                  onClick={() => onUseCourtPracticeChange(!useCourtPractice)}
-                  icon={Gavel}
-                  label="Судебная практика"
-                  title={isDraftMode ? 'Недоступно в режиме Draft' : undefined}
-                />
-              )}
-            </>
-          ) : (
+          ) : isMikeCase ? null : (
             <>
               {caseFilesDropdown}
               <button

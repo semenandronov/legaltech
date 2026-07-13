@@ -11,6 +11,7 @@
 - `page` (**нет**): **1-based** номер страницы. **Строго** берётся из Docling provenance `dl_meta.doc_items[].prov[].page_no` как минимум по всем prov; 0 нормализуется в 1. Если provenance нет — `null` (UI не должен “угадывать” страницу).
 - `quote` (**нет**): короткий превью-текст (чанк).
 - `quote_anchor` (**нет**): якорь для поиска/подсветки в `File.original_text` (в идеале `original_text[char_start:char_end]` при валидных offsets).
+- `highlight_targets` (**нет**): для `chunk_level=row` (выписки/Excel) — упорядоченный список значений ячеек для DOM/HTML-подсветки. `quote` может оставаться в формате `Col: value`; поиск в таблице идёт по `highlight_targets` / якорной ячейке. При наличии `highlight_targets` поле `quote_anchor` **всегда** берётся из первой цели (даже если `original_text` — dump всего листа).
 - `char_start`, `char_end` (**нет**): смещения в **склеенном** `original_text` как при индексации (`\n\n` между чанками, см. `DocumentProcessor.split_documents`).
 - `chunk_id` (**нет**): стабильный id чанка (для трассировки/маппинга structured citations).
 - `bbox` (**нет**): один bbox-регион (первый из отфильтрованного списка) для обратной совместимости. Формат: `{ x0, y0, x1, y1 }` в PDF user space.
@@ -20,8 +21,9 @@
 ## Инварианты
 
 1. Порядок `citations[]` = порядок `[N]` в ответе и нумерация «Источник N» в `format_sources_for_prompt`.
-2. При наличии `original_text` в БД и валидных `char_start`/`char_end`: `quote_anchor == original_text[char_start:char_end]` (см. `build_retrieval_citations`).
-3. Пост-обработка: `repair_citation_brackets` удаляет `[N]`, если `N` ∉ `1..len(citations)` (LangGraph + fast path).
+2. При наличии `original_text` в БД и валидных `char_start`/`char_end`: для narrative/PDF чанков `quote_anchor == original_text[char_start:char_end]` (см. `build_retrieval_citations`). Для `chunk_level=row` с `highlight_targets` — якорь = значение ячейки, не dump листа.
+3. Excel / `structured_table`: в промпт и SSE не попадают whole-sheet окна `original_text` (`within_file_source=original_*`) — только row-чанки (`tabular_citation_policy`).
+4. Пост-обработка: `repair_citation_brackets` удаляет `[N]`, если `N` ∉ `1..len(citations)` (LangGraph + fast path).
 
 ## Feature flags
 

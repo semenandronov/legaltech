@@ -215,6 +215,8 @@ export interface SourceInfo {
   context_after?: string   // Context after quote (50 chars)
   quote?: string       // Backward-compatible quote field
   quote_anchor?: string // Stable anchor text for viewer highlighting
+  /** Ordered cell values for Excel/table HTML highlight (prefer over labeled chunk quote). */
+  highlight_targets?: string[]
   source_id?: string   // Document ID (file_id) for reference
   chunk_id?: string    // Unique chunk ID for precise navigation - KEY for reliable highlighting!
   bbox?: { x0?: number; y0?: number; x1?: number; y1?: number } // Bounding box on page

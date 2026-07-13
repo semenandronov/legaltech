@@ -348,3 +348,61 @@ def test_sse_serializer_citations_keeps_index_and_debug_docling():
     c0 = data["citations"][0]
     assert c0["index"] == 2
     assert c0["debug_docling_prov_page_nos"] == [5, 6]
+
+
+def test_build_retrieval_citations_excel_row_highlight_targets():
+    """Excel/table row chunks expose cell values for HTML highlight, not Col: value body."""
+    pc = "Дата: 24.06.2026\nСумма: 1000.50\nНазначение платежа: Оплата по договору 1"
+    doc = Document(
+        page_content=pc,
+        metadata={
+            "file_id": "f-xlsx",
+            "source_file": "bank.xlsx",
+            "chunk_level": "row",
+            "chunk_id": "r1",
+            "row_columns": {
+                "Дата": "24.06.2026",
+                "Сумма": "1000.50",
+                "Назначение платежа": "Оплата по договору 1",
+            },
+        },
+    )
+    cites = build_retrieval_citations([doc])
+    assert len(cites) == 1
+    assert cites[0]["quote_anchor"] == "Оплата по договору 1"
+    assert cites[0]["highlight_targets"][0] == "Оплата по договору 1"
+    assert "1000.50" in cites[0]["highlight_targets"]
+    # Human-readable quote may still be the labeled chunk.
+    assert "Дата:" in (cites[0]["quote"] or "")
+
+
+def test_build_retrieval_citations_excel_row_ignores_sheet_dump_original():
+    """Sheet-dump original_text must not override highlight_targets for quote_anchor."""
+    pc = "Дата: 06.04.2026 22:54\nОписание операции: Плата за оповещения\nСумма: -99.00 ₽"
+    sheet_dump = (
+        "Операции\n№\nДата\nНомер карты\nДата списания\nОписание операции\n"
+        "Сумма в валюте операции\n1\n06.04.2026 22:54\n"
+    )
+    doc = Document(
+        page_content=pc,
+        metadata={
+            "file_id": "f-xlsx",
+            "source_file": "bank.xlsx",
+            "chunk_level": "row",
+            "chunk_id": "r2",
+            "char_start": 0,
+            "char_end": 40,
+            "row_columns": {
+                "Дата": "06.04.2026 22:54",
+                "Описание операции": "Плата за оповещения",
+                "Сумма": "-99.00 ₽",
+            },
+        },
+    )
+    cites = build_retrieval_citations(
+        [doc],
+        original_text_by_file_id={"f-xlsx": sheet_dump},
+    )
+    assert cites[0]["quote_anchor"] == "Плата за оповещения"
+    assert "Операции" not in (cites[0]["quote_anchor"] or "")
+    assert cites[0]["highlight_targets"][0] == "Плата за оповещения"

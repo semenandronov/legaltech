@@ -307,7 +307,7 @@ const AssistantChatPage = () => {
           web_search: false,
           legal_research: isDraftMode ? false : isLegalResearch,
           use_legal_corpus: isDraftMode ? false : isLegalResearch,
-          court_practice: isDraftMode ? false : isCourtPractice,
+          court_practice: false,
           draft_mode: isDraftMode,
           document_context: isDraftMode && currentDraft ? currentDraft.content : undefined,
           attached_file_ids: selectedCaseFileIds.length > 0 ? selectedCaseFileIds : undefined,

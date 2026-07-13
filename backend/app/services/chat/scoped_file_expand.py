@@ -24,6 +24,7 @@ from langchain_core.documents import Document
 from app.config import config
 from app.services.chat.document_ref_scope import extract_document_refs, normalize_doc_ref
 from app.services.chat.retrieval_escalation import extract_question_anchors
+from app.services.chat.tabular_citation_policy import inventory_is_structured_table_rows
 
 logger = logging.getLogger(__name__)
 
@@ -414,7 +415,10 @@ def _inventory_from_chunks_and_text(
         inventory.append(Document(page_content=body, metadata=md))
 
     edge_docs: List[Document] = []
+    # Structured Excel/registers: cite row chunks only — never sheet-level original_text.
     text = (original_text or "").strip()
+    if text and inventory_is_structured_table_rows(chunks):
+        text = ""
     if text:
         windows = _windows_from_text(text)
         for i, w in enumerate(windows):
@@ -585,6 +589,9 @@ def expand_docs_within_scoped_files(
         # Allow expand from original_text alone when vector inventory is empty.
         if not chunks and not original:
             continue
+        # Row-indexed statements/Excel: BM25 over row chunks only (no sheet dump windows).
+        if inventory_is_structured_table_rows(chunks):
+            original = ""
         inventory_size = len(chunks) + (len(_windows_from_text(original)) if original else 0)
         if not force and inventory_size > scoped_file_expand_max_chunks() * 3:
             # Very large files: still allow pure chunk path if compact chunks.

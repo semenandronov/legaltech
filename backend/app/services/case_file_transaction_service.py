@@ -51,7 +51,7 @@ _DESCRIPTION_HEADER_RE = re.compile(
     re.IGNORECASE,
 )
 _DATE_DDMMYYYY_RE = re.compile(r"(\d{2})\.(\d{2})\.(\d{4})")
-_AMOUNT_NUM_RE = re.compile(r"[-+]?\s*[\d\s]+(?:[.,]\d{2})?")
+_AMOUNT_NUM_RE = re.compile(r"[-+]?\s*[\d\s]+(?:[.,]\d{1,2})?")
 
 
 @dataclass(frozen=True)
@@ -203,6 +203,9 @@ def parse_row_from_document(doc: Document) -> Optional[ParsedTransactionRow]:
     if not row:
         return None
     verbatim, refs = extract_row_source_from_document(doc)
+    if not verbatim:
+        # Native Excel / grid rows have no PDF geometry — use cell text for HTML highlight.
+        verbatim = (row.description or row.amount_raw or "").strip() or None
     return ParsedTransactionRow(
         global_row_index=row.global_row_index,
         table_index=row.table_index,

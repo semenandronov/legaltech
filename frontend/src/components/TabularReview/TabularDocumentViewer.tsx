@@ -24,6 +24,7 @@ import {
   highlightQuoteInHtml,
 } from "@/utils/citationHighlight"
 import type { ChunkLabViewerCellData } from "@/utils/chunkLabViewerCellData"
+import { isHtmlPreviewFileType } from "@/utils/fileType"
 
 interface CellData extends Omit<ChunkLabViewerCellData, 'highlightMode' | 'verbatimExtract' | 'sourcePage'> {
   verbatimExtract?: string | null
@@ -133,8 +134,8 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
         return
       }
 
-      // DOCX: convert to HTML server-side for proper rendering
-      if (fileTypeToLoad === "docx") {
+      // DOCX / Excel: convert to HTML server-side for proper rendering + highlight
+      if (isHtmlPreviewFileType(fileTypeToLoad)) {
         try {
           const htmlResponse = await getFileHtml(caseId, fileIdToLoad, false)
           if (htmlResponse.html) {
@@ -142,7 +143,7 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
             return
           }
         } catch (htmlErr) {
-          console.warn("[TabularDocumentViewer] DOCX→HTML failed, falling back to text:", htmlErr)
+          console.warn("[TabularDocumentViewer] HTML conversion failed, falling back to text:", htmlErr)
         }
       }
 
@@ -170,12 +171,19 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
   }
 
   const highlightQuote = cellData?.verbatimExtract ?? null
+  const highlightAlternates = cellData?.verbatimAlternates ?? null
 
   const documentHtml = React.useMemo(() => {
     if (!rawDocumentHtml) return null
-    if (!highlightQuote) return rawDocumentHtml
-    return highlightQuoteInHtml(rawDocumentHtml, highlightQuote)
-  }, [rawDocumentHtml, highlightQuote, highlightRevision])
+    if (!highlightQuote && !(highlightAlternates && highlightAlternates.length > 0)) {
+      return rawDocumentHtml
+    }
+    return highlightQuoteInHtml(
+      rawDocumentHtml,
+      highlightQuote || highlightAlternates?.[0] || '',
+      highlightAlternates,
+    )
+  }, [rawDocumentHtml, highlightQuote, highlightAlternates, highlightRevision])
 
   // Auto-scroll to highlighted mark in DOCX after render
   useEffect(() => {
@@ -411,7 +419,7 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
             />
             )}
           </Box>
-        ) : fileType === "docx" && documentHtml ? (
+        ) : isHtmlPreviewFileType(fileType) && documentHtml ? (
           <Box sx={{ p: 2 }}>
             <Box
               ref={docxContainerRef}
@@ -443,8 +451,8 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
                   {documentText}
                 </Box>
               )
-            ) : fileType === "docx" ? (
-              // DOCX loading/failed state — never show raw binary
+            ) : isHtmlPreviewFileType(fileType) ? (
+              // HTML preview loading/failed — never show raw binary
               <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", py: 6 }}>
                 <Typography variant="body2" color="text.secondary" textAlign="center">
                   {loading ? 'Загрузка документа…' : 'Не удалось отобразить документ. Скачайте файл для просмотра.'}

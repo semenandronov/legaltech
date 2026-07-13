@@ -2,9 +2,12 @@
  * Единая логика поиска цитаты в тексте и подсветки в HTML.
  * Приоритет: fuzzy match по буквам/цифрам (устойчив к пунктуации и пробелам),
  * затем literal substring с укороченными префиксами.
+ *
+ * Для Excel/HTML-таблиц: найти ячейку-кандидата → подсветить всю <tr>.
  */
 
 export const CITATION_HIGHLIGHT_MARK_ID = 'citation-highlight'
+export const CITATION_ROW_CLASS = 'citation-row-highlight'
 
 const MIN_QUOTE_LEN = 8
 const MIN_SEGMENT_LEN = 6
@@ -122,6 +125,116 @@ export function buildQuoteSearchCandidates(
   return out
 }
 
+/**
+ * Try candidates in order. Cell values (Excel/HTML) may be shorter than narrative quotes.
+ */
+export function findQuoteMatchAmongCandidates(
+  fullText: string,
+  candidates: Array<string | null | undefined>,
+  options?: { minLen?: number },
+): { start: number; end: number; matched: string } | null {
+  const minLen = options?.minLen ?? MIN_QUOTE_LEN
+  for (const raw of candidates) {
+    const quote = (raw ?? '').trim()
+    if (quote.length < 4) continue
+
+    // Short cell values: literal case-insensitive match first (dates/amounts).
+    if (quote.length < MIN_QUOTE_LEN) {
+      if (quote.length < Math.min(minLen, 4)) continue
+      const lower = fullText.toLowerCase()
+      const idx = lower.indexOf(quote.toLowerCase())
+      if (idx !== -1) {
+        return { start: idx, end: idx + quote.length, matched: quote }
+      }
+      continue
+    }
+
+    const hit = findQuoteMatchInPlain(fullText, quote)
+    if (hit) {
+      return { ...hit, matched: quote }
+    }
+  }
+  return null
+}
+
+function candidateMatchesText(text: string, candidate: string): boolean {
+  return Boolean(findQuoteMatchAmongCandidates(text, [candidate], { minLen: 4 }))
+}
+
+export type TableRowScore = {
+  index: number
+  hits: number
+  score: number
+  uniqueHits: number
+}
+
+/**
+ * Score HTML table rows for citation candidates (DOM-free, unit-testable).
+ *
+ * Prefers rows that match more candidates (description + amount + date),
+ * then longer matches, then uniquely matched values (not shared across rows).
+ */
+export function scoreTableRowsForCandidates(
+  rowTexts: string[],
+  candidates: Array<string | null | undefined>,
+): TableRowScore | null {
+  const cleaned = candidates
+    .map((c) => (c ?? '').trim())
+    .filter((c) => c.length >= 4)
+  if (!rowTexts.length || !cleaned.length) return null
+
+  const matchMatrix: boolean[][] = rowTexts.map((text) =>
+    cleaned.map((candidate) => candidateMatchesText(text, candidate)),
+  )
+
+  const uniqueFlags = cleaned.map((_, cIdx) => {
+    let count = 0
+    for (const row of matchMatrix) {
+      if (row[cIdx]) count += 1
+    }
+    return count === 1
+  })
+
+  const scores: TableRowScore[] = rowTexts.map((_, index) => {
+    let hits = 0
+    let score = 0
+    let uniqueHits = 0
+    for (let cIdx = 0; cIdx < cleaned.length; cIdx++) {
+      if (!matchMatrix[index][cIdx]) continue
+      hits += 1
+      score += cleaned[cIdx].length
+      if (uniqueFlags[cIdx]) {
+        uniqueHits += 1
+        score += cleaned[cIdx].length
+      }
+    }
+    return { index, hits, score, uniqueHits }
+  })
+
+  const viable = scores.filter((s) => s.hits > 0)
+  if (!viable.length) return null
+
+  viable.sort(
+    (a, b) =>
+      b.uniqueHits - a.uniqueHits ||
+      b.hits - a.hits ||
+      b.score - a.score ||
+      a.index - b.index,
+  )
+
+  // Prefer a uniquely identifying candidate when top ties on weak hits.
+  for (const candidate of cleaned) {
+    const matchingIndexes = rowTexts
+      .map((text, index) => (candidateMatchesText(text, candidate) ? index : -1))
+      .filter((index) => index >= 0)
+    if (matchingIndexes.length === 1) {
+      return scores[matchingIndexes[0]] ?? null
+    }
+  }
+
+  return viable[0] ?? null
+}
+
 function collectTextNodes(root: Node): Text[] {
   const nodes: Text[] = []
   const walk = (node: Node): void => {
@@ -184,18 +297,69 @@ function wrapPlainRangeInDom(
   return firstMark === false
 }
 
-/** Подсветить цитату в HTML-строке (DOCX preview). */
-export function highlightQuoteInHtml(html: string, quote: string): string {
-  if (!quote || quote.trim().length < MIN_QUOTE_LEN) return html
+function isDataTableRow(row: Element): row is HTMLTableRowElement {
+  if (!(row instanceof HTMLTableRowElement)) return false
+  // Header-only rows (th without td) are not citation targets.
+  return Boolean(row.querySelector('td'))
+}
+
+function markEntireTableRow(row: HTMLTableRowElement): void {
+  row.id = CITATION_HIGHLIGHT_MARK_ID
+  row.classList.add(CITATION_ROW_CLASS)
+  row.setAttribute('data-citation-highlight', 'true')
+  row.style.backgroundColor = '#fef08a'
+  row.querySelectorAll('td, th').forEach((cell) => {
+    const el = cell as HTMLElement
+    el.style.backgroundColor = '#fef08a'
+  })
+}
+
+/**
+ * Table path: locate the best <tr> for cell candidates and highlight the whole row.
+ * Returns true when a table row was highlighted.
+ */
+export function highlightTableRowInContainer(
+  container: HTMLElement,
+  candidates: Array<string | null | undefined>,
+): boolean {
+  const rows = Array.from(container.querySelectorAll('tr')).filter(isDataTableRow)
+  if (!rows.length) return false
+
+  const best = scoreTableRowsForCandidates(
+    rows.map((row) => row.textContent || ''),
+    candidates,
+  )
+  if (!best) return false
+
+  const target = rows[best.index]
+  if (!target) return false
+  markEntireTableRow(target)
+  return true
+}
+
+/** Подсветить цитату в HTML (DOCX prose / Excel table preview). */
+export function highlightQuoteInHtml(
+  html: string,
+  quote: string,
+  alternates?: Array<string | null | undefined>,
+): string {
+  const candidates = buildQuoteSearchCandidates(quote, alternates)
+  if (candidates.length === 0) return html
 
   try {
     const container = document.createElement('div')
     container.innerHTML = html
 
+    // Excel / HTML tables: whole-row highlight (production path for statements).
+    if (highlightTableRowInContainer(container, candidates)) {
+      return container.innerHTML
+    }
+
+    // DOCX / prose fallback: mark matched text span.
     const textNodes = collectTextNodes(container)
     const nodeTexts = textNodes.map((node) => node.textContent || '')
     const fullText = nodeTexts.join('')
-    const match = findQuoteMatchInPlain(fullText, quote)
+    const match = findQuoteMatchAmongCandidates(fullText, candidates, { minLen: 4 })
     if (!match) return html
 
     wrapPlainRangeInDom(textNodes, nodeTexts, match.start, match.end)

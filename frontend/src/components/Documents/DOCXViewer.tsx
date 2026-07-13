@@ -114,7 +114,10 @@ const DOCXViewer: React.FC<DOCXViewerProps> = ({
         const urlObj = URL.createObjectURL(blob)
         setDocxUrl(urlObj)
 
-        // Convert DOCX to HTML using mammoth (fallback)
+        // Convert DOCX to HTML using mammoth (fallback) — Excel has no client converter
+        if (!_filename.toLowerCase().match(/\.docx$/)) {
+          throw htmlError
+        }
         const arrayBuffer = await blob.arrayBuffer()
         const result = await mammoth.convertToHtml({ arrayBuffer })
         

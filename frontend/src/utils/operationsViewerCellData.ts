@@ -1,5 +1,5 @@
 /**
- * PDF viewer payload for operations rows — CITATION_CONTRACT_V1 aligned with Tabular Review.
+ * PDF/HTML viewer payload for operations rows — CITATION_CONTRACT_V1 aligned with Tabular Review.
  */
 import type { SourceReference } from '@/services/tabularReviewApi'
 import type { OperationTransaction } from '@/services/operationsApi'
@@ -8,9 +8,17 @@ import {
   tabularHighlightRevision,
   type TabularViewerCellData,
 } from '@/utils/tabularCellViewerData'
+import { buildQuoteSearchCandidates } from '@/utils/citationHighlight'
 
 export type OperationsViewerCellData = TabularViewerCellData & {
   verbatimAlternates?: string[] | null
+}
+
+function looksLikeLabeledRow(text: string): boolean {
+  const t = (text || '').trim()
+  if (!t) return false
+  const lines = t.split(/\n/).map((l) => l.trim()).filter(Boolean)
+  return lines.filter((l) => /^[^:]{1,40}:\s+\S/.test(l)).length >= 2
 }
 
 export function buildOperationsViewerCellData(
@@ -24,20 +32,40 @@ export function buildOperationsViewerCellData(
     page_bbox: ref.page_bbox ?? null,
   }))
 
+  const fragments = (transaction.highlight_fragments ?? []).filter(
+    (fragment) => fragment && String(fragment).trim().length >= 2,
+  )
+  const description = (transaction.description || '').trim()
+  const amount = (transaction.amount_raw || '').trim()
+  const verbatim = (transaction.verbatim_row_text || '').trim()
+
+  // Prefer bare cell text for HTML Excel preview; keep labeled verbatim as alternate.
+  const primary =
+    (description && description) ||
+    (fragments[0] && !looksLikeLabeledRow(fragments[0]) ? fragments[0] : null) ||
+    (amount && amount) ||
+    (verbatim && !looksLikeLabeledRow(verbatim) ? verbatim : null) ||
+    fragments[0] ||
+    verbatim ||
+    null
+
   const base = buildTabularViewerCellData({
     fileId: transaction.file_id,
     details: null,
     click: {
-      verbatimExtract: transaction.verbatim_row_text || transaction.description,
+      verbatimExtract: primary,
       sourcePage: transaction.page_start ?? undefined,
       sourceReferences: refs,
       highlightMode: 'verbatim',
     },
   })
 
-  const alternates = (transaction.highlight_fragments ?? []).filter(
-    (fragment) => fragment && fragment !== base.verbatimExtract,
-  )
+  const alternates = buildQuoteSearchCandidates(null, [
+    ...fragments,
+    description,
+    amount,
+    verbatim,
+  ]).filter((candidate) => candidate !== primary)
 
   return {
     ...base,
@@ -52,7 +80,11 @@ export function buildOperationsViewerCellData(
 export function operationsHighlightRevision(transaction: OperationTransaction): string {
   return tabularHighlightRevision({
     fileId: transaction.file_id,
-    verbatimExtract: transaction.verbatim_row_text || transaction.description,
+    verbatimExtract:
+      transaction.description ||
+      transaction.highlight_fragments?.[0] ||
+      transaction.verbatim_row_text ||
+      transaction.description,
     sourcePage: transaction.page_start,
   })
 }

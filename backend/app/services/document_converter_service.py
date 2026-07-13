@@ -73,7 +73,7 @@ class DocumentConverterService:
                 return self._convert_docx(file_content)
             elif file_type == 'pdf':
                 return self._convert_pdf(file_content)
-            elif file_type in ['xlsx', 'xls']:
+            elif file_type in ['xlsx', 'xls', 'xlsm']:
                 return self._convert_xlsx(file_content, filename)
             elif file_type == 'txt':
                 return self._convert_txt(file_content)
@@ -520,56 +520,87 @@ class DocumentConverterService:
     
     def _convert_xlsx(self, file_content: bytes, filename: str) -> str:
         """
-        Convert XLSX/XLS to HTML using openpyxl
-        
-        Args:
-            file_content: Excel file content as bytes
-            filename: Original filename
-            
-        Returns:
-            HTML string with tables
+        Convert XLSX/XLS to HTML using openpyxl for in-app preview + citation highlight.
         """
         try:
             import openpyxl
-            
-            # Load workbook
+            from datetime import date, datetime
+
             workbook = openpyxl.load_workbook(BytesIO(file_content), data_only=True)
-            
-            html_parts = ['<div class="xlsx-content">']
-            
-            # Convert each sheet to HTML table
+
+            def _fmt_cell(value: Any) -> str:
+                if value is None:
+                    return ""
+                if isinstance(value, datetime):
+                    return value.strftime("%d.%m.%Y")
+                if isinstance(value, date):
+                    return value.strftime("%d.%m.%Y")
+                if isinstance(value, float) and value.is_integer():
+                    return str(int(value))
+                if isinstance(value, float):
+                    return f"{value:.2f}"
+                return str(value)
+
+            html_parts = [
+                '<div class="xlsx-content">',
+                "<style>"
+                ".xlsx-content{font-family:inherit;font-size:13px;line-height:1.45}"
+                ".xlsx-sheet{margin-bottom:1.5rem;overflow-x:auto}"
+                ".sheet-name{margin:0 0 .75rem;font-size:1rem;font-weight:600}"
+                ".xlsx-table{border-collapse:collapse;width:100%;min-width:480px}"
+                ".xlsx-table th,.xlsx-table td{border:1px solid #d0d5dd;padding:6px 8px;"
+                "text-align:left;vertical-align:top;white-space:pre-wrap}"
+                ".xlsx-table th{background:#f2f4f7;font-weight:600}"
+                ".xlsx-table tr[data-row]:hover{background:#f9fafb}"
+                ".xlsx-table tr.citation-row-highlight,"
+                ".xlsx-table tr.citation-row-highlight td,"
+                ".xlsx-table tr.citation-row-highlight th{"
+                "background:#fef08a!important;outline:2px solid #eab308}"
+                "</style>",
+            ]
+
             for sheet_name in workbook.sheetnames:
                 sheet = workbook[sheet_name]
-                
-                html_parts.append(f'<div class="xlsx-sheet">')
+
+                html_parts.append('<div class="xlsx-sheet">')
                 html_parts.append(f'<h3 class="sheet-name">{sheet_name}</h3>')
                 html_parts.append('<table class="xlsx-table">')
-                
-                # Get dimensions
+
                 if sheet.max_row == 0 or sheet.max_column == 0:
                     html_parts.append('<tr><td colspan="1">Пустой лист</td></tr>')
                 else:
-                    # Add header row if first row looks like headers
                     for row_idx, row in enumerate(sheet.iter_rows(values_only=True), 1):
-                        html_parts.append('<tr>')
-                        for cell_value in row:
-                            cell_html = str(cell_value) if cell_value is not None else ''
-                            # Escape HTML special characters
-                            cell_html = cell_html.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-                            
-                            # Use th for first row if it looks like headers
-                            tag = 'th' if row_idx == 1 else 'td'
-                            html_parts.append(f'<{tag}>{cell_html}</{tag}>')
-                        html_parts.append('</tr>')
-                
-                html_parts.append('</table>')
-                html_parts.append('</div>')
-            
-            html_parts.append('</div>')
-            
-            html = '\n'.join(html_parts)
-            
-            logger.info(f"Successfully converted XLSX to HTML ({len(workbook.sheetnames)} sheets)")
+                        cells = [_fmt_cell(v) for v in row]
+                        fingerprint = "|".join(c for c in cells if c)[:120]
+                        safe_fp = (
+                            fingerprint.replace("&", "&amp;")
+                            .replace('"', "&quot;")
+                            .replace("<", "&lt;")
+                            .replace(">", "&gt;")
+                        )
+                        html_parts.append(
+                            f'<tr data-row="{row_idx}" data-row-key="{safe_fp}">'
+                        )
+                        for cell_html in cells:
+                            cell_escaped = (
+                                cell_html.replace("&", "&amp;")
+                                .replace("<", "&lt;")
+                                .replace(">", "&gt;")
+                            )
+                            tag = "th" if row_idx == 1 else "td"
+                            html_parts.append(f"<{tag}>{cell_escaped}</{tag}>")
+                        html_parts.append("</tr>")
+
+                html_parts.append("</table>")
+                html_parts.append("</div>")
+
+            html_parts.append("</div>")
+            html = "\n".join(html_parts)
+
+            logger.info(
+                "Successfully converted XLSX to HTML (%s sheets)",
+                len(workbook.sheetnames),
+            )
             return html
         except ImportError:
             logger.error("openpyxl library not installed")

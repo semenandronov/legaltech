@@ -2,7 +2,7 @@ import { buildQuoteSearchCandidates } from './citationHighlight'
 
 /**
  * Единый cellData для TabularDocumentViewer/PDF — как ChunkLabPage:
- * verbatim: quote (как во всплывашке цитаты) → quote_anchor → text_preview,
+ * verbatim: highlight_targets (table/Excel cells) → quote → quote_anchor → text_preview,
  * страница 1-based (sourcePageBasis: 'one'), bbox из индекса.
  */
 export type ChunkLabViewerCellData = {
@@ -18,10 +18,21 @@ export type ChunkLabViewerCellData = {
   charEnd?: number | null
 }
 
+function looksLikeLabeledRowChunk(text: string): boolean {
+  const t = text.trim()
+  if (!t) return false
+  const lines = t.split(/\n/).map((l) => l.trim()).filter(Boolean)
+  if (lines.length >= 2 && lines.filter((l) => /^[^:]{1,40}:\s+\S/.test(l)).length >= 2) {
+    return true
+  }
+  return /^[^:]{1,40}:\s+\S/.test(t) && t.includes('\n')
+}
+
 export function buildChunkLabViewerCellData(parts: {
   quote_anchor?: string | null
   quote?: string | null
   text_preview?: string | null
+  highlight_targets?: string[] | null
   page?: number | null
   bbox?: { x0?: number; y0?: number; x1?: number; y1?: number }
   bbox_regions?: Array<{ x0?: number; y0?: number; x1?: number; y1?: number }>
@@ -29,20 +40,29 @@ export function buildChunkLabViewerCellData(parts: {
   char_start?: number | null
   char_end?: number | null
 }): ChunkLabViewerCellData {
+  const targets = (parts.highlight_targets || [])
+    .map((t) => String(t || '').trim())
+    .filter((t) => t.length >= 2)
   const quote = (parts.quote && String(parts.quote).trim()) || ''
   const anchor = (parts.quote_anchor && String(parts.quote_anchor).trim()) || ''
   const preview = (parts.text_preview && String(parts.text_preview).trim()) || ''
-  // Совпадает с InlineCitationAdapter (quote first). Длинный aligned quote_anchor часто ≠ цитате в ответе.
+
+  // Table/Excel: cell targets beat labeled "Col: value" chunk quotes for DOM search.
   const extract =
-    (quote.length >= 8 && quote) ||
+    (targets[0] && targets[0]) ||
+    (anchor && !looksLikeLabeledRowChunk(anchor) ? anchor : null) ||
+    (quote.length >= 8 && !looksLikeLabeledRowChunk(quote) ? quote : null) ||
     (anchor && anchor) ||
     (quote && quote) ||
     (preview && preview) ||
     null
 
-  const alternates = buildQuoteSearchCandidates(null, [anchor, preview, quote]).filter(
-    (candidate) => candidate !== extract,
-  )
+  const alternates = buildQuoteSearchCandidates(null, [
+    ...targets,
+    anchor,
+    preview,
+    quote,
+  ]).filter((candidate) => candidate !== extract)
 
   return {
     verbatimExtract: extract,
@@ -67,6 +87,7 @@ export function citationHighlightRevision(parts: {
   char_end?: number | null
   quote?: string | null
   quote_anchor?: string | null
+  highlight_targets?: string[] | null
 }): string {
   return [
     parts.citation_id,
@@ -76,7 +97,8 @@ export function citationHighlightRevision(parts: {
     parts.char_end,
     parts.quote,
     parts.quote_anchor,
+    (parts.highlight_targets || []).join('|'),
   ]
     .map((value) => (value == null ? '' : String(value)))
-    .join(':')
+    .join('::')
 }
