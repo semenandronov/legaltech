@@ -372,6 +372,33 @@ def geometry_table_to_markdown(table: GeometryTable) -> str:
     return "\n".join(lines) + "\n"
 
 
+def export_table_item_geometry(
+    table_item: Any,
+    *,
+    doc: Any = None,
+    pdf_bytes: Optional[bytes] = None,
+    page_no: Optional[int] = None,
+) -> Optional[GeometryTable]:
+    """
+    Structured table matrix from Docling TableItem (grid + optional PDF geometry).
+
+    Prefer this over markdown for statement indexing — keeps native cells.
+    """
+    del doc  # reserved for exporters parity
+    words: List[PdfWord] = []
+    if pdf_bytes and page_no is not None and int(page_no) >= 1:
+        words, _height = extract_pdf_page_words(pdf_bytes, int(page_no) - 1)
+
+    refined = refine_geometry_table(table_item, pdf_words=words)
+    if refined is not None and refined.headers:
+        return refined
+
+    base = matrix_from_docling_table(table_item)
+    if base is not None and base.headers:
+        return base
+    return None
+
+
 def export_table_item_markdown(
     table_item: Any,
     *,
@@ -384,11 +411,9 @@ def export_table_item_markdown(
 
     PDF page_no is 1-based (Docling convention). Falls back to export_to_markdown.
     """
-    words: List[PdfWord] = []
-    if pdf_bytes and page_no is not None and int(page_no) >= 1:
-        words, _height = extract_pdf_page_words(pdf_bytes, int(page_no) - 1)
-
-    refined = refine_geometry_table(table_item, pdf_words=words)
+    refined = export_table_item_geometry(
+        table_item, doc=doc, pdf_bytes=pdf_bytes, page_no=page_no
+    )
     if refined is not None and refined.headers:
         return geometry_table_to_markdown(refined)
 
@@ -404,3 +429,25 @@ def export_table_item_markdown(
         return df.to_markdown(index=False).strip() + "\n"
     except Exception:
         return ""
+
+
+def shard_geometry_table(
+    table: GeometryTable,
+    *,
+    rows_per_group: int,
+) -> List[GeometryTable]:
+    """Split a large table into header + row groups (mirrors markdown sharding)."""
+    n = max(1, int(rows_per_group or 8))
+    if len(table.rows) <= n:
+        return [table]
+    out: List[GeometryTable] = []
+    for i in range(0, len(table.rows), n):
+        chunk = table.rows[i : i + n]
+        out.append(
+            GeometryTable(
+                headers=list(table.headers),
+                rows=[list(r) for r in chunk],
+                source=table.source,
+            )
+        )
+    return out

@@ -18,8 +18,26 @@ from app.services.document_indexing import build_index_chunks
 PDF_PATH = Path("/Users/semyon_andronov04/Downloads/funds_movement.pdf")
 
 
-def test_parse_operation_date_from_datetime():
-    assert parse_operation_date("24.06.2026 16:29") == date(2026, 6, 24)
+def test_parse_row_from_metadata_uses_category_as_description():
+    parsed = parse_row_from_metadata(
+        {
+            "chunk_level": "row",
+            "global_row_index": 0,
+            "table_index": 0,
+            "row_index": 0,
+            "row_columns": {
+                "Дата Операции (МСК)": "20.06.2026",
+                "Категория": "Оплата по QR-коду СБП Сервисы Яндекса. Операция по карте ****7035",
+                "Сумма В Валюте Счёта": "1 720,00",
+                "Остаток Средств": "5 694,16",
+            },
+        }
+    )
+    assert parsed is not None
+    assert parsed.description and "Сервисы Яндекса" in parsed.description
+    assert parsed.amount_rub == Decimal("1720.00")
+    assert parsed.operation_date == date(2026, 6, 20)
+
 
 
 def test_parse_amount_rub_negative():

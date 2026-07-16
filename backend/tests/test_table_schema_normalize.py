@@ -6,6 +6,7 @@ from app.services.table_schema_normalize import (
     lock_or_align_schema,
     lookup_column_value,
     looks_like_subtitle_row,
+    normalize_date_cell,
     normalize_stored_row_columns,
     parse_markdown_pipe_table_schema,
     primary_header_label,
@@ -310,3 +311,408 @@ def test_indexer_repairs_docling_phantom_columns(monkeypatch):
     assert len(cols) == 4
     assert "Дата Операции (МСК)" in cols
     assert rows[0].metadata.get("column_roles")
+
+
+def test_normalize_date_cell_dedupes_triple_date():
+    assert normalize_date_cell("11.02.2025 11.02.2025 11.02.2025") == "11.02.2025"
+    assert normalize_date_cell("10.07.2026 19.28 887717") == "10.07.2026 19.28 887717"
+
+
+def test_parse_sber_debit_page_break_stitch_and_date_dedup():
+    """Debit-card statement: page break splits 'Операция по' / 'карте' + balance footer."""
+    md = "\n".join(
+        [
+            "| № | Дата | Категория | Остаток | Дата Операции МСК |",
+            "|---|---|---|---|---|",
+            "| 940 | 11.02.2025 11.02.2025 11.02.2025 | "
+            "Покупка. Операция по | | 11.02.2025 |",
+            "| | | карте | 1 743,19 | |",
+            "| 941 | 12.02.2025 | Перевод | 1 243,19 | 12.02.2025 |",
+        ]
+    )
+    parsed = parse_markdown_pipe_table_schema(md)
+    assert parsed is not None
+    assert len(parsed.data_rows) == 2
+    row940 = parsed.data_rows[0]
+    assert row940[1] == "11.02.2025"
+    assert "Операция по карте" in row940[2]
+    assert row940[3] == "1 743,19"
+    assert "940" in row940[0]
+    row941 = parsed.data_rows[1]
+    assert "Перевод" in row941[2]
+    assert row941[3] == "1 243,19"
+
+
+def test_stitch_open_desc_when_amount_lands_on_tail():
+    """Real pattern: '...Операция по' without amount + 'карте ****' with amount."""
+    md = "\n".join(
+        [
+            "| Дата Операции (МСК) | Категория | Сумма В Валюте Счёта | Остаток Средств |",
+            "|---|---|---|---|",
+            "| 26.12.2025 | Перевод с карты Перевод для А. Семён Андреевич. Операция по | | |",
+            "| 26.12.2025 | карте ****6681 | 5 300,25 | 0,00 |",
+            "| 26.12.2025 | Перевод на карту | +8 000,00 | 8 000,25 |",
+        ]
+    )
+    parsed = parse_markdown_pipe_table_schema(md)
+    assert parsed is not None
+    assert len(parsed.data_rows) == 2
+    first = parsed.data_rows[0]
+    assert "Операция по карте ****6681" in first[1]
+    assert first[2] == "5 300,25"
+    assert first[3] == "0,00"
+
+
+def test_unglue_packed_next_op_then_stitch_tail():
+    """Description packs next op head; next row is orphan 'карте' with amount."""
+    md = "\n".join(
+        [
+            "| Дата Операции (МСК) | Категория | Сумма В Валюте Счёта | Остаток Средств |",
+            "|---|---|---|---|",
+            "| 11.02.2025 | Рестораны и кафе EVRAZIYA SANKT-PETERBU RUS. "
+            "Операция по карте ****6681 Перевод на карту Перевод от A. | 1 200,50 | 542,69 |",
+            "| 11.02.2025 | карте | +1 482,85 | 1 743,19 |",
+        ]
+    )
+    parsed = parse_markdown_pipe_table_schema(md)
+    assert parsed is not None
+    assert len(parsed.data_rows) == 2
+    first, second = parsed.data_rows
+    assert first[1].endswith("Операция по карте ****6681")
+    assert "Перевод" not in first[1]
+    assert first[2] == "1 200,50"
+    assert "Перевод на карту" in second[1]
+    assert "Операция по карте" in second[1]
+    assert second[2] == "+1 482,85"
+
+
+def test_explode_dual_operation_in_one_cell():
+    md = "\n".join(
+        [
+            "| Дата Операции (МСК) | Категория | Сумма В Валюте Счёта | Остаток Средств |",
+            "|---|---|---|---|",
+            "| 03.07.2024 | Супермаркеты PEKARNYA BUKHANKA Gorod Sankt-P RUS. "
+            "Операция по карте ****6681 Перевод с карты Перевод для Ф. Анастасия "
+            "Дмитриевна. Операция по карте ****6681 | 85,00 | 5 531,58 |",
+        ]
+    )
+    parsed = parse_markdown_pipe_table_schema(md)
+    assert parsed is not None
+    assert len(parsed.data_rows) == 2
+    first, second = parsed.data_rows
+    assert first[1].endswith("Операция по карте ****6681")
+    assert "Перевод" not in first[1]
+    assert first[2] == "85,00"
+    assert "Перевод с карты" in second[1]
+    assert second[2] == ""
+
+
+def test_realign_time_in_category_description_in_amount():
+    md = "\n".join(
+        [
+            "| Дата Операции (МСК) | Категория | Сумма В Валюте Счёта | Остаток Средств |",
+            "|---|---|---|---|",
+            "| 06.07.2024 | 21:07 535423 | "
+            "Супермаркеты LENTA-738 Pargolovo RUS. Операция по карте ****6681 | 679,85 |",
+        ]
+    )
+    parsed = parse_markdown_pipe_table_schema(md)
+    assert parsed is not None
+    assert len(parsed.data_rows) == 1
+    row = parsed.data_rows[0]
+    assert "21:07" in row[0] and "535423" in row[0]
+    assert "LENTA-738" in row[1]
+    assert row[2] == ""
+    assert row[3] == "679,85"
+
+
+def test_locked_schema_drops_repeated_header_on_page2():
+    page1 = "\n".join(
+        [
+            "| Дата Операции (МСК) | Категория | Сумма В Валюте Счёта | Остаток Средств |",
+            "|---|---|---|---|",
+            "| 10.07.2026 | Перевод на карту | +8 000,00 | 8 044,91 |",
+        ]
+    )
+    first = parse_markdown_pipe_table_schema(page1)
+    assert first is not None
+    page2 = "\n".join(
+        [
+            "| Дата Операции (МСК) | Категория | Сумма В Валюте Счёта | Остаток Средств |",
+            "|---|---|---|---|",
+            "| Дата обработки и код | Описание операции | Сумма | Остаток |",
+            "| 09.07.2026 | Супермаркеты LENTA | 100,00 | 200,00 |",
+        ]
+    )
+    second = parse_markdown_pipe_table_schema(
+        page2,
+        locked_columns=first.columns,
+        locked_roles=list(first.column_roles),
+    )
+    assert second is not None
+    assert second.columns == first.columns
+    assert len(second.data_rows) == 1
+    assert "LENTA" in second.data_rows[0][1]
+    assert "schema_locked" in second.quality_warnings
+
+
+def test_stitch_mask_only_tail_after_open_card_text():
+    md = "\n".join(
+        [
+            "| Дата Операции (МСК) | Категория | Сумма В Валюте Счёта | Остаток Средств |",
+            "|---|---|---|---|",
+            "| 05.07.2024 | Транспорт bilet.nspk.ru. Операция по карте | | |",
+            "| 06.07.2024 | ****6681 | 65,00 | 5 939,66 |",
+        ]
+    )
+    parsed = parse_markdown_pipe_table_schema(md)
+    assert parsed is not None
+    assert len(parsed.data_rows) == 1
+    row = parsed.data_rows[0]
+    assert "****6681" in row[1]
+    assert row[2] == "65,00"
+
+
+def test_stitch_category_head_and_merchant_spill():
+    """Category label and merchant body split across Docling rows."""
+    md = "\n".join(
+        [
+            "| Дата Операции (МСК) | Категория | Сумма В Валюте Счёта | Остаток Средств |",
+            "|---|---|---|---|",
+            "| 12.07.2026 | Супермаркеты | | |",
+            "| 12.07.2026 | MAGAZIN KEDR >MOSKVA RUS. Операция по карте ****0805 | 1 245,90 | 3 100,00 |",
+        ]
+    )
+    parsed = parse_markdown_pipe_table_schema(md)
+    assert parsed is not None
+    assert len(parsed.data_rows) == 1
+    row = parsed.data_rows[0]
+    assert row[1].startswith("Супермаркеты MAGAZIN KEDR")
+    assert "Операция по карте ****0805" in row[1]
+    assert row[2] == "1 245,90"
+
+
+def test_unglue_account_op_then_category_merchant_chain():
+    """Packed '...по счёту **** N Супермаркеты' + merchant row → two clean ops."""
+    md = "\n".join(
+        [
+            "| Дата Операции (МСК) | Категория | Сумма В Валюте Счёта | Остаток Средств |",
+            "|---|---|---|---|",
+            "| 11.07.2026 | Перевод СБП AUTOPLATEZH. Операция по счету ****0805 "
+            "Супермаркеты | 500,00 | 4 000,00 |",
+            "| 11.07.2026 | MAGAZIN KEDR >MOSKVA RUS. Операция по карте ****0805 | "
+            "1 245,90 | 2 754,10 |",
+        ]
+    )
+    parsed = parse_markdown_pipe_table_schema(md)
+    assert parsed is not None
+    assert len(parsed.data_rows) == 2
+    first, second = parsed.data_rows
+    assert first[1].endswith("Операция по счету ****0805")
+    assert "Супермаркеты" not in first[1]
+    assert first[2] == "500,00"
+    assert second[1].startswith("Супермаркеты MAGAZIN KEDR")
+    assert second[2] == "1 245,90"
+
+
+def test_stitch_qr_channel_head_with_merchant_continuation():
+    md = "\n".join(
+        [
+            "| Дата Операции (МСК) | Категория | Сумма В Валюте Счёта | Остаток Средств |",
+            "|---|---|---|---|",
+            "| 10.07.2026 | Оплата по QR-коду СБП | | |",
+            "| 10.07.2026 | RE. Операция по карте ****0805 | 350,00 | 9 650,00 |",
+        ]
+    )
+    parsed = parse_markdown_pipe_table_schema(md)
+    assert parsed is not None
+    assert len(parsed.data_rows) == 1
+    row = parsed.data_rows[0]
+    assert "Оплата по QR-коду СБП" in row[1]
+    assert "RE." in row[1]
+    assert row[2] == "350,00"
+
+
+def test_drop_orphan_bare_category_without_amount():
+    md = "\n".join(
+        [
+            "| Дата Операции (МСК) | Категория | Сумма В Валюте Счёта | Остаток Средств |",
+            "|---|---|---|---|",
+            "| 09.07.2026 | Перевод на карту | +1 000,00 | 5 000,00 |",
+            "| 09.07.2026 | Супермаркеты | | |",
+        ]
+    )
+    parsed = parse_markdown_pipe_table_schema(md)
+    assert parsed is not None
+    assert len(parsed.data_rows) == 1
+    assert "Перевод на карту" in parsed.data_rows[0][1]
+
+
+def test_assess_operation_row_quality_flags_missing_amount():
+    from app.services.table_schema_normalize import assess_operation_row_quality
+
+    score, warnings = assess_operation_row_quality(
+        {
+            "Дата Операции (МСК)": "10.07.2026",
+            "Категория": "Супермаркеты LENTA",
+            "Сумма В Валюте Счёта": "",
+            "Остаток Средств": "100,00",
+        },
+        column_roles=["date", "category", "amount", "balance"],
+    )
+    assert score < 1.0
+    assert "missing_amount" in warnings
+
+
+def test_stitch_amount_on_thin_qr_head_body_on_next_row():
+    """Amount on thin QR head + merchant body (Latin) without amount → one op."""
+    md = "\n".join(
+        [
+            "| Дата Операции (МСК) | Категория | Сумма В Валюте Счёта | Остаток Средств |",
+            "|---|---|---|---|",
+            "| 20.06.2026 | Оплата по QR-коду СБП | 1 720,00 | 5 694,16 |",
+            "| 20.06.2026 | RE. Операция по карте ****7035 | | |",
+            "| 20.06.2026 | Оплата по QR-коду СБП ООО БУРГЕР РУС. "
+            "Операция по карте ****7035 | 279,99 | 7 414,16 |",
+        ]
+    )
+    parsed = parse_markdown_pipe_table_schema(md)
+    assert parsed is not None
+    assert len(parsed.data_rows) == 2
+    first, second = parsed.data_rows
+    assert first[1].startswith("Оплата по QR-коду СБП RE.")
+    assert "****7035" in first[1]
+    assert first[2] == "1 720,00"
+    assert "БУРГЕР" in second[1]
+    assert second[2] == "279,99"
+
+
+def test_stitch_amount_on_thin_qr_head_cyrillic_merchant_body():
+    """Amount on thin QR head + Cyrillic merchant body (Сервисы Яндекса) → one op."""
+    md = "\n".join(
+        [
+            "| Дата Операции (МСК) | Категория | Сумма В Валюте Счёта | Остаток Средств |",
+            "|---|---|---|---|",
+            "| 20.06.2026 | Оплата по QR-коду СБП | 1 720,00 | 5 694,16 |",
+            "| 20.06.2026 | Сервисы Яндекса. Операция по карте ****7035 | | |",
+            "| 20.06.2026 | Оплата по QR-коду СБП ООО БУРГЕР РУС. "
+            "Операция по карте ****7035 | 279,99 | 7 414,16 |",
+        ]
+    )
+    parsed = parse_markdown_pipe_table_schema(md)
+    assert parsed is not None
+    assert len(parsed.data_rows) == 2
+    first, second = parsed.data_rows
+    assert first[1].startswith("Оплата по QR-коду СБП Сервисы Яндекса")
+    assert "****7035" in first[1]
+    assert first[2] == "1 720,00"
+    assert "БУРГЕР" in second[1]
+    assert second[2] == "279,99"
+
+
+def test_do_not_stitch_qr_head_onto_standalone_channel_op():
+    """QR thin head must not absorb a sibling channel-headed op (Супермаркеты…)."""
+    md = "\n".join(
+        [
+            "| Дата Операции (МСК) | Категория | Сумма В Валюте Счёта | Остаток Средств |",
+            "|---|---|---|---|",
+            "| 07.06.2026 | Оплата по QR-коду СБП | 200,00 | 7 117,47 |",
+            "| 07.06.2026 | Супермаркеты MAGAZIN NORDIK MIRNYJ RUS. "
+            "Операция по карте ****7035 | | |",
+        ]
+    )
+    parsed = parse_markdown_pipe_table_schema(md)
+    assert parsed is not None
+    assert len(parsed.data_rows) == 2
+    assert parsed.data_rows[0][1] == "Оплата по QR-коду СБП"
+    assert "NORDIK" in parsed.data_rows[1][1]
+    assert parsed.data_rows[1][2] == ""
+
+
+def test_do_not_stitch_complete_funded_op_onto_next_missing_amount():
+    """Independent op without amount stays separate when previous is already complete."""
+    md = "\n".join(
+        [
+            "| Дата Операции (МСК) | Категория | Сумма В Валюте Счёта | Остаток Средств |",
+            "|---|---|---|---|",
+            "| 07.06.2026 | Оплата по QR-коду СБП case-battle. "
+            "Операция по карте ****7035 | 200,00 | 7 117,47 |",
+            "| 07.06.2026 | Супермаркеты MAGAZIN NORDIK MIRNYJ RUS. "
+            "Операция по карте ****7035 | | |",
+        ]
+    )
+    parsed = parse_markdown_pipe_table_schema(md)
+    assert parsed is not None
+    assert len(parsed.data_rows) == 2
+    assert "case-battle" in parsed.data_rows[0][1]
+    assert "NORDIK" in parsed.data_rows[1][1]
+    assert parsed.data_rows[1][2] == ""
+
+
+def test_normalize_date_cell_keeps_first_of_dual_calendar_dates():
+    assert normalize_date_cell("08.06.2026 09.06.2026") == "08.06.2026"
+    assert normalize_date_cell("04.06.2026 05.06.2026 17:01") == "04.06.2026 17:01"
+
+
+def test_stitch_transfer_head_with_attribution_body():
+    """Thin «Перевод на карту» + amount, then «Перевод от … Операция по карте» → one op."""
+    md = "\n".join(
+        [
+            "| Дата Операции (МСК) | Категория | Сумма В Валюте Счёта | Остаток Средств |",
+            "|---|---|---|---|",
+            "| 09.07.2026 00:28 | Перевод на карту | +5 051,28 | 7 507,91 |",
+            "| 09.07.2026 622521 | Перевод от А. Семён Андреевич. "
+            "Операция по карте ****6681 | | 11 031,43 |",
+            "| 09.07.2026 00:18 | Оплата по QR-коду СБП SBSCR. "
+            "Операция по карте ****6681 | 349,00 | 2 456,63 |",
+        ]
+    )
+    parsed = parse_markdown_pipe_table_schema(md)
+    assert parsed is not None
+    assert len(parsed.data_rows) == 2
+    first = parsed.data_rows[0]
+    assert first[2] == "+5 051,28"
+    assert first[3] == "7 507,91"
+    assert "Перевод на карту" in first[1]
+    assert "Семён" in first[1] or "Семен" in first[1]
+    assert "****6681" in first[1]
+    assert "622521" in first[0]
+
+
+def test_drop_table_header_echo_row():
+    """Mid-page column-title echo is not a transaction."""
+    md = "\n".join(
+        [
+            "| Дата Операции (МСК) | Категория | Сумма В Валюте Счёта | Остаток Средств |",
+            "|---|---|---|---|",
+            "| 20.10.2025 12:00 | Супермаркеты MAGNIT. Операция по карте ****1 | 100,00 | 500,00 |",
+            "| и код авторизации | Описание операции | Сумма в валюте операции 2 | 8 202,60 |",
+            "| 21.10.2025 13:00 | Оплата по QR-коду СБП cafe. Операция по карте ****1 | 50,00 | 450,00 |",
+        ]
+    )
+    parsed = parse_markdown_pipe_table_schema(md)
+    assert parsed is not None
+    assert len(parsed.data_rows) == 2
+    assert "MAGNIT" in parsed.data_rows[0][1]
+    assert "cafe" in parsed.data_rows[1][1]
+
+
+def test_stitch_body_then_amount_on_thin_head():
+    """Merchant body first (no money), thin category head with money next → one op."""
+    md = "\n".join(
+        [
+            "| Дата Операции (МСК) | Категория | Сумма В Валюте Счёта | Остаток Средств |",
+            "|---|---|---|---|",
+            "| 08.01.2026 | Прочие расходы REG.RU SAMARA RUS. Операция по карте ****6681 | | |",
+            "| 09.01.2026 | Прочие расходы | 494,00 | 0,00 |",
+            "| 10.01.2026 | Оплата по QR-коду СБП x. Операция по карте ****1 | 10,00 | 100,00 |",
+        ]
+    )
+    parsed = parse_markdown_pipe_table_schema(md)
+    assert parsed is not None
+    assert len(parsed.data_rows) == 2
+    first = parsed.data_rows[0]
+    assert first[2] == "494,00"
+    assert first[3] == "0,00"
+    assert "REG.RU" in first[1]
+    assert "Прочие расходы" in first[1]

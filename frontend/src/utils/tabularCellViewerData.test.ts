@@ -61,6 +61,39 @@ describe('buildTabularViewerCellData', () => {
     expect(out.verbatimAlternates).toContain('первый')
   })
 
+  it('ignores shared legacy bbox/char spans across different quotes', () => {
+    const sharedRefs = [
+      {
+        text: 'первый',
+        page: 2,
+        char_start: 100,
+        char_end: 200,
+        bbox: { x0: 1, y0: 2, x1: 3, y1: 4 },
+      },
+      {
+        text: 'второй',
+        page: 6,
+        char_start: 100,
+        char_end: 200,
+        bbox: { x0: 10, y0: 20, x1: 30, y1: 40 },
+      },
+    ]
+    const out = buildTabularViewerCellData({
+      details: { ...details, source_references: sharedRefs },
+      fileId: 'f1',
+      click: {
+        sourceReferences: sharedRefs,
+        sourceReferenceIndex: 1,
+      },
+    })
+    expect(out.verbatimExtract).toBe('второй')
+    expect(out.sourcePage).toBe(6)
+    expect(out.highlightBBox).toBeUndefined()
+    expect(out.highlightBBoxRegions).toBeUndefined()
+    expect(out.charStart).toBeUndefined()
+    expect(out.charEnd).toBeUndefined()
+  })
+
   it('defaults to first reference when index omitted', () => {
     const out = buildTabularViewerCellData({
       details,

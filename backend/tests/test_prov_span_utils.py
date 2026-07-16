@@ -32,6 +32,23 @@ def test_narrow_char_span_to_quote():
     assert original[hs:he] == "начало работ по договору"
 
 
+def test_locate_quote_in_original_finds_each_passage():
+    from app.services.prov_span_utils import locate_quote_in_original
+
+    original = (
+        "Шиошвили возражают против банкротства. "
+        "Позже просят ввести реструктуризацию долгов сроком на 6 месяцев."
+    )
+    a = locate_quote_in_original(original, "Шиошвили возражают против банкротства")
+    b = locate_quote_in_original(
+        original, "просят ввести реструктуризацию долгов сроком на 6 месяцев"
+    )
+    assert a is not None and b is not None
+    assert a[0] != b[0]
+    assert "возражают" in original[a[0] : a[1]]
+    assert "реструктуризацию" in original[b[0] : b[1]]
+
+
 def test_extract_bbox_regions_filters_by_char_span():
     meta = {
         "dl_meta": {

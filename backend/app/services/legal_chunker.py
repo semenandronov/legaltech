@@ -35,7 +35,13 @@ from langchain_core.documents import Document
 
 from app.config import config
 from app.services.chunk_ids import generate_chunk_id
-from app.services.docling_table_geometry import export_table_item_markdown
+from app.services.docling_table_geometry import (
+    GeometryTable,
+    export_table_item_geometry,
+    export_table_item_markdown,
+    geometry_table_to_markdown,
+    shard_geometry_table,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +178,8 @@ class _Segment:
     table_shard_index: Optional[int] = None
     prov_items: List[Dict[str, Any]] = field(default_factory=list)
     page_bbox: Optional[Dict[str, float]] = None
+    # Native Docling/geometry matrix — preferred over markdown for statement rows.
+    table_geometry: Optional[GeometryTable] = None
 
 
 @dataclass
@@ -743,6 +751,8 @@ def _iter_docling_segments(
         if page_sizes and page_no is not None:
             seg_page_bbox = page_sizes.get(int(page_no))
 
+        table_geometry: Optional[GeometryTable] = None
+
         if isinstance(item, (SectionHeaderItem, TitleItem)):
             text = _clean_text(getattr(item, "text", "") or "")
             if not text:
@@ -763,13 +773,23 @@ def _iter_docling_segments(
             text = f"{marker} {inner}".strip() if marker else inner
 
         elif isinstance(item, TableItem):
-            md = export_table_item_markdown(
+            geom = export_table_item_geometry(
                 item,
                 doc=doc,
                 pdf_bytes=pdf_bytes,
                 page_no=int(page_no) if page_no is not None else None,
             )
-            text = _clean_text(md or "")
+            if geom is not None:
+                table_geometry = geom
+                text = _clean_text(geometry_table_to_markdown(geom) or "")
+            else:
+                md = export_table_item_markdown(
+                    item,
+                    doc=doc,
+                    pdf_bytes=pdf_bytes,
+                    page_no=int(page_no) if page_no is not None else None,
+                )
+                text = _clean_text(md or "")
 
         elif isinstance(item, CodeItem):
             text = _clean_text(getattr(item, "text", "") or "")
@@ -805,6 +825,7 @@ def _iter_docling_segments(
             is_table=isinstance(item, TableItem),
             prov_items=item_prov_dicts,
             page_bbox=seg_page_bbox,
+            table_geometry=table_geometry,
         )
 
 
@@ -911,6 +932,7 @@ def _renumber_segment_offsets(segments: List[_Segment]) -> List[_Segment]:
                 table_shard_index=s.table_shard_index,
                 prov_items=list(s.prov_items or []),
                 page_bbox=s.page_bbox,
+                table_geometry=s.table_geometry,
             )
         )
     return out
@@ -977,6 +999,39 @@ def _split_oversized_segment_text(text: str, chunk_size: int, chunk_overlap: int
 def _expand_table_segment(seg: _Segment, min_chars: int, rows_per_group: int, profile: _Profile) -> List[_Segment]:
     if len(seg.text) < min_chars:
         return [seg]
+
+    # Prefer sharding the native matrix when available (keeps cell integrity).
+    if seg.table_geometry is not None and len(seg.table_geometry.rows) > max(1, rows_per_group):
+        pieces = shard_geometry_table(seg.table_geometry, rows_per_group=rows_per_group)
+        if len(pieces) > 1:
+            logger.info(
+                "table_shards geometry rows=%s shards=%s",
+                len(seg.table_geometry.rows),
+                len(pieces),
+            )
+            out: List[_Segment] = []
+            for idx, geom in enumerate(pieces):
+                body = geometry_table_to_markdown(geom)
+                out.append(
+                    _Segment(
+                        text=body if body.endswith("\n") else body + "\n",
+                        section_title=seg.section_title,
+                        section_number=seg.section_number,
+                        parent_path=list(seg.parent_path or []),
+                        page_no=seg.page_no,
+                        char_start=seg.char_start,
+                        char_end=seg.char_end,
+                        is_heading=False,
+                        is_table=True,
+                        is_table_fragment=True,
+                        table_shard_index=idx,
+                        prov_items=list(seg.prov_items or []),
+                        page_bbox=seg.page_bbox,
+                        table_geometry=geom,
+                    )
+                )
+            return out
+
     shards = _shard_markdown_table_text(seg.text, rows_per_group)
     if not shards:
         max_seg = max(
@@ -986,12 +1041,13 @@ def _expand_table_segment(seg: _Segment, min_chars: int, rows_per_group: int, pr
         return _expand_oversized_non_table_segment(seg, max_seg, int(profile.macro_overlap))
     if len(shards) <= 1:
         return [seg]
+
     logger.info(
-        "table_shards filename_hint chars=%s shards=%s",
+        "table_shards markdown chars=%s shards=%s",
         len(seg.text),
         len(shards),
     )
-    out: List[_Segment] = []
+    out = []
     for idx, body in enumerate(shards):
         out.append(
             _Segment(
@@ -1008,6 +1064,7 @@ def _expand_table_segment(seg: _Segment, min_chars: int, rows_per_group: int, pr
                 table_shard_index=idx,
                 prov_items=list(seg.prov_items or []),
                 page_bbox=seg.page_bbox,
+                table_geometry=None,
             )
         )
     return out
@@ -1043,6 +1100,7 @@ def _expand_oversized_non_table_segment(seg: _Segment, max_chars: int, overlap: 
                 table_shard_index=seg.table_shard_index,
                 prov_items=list(seg.prov_items or []),
                 page_bbox=seg.page_bbox,
+                table_geometry=seg.table_geometry,
             )
         )
     return out

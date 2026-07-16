@@ -209,8 +209,23 @@ const CaseOverviewPage = () => {
     getDocuments(caseId).then((d) => setFiles(mapCaseDocuments(d.documents || [])))
   }, [caseId])
 
+  // Реестр выписок оцифровывается асинхронно и появляется отдельно от документов,
+  // поэтому его нужно перечитывать после завершения обработки / при открытии хаба.
+  const reloadOperationsRegistry = useCallback(async () => {
+    if (!caseId) return
+    const [filesRes, sessionsRes] = await Promise.allSettled([
+      operationsApi.listAvailableFiles(caseId),
+      operationsApi.listSessions(caseId),
+    ])
+    if (filesRes.status === 'fulfilled') setOperationsFiles(filesRes.value)
+    if (sessionsRes.status === 'fulfilled') setOperationsSessions(sessionsRes.value)
+  }, [caseId])
+
   const { processingMap, ingestUploadResponse, fetchStatus } = useCaseProcessingPoll(caseId ?? null, {
-    onAllDone: reloadFiles,
+    onAllDone: () => {
+      reloadFiles()
+      void reloadOperationsRegistry()
+    },
   })
 
   const [showAllActions, setShowAllActions] = useState(false)
@@ -228,6 +243,27 @@ const CaseOverviewPage = () => {
     if (!caseId) return
     loadAll()
   }, [caseId])
+
+  // Открытие хаба «Операции» всегда должно показывать свежий реестр выписок.
+  useEffect(() => {
+    if (!showOperationsHub) return
+    void reloadOperationsRegistry()
+  }, [showOperationsHub, reloadOperationsRegistry])
+
+  // Возврат на вкладку подтягивает свежий реестр (страховка от гонки с оцифровкой).
+  useEffect(() => {
+    if (!caseId) return
+    const onFocus = () => {
+      if (document.visibilityState === 'hidden') return
+      void reloadOperationsRegistry()
+    }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onFocus)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onFocus)
+    }
+  }, [caseId, reloadOperationsRegistry])
 
   const anyFileProcessing = Object.values(processingMap).some(
     (s) => s === 'pending' || s === 'processing',
@@ -1845,7 +1881,6 @@ const CaseOverviewPage = () => {
           open={showOperationsHub}
           onClose={() => setShowOperationsHub(false)}
           sessions={operationsSessions}
-          loadingSessions={loadingOperationsSessions}
           files={operationsFiles}
           loadingFiles={loadingOperationsSessions}
           onOpenFile={(fileId) => {

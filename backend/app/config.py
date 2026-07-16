@@ -636,6 +636,17 @@ class Config:
     STRUCTURED_TABLE_MIN_TABLE_SEGMENTS: int = int(
         os.getenv("STRUCTURED_TABLE_MIN_TABLE_SEGMENTS", "1") or "1"
     )
+    # Digital PDF statements: geometry-first indexing (PyMuPDF words + column snap).
+    # Only when doc_type is a statement/register OR register probe agrees; OCR → Docling.
+    STATEMENT_GEOMETRY_INDEXING_ENABLED: bool = (
+        os.getenv("STATEMENT_GEOMETRY_INDEXING_ENABLED", "true").strip().lower() == "true"
+    )
+    STATEMENT_GEOMETRY_MIN_AMOUNT_RATIO: float = float(
+        os.getenv("STATEMENT_GEOMETRY_MIN_AMOUNT_RATIO", "0.85") or "0.85"
+    )
+    STATEMENT_GEOMETRY_MIN_DATE_RATIO: float = float(
+        os.getenv("STATEMENT_GEOMETRY_MIN_DATE_RATIO", "0.90") or "0.90"
+    )
 
     # Temporary: case chat graph + HTTP prep exactly like commit 0018729 (no SQL/hybrid router).
   # Set true to A/B test latency vs structured-data stack.

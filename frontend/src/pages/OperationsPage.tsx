@@ -19,6 +19,7 @@ import {
   type OperationsSummary,
 } from '@/services/operationsApi'
 import { getCase } from '@/services/api'
+import { useCaseProcessingPoll } from '@/hooks/useCaseProcessingPoll'
 import { buildMainNavItems } from '@/lib/mainNavItems'
 import {
   buildOperationsTabularColumns,
@@ -58,7 +59,6 @@ const OperationsPage = () => {
   const [showHub, setShowHub] = useState(false)
   const [hubInitialStep, setHubInitialStep] = useState<'list' | 'pick'>('list')
   const [sessions, setSessions] = useState<OperationsSessionSummary[]>([])
-  const [loadingSessions, setLoadingSessions] = useState(true)
   const [rowSearch, setRowSearch] = useState('')
   const [valueFilters, setValueFilters] = useState<ColumnValueFilterCondition[]>([])
   const [filterPopoverOpen, setFilterPopoverOpen] = useState(false)
@@ -68,6 +68,7 @@ const OperationsPage = () => {
   const [showHelp, setShowHelp] = useState(false)
   const [selectedTransaction, setSelectedTransaction] = useState<OperationTransaction | null>(null)
   const sessionReadyRef = useRef(false)
+  const lastRefreshAtRef = useRef(0)
 
   const navItems = buildMainNavItems()
 
@@ -110,14 +111,11 @@ const OperationsPage = () => {
 
   const loadSessions = useCallback(async () => {
     if (!caseId) return
-    setLoadingSessions(true)
     try {
       const list = await operationsApi.listSessions(caseId)
       setSessions(list)
     } catch {
       setSessions([])
-    } finally {
-      setLoadingSessions(false)
     }
   }, [caseId])
 
@@ -144,6 +142,34 @@ const OperationsPage = () => {
       setLoadingFiles(false)
     }
   }, [caseId])
+
+  const refreshRegistrySources = useCallback(
+    async (reason: 'initial' | 'processing' | 'done' = 'initial') => {
+      const now = Date.now()
+      const minIntervalMs = reason === 'processing' ? 1500 : 0
+      if (now - lastRefreshAtRef.current < minIntervalMs) {
+        return
+      }
+      lastRefreshAtRef.current = now
+      await Promise.allSettled([loadAvailableFiles(), loadSessions()])
+    },
+    [loadAvailableFiles, loadSessions],
+  )
+  const {
+    processingFiles,
+    anyProcessing,
+    allDone,
+  } = useCaseProcessingPoll(caseId ?? null, {
+    onAllDone: () => {
+      void refreshRegistrySources('done')
+    },
+  })
+  const hasProcessedFiles = processingFiles.length > 0
+  const isWaitingForStatements =
+    !selectedFileId && availableFiles.length === 0 && (loadingFiles || anyProcessing)
+  const processingFilesCount = processingFiles.filter(
+    (f) => f.status === 'pending' || f.status === 'processing',
+  ).length
 
   const loadTransactions = useCallback(async () => {
     if (!caseId || !selectedFileId) {
@@ -188,9 +214,37 @@ const OperationsPage = () => {
     getCase(caseId)
       .then((c) => setCaseName(c.title || ''))
       .catch(() => {})
-    loadAvailableFiles()
-    loadSessions()
-  }, [caseId, loadAvailableFiles, loadSessions])
+    void refreshRegistrySources('initial')
+  }, [caseId, refreshRegistrySources])
+
+  useEffect(() => {
+    if (!caseId || !anyProcessing) return
+    const interval = window.setInterval(() => {
+      void refreshRegistrySources('processing')
+    }, 3000)
+    return () => window.clearInterval(interval)
+  }, [caseId, anyProcessing, refreshRegistrySources])
+
+  useEffect(() => {
+    if (!caseId || anyProcessing || !allDone || !hasProcessedFiles) return
+    void refreshRegistrySources('done')
+  }, [caseId, anyProcessing, allDone, hasProcessedFiles, refreshRegistrySources])
+
+  // Возврат на вкладку/окно должен подтягивать свежий реестр: страхует от
+  // гонки, когда файл оцифровался, но список ещё не успел обновиться.
+  useEffect(() => {
+    if (!caseId) return
+    const onFocus = () => {
+      if (document.visibilityState === 'hidden') return
+      void refreshRegistrySources('initial')
+    }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onFocus)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onFocus)
+    }
+  }, [caseId, refreshRegistrySources])
 
   useEffect(() => {
     const fromUrl = parseFileIdFromSearch(searchParams)
@@ -248,7 +302,7 @@ const OperationsPage = () => {
   const mainGridColumns = useMemo(() => {
     const parts = ['minmax(0, 1fr)']
     if (selectedTransaction) {
-      parts.push('minmax(300px, min(42%, 900px))')
+      parts.push('minmax(420px, min(55%, 1200px))')
     } else if (showChat) {
       parts.push('380px')
     }
@@ -340,15 +394,23 @@ const OperationsPage = () => {
                 <Card className="p-8 max-w-md text-center space-y-4">
                   <h2 className="text-lg font-semibold">Реестр операций</h2>
                   <p className="text-sm text-gray-600">
-                    Выберите одну банковскую выписку — операции отобразятся в таблице с колонками как в PDF.
+                    {isWaitingForStatements
+                      ? 'Выписки оцифровываются. Как только операции будут готовы, они автоматически появятся в списке.'
+                      : 'Выберите одну банковскую выписку — операции отобразятся в таблице с колонками как в PDF.'}
                   </p>
                   <button
                     type="button"
                     onClick={() => openHub('list')}
-                    className="px-4 py-2 rounded-lg bg-gray-900 text-white text-sm"
+                    className="px-4 py-2 rounded-lg bg-gray-900 text-white text-sm disabled:opacity-60"
+                    disabled={loadingFiles && availableFiles.length === 0}
                   >
-                    Выбрать выписку
+                    {isWaitingForStatements ? 'Проверить выписки' : 'Выбрать выписку'}
                   </button>
+                  {processingFilesCount > 0 ? (
+                    <p className="text-xs text-gray-500">
+                      В обработке: {processingFilesCount}
+                    </p>
+                  ) : null}
                 </Card>
               </div>
             )}
@@ -385,9 +447,10 @@ const OperationsPage = () => {
           setShowHub(false)
         }}
         sessions={sessions}
-        loadingSessions={loadingSessions}
         files={availableFiles}
         loadingFiles={loadingFiles}
+        anyProcessing={anyProcessing}
+        processingCount={processingFilesCount}
         initialStep={hubInitialStep}
         onOpenFile={handleOpenFile}
       />

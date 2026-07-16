@@ -59,6 +59,47 @@ export function bboxFromReference(ref: SourceReference | undefined): BBox | unde
   return ref.bbox
 }
 
+function sameBBox(a: unknown, b: unknown): boolean {
+  if (!isValidBBox(a) || !isValidBBox(b)) return false
+  return a.x0 === b.x0 && a.y0 === b.y0 && a.x1 === b.x1 && a.y1 === b.y1
+}
+
+/**
+ * Legacy tabular cells often stamp the same char span / bbox from the top RAG chunk
+ * onto every source_reference. Those geometries open the wrong place for secondary quotes.
+ * Prefer text-layer search when provenance is clearly shared across different quotes.
+ */
+export function isTrustedSourceReferenceHighlight(
+  active: SourceReference | undefined,
+  allRefs: SourceReference[],
+): boolean {
+  if (!active || !isValidBBox(active.bbox)) return false
+  const activeText = (active.text || '').trim().toLowerCase()
+  const cs = active.char_start
+  const ce = active.char_end
+  const siblings = allRefs.filter((ref) => ref !== active)
+  if (siblings.length === 0) return true
+
+  if (cs != null && ce != null) {
+    const sharedSpan = siblings.some(
+      (ref) =>
+        ref.char_start === cs &&
+        ref.char_end === ce &&
+        (ref.text || '').trim().toLowerCase() !== activeText,
+    )
+    if (sharedSpan) return false
+  }
+
+  const sharedBbox = siblings.some(
+    (ref) =>
+      sameBBox(ref.bbox, active.bbox) &&
+      (ref.text || '').trim().toLowerCase() !== activeText,
+  )
+  if (sharedBbox) return false
+
+  return true
+}
+
 /** Нормализует legacy-ячейки без source_references в один синтетический ref. */
 export function normalizeCellSourceReferences(
   details: Pick<
@@ -130,21 +171,35 @@ export function buildTabularViewerCellData(params: {
     details?.highlight_mode ||
     (verbatimExtract ? 'verbatim' : sourcePage != null ? 'page' : 'none')
 
-  const bbox = bboxFromReference(active)
+  const trustGeometry = isTrustedSourceReferenceHighlight(active, refs)
+  const bbox = trustGeometry ? bboxFromReference(active) : undefined
   const refIndex = click.sourceReferenceIndex ?? 0
-  const activeCharStart = active?.char_start
-  const activeCharEnd = active?.char_end
+  const activeText = (active?.text || '').trim().toLowerCase()
+  const sharedCharSpan = Boolean(
+    active &&
+      active.char_start != null &&
+      active.char_end != null &&
+      refs.some(
+        (ref) =>
+          ref !== active &&
+          ref.char_start === active.char_start &&
+          ref.char_end === active.char_end &&
+          (ref.text || '').trim().toLowerCase() !== activeText,
+      ),
+  )
   const fallbackCharStart = click.charStart ?? details?.primary_source_char_start ?? undefined
   const fallbackCharEnd = click.charEnd ?? details?.primary_source_char_end ?? undefined
-  const charStart =
-    activeCharStart != null
-      ? activeCharStart
+  const charStart = sharedCharSpan
+    ? undefined
+    : active?.char_start != null
+      ? active.char_start
       : refIndex === 0
         ? fallbackCharStart
         : undefined
-  const charEnd =
-    activeCharEnd != null
-      ? activeCharEnd
+  const charEnd = sharedCharSpan
+    ? undefined
+    : active?.char_end != null
+      ? active.char_end
       : refIndex === 0
         ? fallbackCharEnd
         : undefined
@@ -170,7 +225,7 @@ export function buildTabularViewerCellData(params: {
     sourceReferences: refs,
     highlightBBox: bbox,
     highlightBBoxRegions: bbox ? [bbox] : undefined,
-    highlightPageBBox: active?.page_bbox ?? undefined,
+    highlightPageBBox: bbox ? active?.page_bbox ?? undefined : undefined,
     docId: active?.doc_id ?? click.docId ?? details?.primary_source_doc_id ?? fileId,
     charStart,
     charEnd,

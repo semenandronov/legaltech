@@ -28,7 +28,7 @@ export function OperationsSidePanel({
   const fileType = fileTypeFromName(fileName)
 
   return (
-    <aside className="ws-tabular-aside min-h-0">
+    <aside className="ws-tabular-aside min-h-0" style={{ width: '100%' }}>
       <div className="ws-tabular-glass-panel ws-tabular-glass-panel--embedded flex h-full min-h-0 flex-col" role="dialog" aria-label="Источник операции">
         <div className="ws-tabular-glass-panel-header shrink-0">
           <span className="truncate text-sm font-semibold" style={{ color: 'var(--color-text-secondary)' }}>

@@ -132,6 +132,8 @@ interface PDFViewerProps {
   /** Превью цитаты в чате: без поля поиска и без печати. */
   showDocumentSearch?: boolean
   showPrint?: boolean
+  /** Автоподгон страницы под ширину контейнера (актуально для узких боковых панелей). */
+  fitToWidth?: boolean
 }
 
 const PDFViewer: React.FC<PDFViewerProps> = ({
@@ -156,6 +158,7 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   highlightFocusKey,
   showDocumentSearch = true,
   showPrint = true,
+  fitToWidth = false,
 }) => {
   const apiBase = fileApiBase ?? `/api/cases/${caseId}`
 
@@ -179,6 +182,9 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [zoomFactor, setZoomFactor] = useState(1.0)
+  /** Fit-to-width активен, пока пользователь не задал масштаб вручную. */
+  const [fitMode, setFitMode] = useState(fitToWidth)
+  const [containerWidth, setContainerWidth] = useState(0)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<number[]>([])
   const [currentSearchIndex, setCurrentSearchIndex] = useState(0)
@@ -217,11 +223,27 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   useEffect(() => {
     setPageTextItems([])
     setHighlightItemIndices([])
+    setDerivedPageBBox(null)
   }, [pageNumber, fileId])
 
   useEffect(() => {
     highlightMatchRef.current = highlightItemIndices.length > 0
   }, [highlightItemIndices])
+
+  // Отслеживаем ширину контейнера для fit-to-width (узкие боковые панели).
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const update = () => setContainerWidth(el.clientWidth)
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [pdfUrl])
+
+  useEffect(() => {
+    setFitMode(fitToWidth)
+  }, [fitToWidth, fileId])
 
   const handlePageLoadSuccess = (page: any) => {
     try {
@@ -270,6 +292,18 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   const effectivePageBBox = highlightPageBBox ?? derivedPageBBox ?? null
   const pageW = effectivePageBBox?.width
   const pageH = effectivePageBBox?.height
+
+  // Fit-to-width: react-pdf сам вычислит масштаб по реальной ширине страницы,
+  // если передать ему `width`. 32px — горизонтальные отступы контейнера (p: 2),
+  // 8px — запас, чтобы страница гарантированно помещалась без переполнения.
+  const fitWidth =
+    containerWidth > 0 ? Math.max(120, containerWidth - 32 - 8) : null
+  const useFit = fitMode && fitWidth != null
+  // Для индикатора «%»: реальный масштаб = ширина рендера / собственная ширина.
+  const intrinsicPageWidth = derivedPageBBox?.width ?? highlightPageBBox?.width ?? null
+  const fitScaleForLabel =
+    useFit && fitWidth && intrinsicPageWidth ? fitWidth / intrinsicPageWidth : null
+  const effectiveScale = fitScaleForLabel ?? zoomFactor
 
   const hasCitationBbox = bboxRegionsToDraw.length > 0
   /** Текстовый поиск только если координат нет (скан); иначе bbox стабильнее и не «сужается» через несколько секунд. */
@@ -541,11 +575,17 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   }
 
   const handleZoomIn = () => {
-    setZoomFactor(prev => Math.min(3, prev + 0.2))
+    setFitMode(false)
+    setZoomFactor(prev => Math.min(3, (fitScaleForLabel ?? prev) + 0.2))
   }
 
   const handleZoomOut = () => {
-    setZoomFactor(prev => Math.max(0.3, prev - 0.2))
+    setFitMode(false)
+    setZoomFactor(prev => Math.max(0.3, (fitScaleForLabel ?? prev) - 0.2))
+  }
+
+  const handleFitToWidth = () => {
+    setFitMode(true)
   }
 
   const handleSearch = (query: string) => {
@@ -733,8 +773,20 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
           <IconButton size="small" onClick={handleZoomOut} aria-label="Уменьшить">
             <ZoomOutIcon />
           </IconButton>
-          <Typography variant="body2" sx={{ minWidth: 50, textAlign: 'center' }}>
-            {Math.round(zoomFactor * 100)}%
+          <Typography
+            variant="body2"
+            onClick={handleFitToWidth}
+            title="По ширине"
+            sx={{
+              minWidth: 50,
+              textAlign: 'center',
+              cursor: 'pointer',
+              userSelect: 'none',
+              fontWeight: fitMode ? 600 : 400,
+              color: fitMode ? 'primary.main' : 'text.primary',
+            }}
+          >
+            {Math.round(effectiveScale * 100)}%
           </Typography>
           <IconButton size="small" onClick={handleZoomIn} aria-label="Увеличить">
             <ZoomInIcon />
@@ -767,7 +819,7 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
       <Box sx={{ flex: 1, overflow: 'auto', position: 'relative', display: 'flex' }}>
         <Box
           ref={containerRef}
-          sx={{ flex: 1, overflow: 'auto', p: 2, display: 'flex', justifyContent: 'center' }}
+          sx={{ flex: 1, overflow: 'auto', p: 2, display: 'flex', justifyContent: 'flex-start' }}
         >
         <Document
           file={pdfUrl}
@@ -782,10 +834,10 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
               </Box>
           }
         >
-          <Box sx={{ position: 'relative', display: 'inline-block' }}>
+          <Box sx={{ position: 'relative', display: 'inline-block', m: 'auto' }}>
             <Page
               pageNumber={pageNumber}
-              scale={zoomFactor}
+              {...(useFit && fitWidth ? { width: fitWidth } : { scale: zoomFactor })}
               renderTextLayer={true}
               renderAnnotationLayer={true}
               onLoadSuccess={handlePageLoadSuccess}

@@ -11,9 +11,10 @@ interface CaseOperationsHubModalProps {
   open: boolean
   onClose: () => void
   sessions: OperationsSessionSummary[]
-  loadingSessions?: boolean
   files: OperationsAvailableFile[]
   loadingFiles?: boolean
+  anyProcessing?: boolean
+  processingCount?: number
   initialStep?: HubStep
   onOpenFile: (fileId: string) => void
 }
@@ -29,9 +30,10 @@ export function CaseOperationsHubModal({
   open,
   onClose,
   sessions,
-  loadingSessions = false,
   files,
   loadingFiles = false,
+  anyProcessing = false,
+  processingCount = 0,
   initialStep = 'list',
   onOpenFile,
 }: CaseOperationsHubModalProps) {
@@ -60,6 +62,31 @@ export function CaseOperationsHubModal({
     if (!q) return files
     return files.filter((file) => file.filename.toLowerCase().includes(q))
   }, [files, search])
+
+  // Реестр дела строится из всех оцифрованных выписок (availableFiles), а не из
+  // сессий: только что загруженная выписка сессии ещё не имеет, но должна быть
+  // видна сразу. Данные сессий используем лишь для сортировки «недавно открытые».
+  const statements = useMemo<OperationsSessionSummary[]>(() => {
+    const sessionByFile = new Map(sessions.map((s) => [s.file_id, s]))
+    return files
+      .map((file) => {
+        const session = sessionByFile.get(file.file_id)
+        return {
+          file_id: file.file_id,
+          filename: file.filename,
+          updated_at: session?.updated_at ?? null,
+          transaction_count: file.transaction_count,
+          date_min: file.date_min ?? null,
+          date_max: file.date_max ?? null,
+        }
+      })
+      .sort((a, b) => {
+        const at = a.updated_at ? Date.parse(a.updated_at) : 0
+        const bt = b.updated_at ? Date.parse(b.updated_at) : 0
+        if (bt !== at) return bt - at
+        return (a.filename || '').localeCompare(b.filename || '', 'ru')
+      })
+  }, [files, sessions])
 
   const handlePickConfirm = () => {
     if (!selectedId) {
@@ -107,11 +134,11 @@ export function CaseOperationsHubModal({
         <div className="flex-1 overflow-y-auto px-5 py-4">
           {step === 'list' && (
             <>
-              {loadingSessions ? (
+              {loadingFiles && statements.length === 0 ? (
                 <div className="flex justify-center py-12">
                   <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
                 </div>
-              ) : sessions.length === 0 ? (
+              ) : statements.length === 0 ? (
                 <div className="text-center py-6">
                   <div className="w-12 h-12 rounded-xl mx-auto mb-4 flex items-center justify-center bg-gray-50">
                     <Receipt className="h-6 w-6 text-gray-400" />
@@ -120,7 +147,9 @@ export function CaseOperationsHubModal({
                     Выписок в этом деле пока нет
                   </p>
                   <p className="text-sm text-gray-500 mb-6 max-w-sm mx-auto">
-                    Загрузите PDF-выписку в документы дела, дождитесь оцифровки и откройте реестр операций.
+                    {anyProcessing
+                      ? 'Выписки оцифровываются. Реестр операций появится автоматически, как только обработка завершится.'
+                      : 'Загрузите PDF-выписку в документы дела, дождитесь оцифровки и откройте реестр операций.'}
                   </p>
                   <button
                     type="button"
@@ -131,6 +160,13 @@ export function CaseOperationsHubModal({
                     <Plus className="h-4 w-4" />
                     Открыть выписку
                   </button>
+                  {anyProcessing ? (
+                    <p className="text-xs text-gray-500 mt-4">
+                      {processingCount > 0
+                        ? `В обработке ${processingCount} ${processingCount === 1 ? 'файл' : processingCount < 5 ? 'файла' : 'файлов'}`
+                        : 'Идёт обработка файлов'}
+                    </p>
+                  ) : null}
                   {files.length === 0 && !loadingFiles && (
                     <p className="text-xs text-gray-400 mt-4">Нет оцифрованных выписок</p>
                   )}
@@ -143,12 +179,12 @@ export function CaseOperationsHubModal({
                       onClick={() => setStep('pick')}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm border border-gray-200 text-gray-800 hover:bg-gray-50"
                     >
-                      <Plus className="h-3.5 w-3.5" />
-                      Другая выписка
+                      <Search className="h-3.5 w-3.5" />
+                      Найти выписку
                     </button>
                   </div>
                   <ul className="space-y-2">
-                    {sessions.map((session) => (
+                    {statements.map((session) => (
                       <li key={session.file_id}>
                         <button
                           type="button"
@@ -207,7 +243,9 @@ export function CaseOperationsHubModal({
                   </div>
                 ) : files.length === 0 ? (
                   <div className="py-12 text-center text-sm text-gray-500 px-4">
-                    Нет оцифрованных выписок. Загрузите PDF-выписки в документы дела и дождитесь обработки.
+                    {anyProcessing
+                      ? 'Выписки ещё оцифровываются. Список обновится автоматически.'
+                      : 'Нет оцифрованных выписок. Загрузите PDF-выписки в документы дела и дождитесь обработки.'}
                   </div>
                 ) : filteredFiles.length === 0 ? (
                   <div className="py-12 text-center text-sm text-gray-500">Ничего не найдено</div>

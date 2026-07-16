@@ -413,6 +413,7 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
               )}
               showDocumentSearch={!citationPreview}
               showPrint={!citationPreview}
+              fitToWidth={citationPreview}
               onError={(err) => {
                 setError(err.message || "Ошибка при загрузке PDF")
               }}

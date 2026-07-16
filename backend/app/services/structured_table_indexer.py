@@ -23,14 +23,21 @@ from app.services.legal_chunker import (
     _select_profile,
 )
 from app.services.table_schema_normalize import (
+    ColumnRole,
     ParsedPipeTable,
     align_values_to_schema,
+    assess_operation_row_quality,
     extract_ordered_cells,
     lock_or_align_schema,
     normalize_header_schema,
     parse_markdown_pipe_table_schema,
+    parsed_pipe_table_from_geometry,
     remap_row_columns_to_canonical,
     repair_parsed_table,
+)
+from app.services.docling_table_geometry import extract_pdf_page_words
+from app.services.table_amount_geometry_recover import (
+    recover_operation_table_from_page_geometry,
 )
 
 logger = logging.getLogger(__name__)
@@ -88,6 +95,7 @@ class _IndexingCursor:
     table_index: int = 0
     # File-level locked column schema (shared across multi-page table segments).
     canonical_columns: Tuple[str, ...] = ()
+    canonical_roles: Tuple[str, ...] = ()
 
 
 def _stamp_hybrid_file_profile(documents: Sequence[Document]) -> List[Document]:
@@ -131,6 +139,7 @@ def _renumber_documents(
         global_row_index=cursor.global_row_index,
         table_index=cursor.table_index,
         canonical_columns=cursor.canonical_columns,
+        canonical_roles=cursor.canonical_roles,
     )
 
 
@@ -177,6 +186,7 @@ class StructuredTableIndexer:
         filename: str,
         profile: Optional[_Profile] = None,
         doc_type: Optional[str] = None,
+        pdf_bytes: Optional[bytes] = None,
     ) -> List[Document]:
         if not segments:
             raise ValueError(f"StructuredTableIndexer: empty segments for {filename}")
@@ -215,7 +225,7 @@ class StructuredTableIndexer:
         for seg in segments:
             if is_transaction_table_segment(seg):
                 flush_narrative()
-                row_docs, next_canonical = self._index_table_segment(
+                row_docs, next_canonical, next_roles = self._index_table_segment(
                     seg=seg,
                     table_index=cursor.table_index,
                     global_row_index_start=cursor.global_row_index,
@@ -224,6 +234,8 @@ class StructuredTableIndexer:
                     filename=filename,
                     doc_id=doc_id,
                     canonical_columns=list(cursor.canonical_columns),
+                    canonical_roles=list(cursor.canonical_roles),
+                    pdf_bytes=pdf_bytes,
                 )
                 row_docs = _stamp_hybrid_file_profile(row_docs)
                 renumbered, cursor = _renumber_documents(
@@ -238,6 +250,7 @@ class StructuredTableIndexer:
                     global_row_index=cursor.global_row_index + len(row_docs),
                     table_index=cursor.table_index + 1,
                     canonical_columns=tuple(next_canonical),
+                    canonical_roles=tuple(next_roles),
                 )
                 continue
 
@@ -280,8 +293,36 @@ class StructuredTableIndexer:
         filename: str,
         doc_id: str,
         canonical_columns: Optional[Sequence[str]] = None,
-    ) -> Tuple[List[Document], List[str]]:
-        parsed = parse_markdown_pipe_table_schema(seg.text or "")
+        canonical_roles: Optional[Sequence[str]] = None,
+        pdf_bytes: Optional[bytes] = None,
+    ) -> Tuple[List[Document], List[str], List[str]]:
+        locked = list(canonical_columns) if canonical_columns else None
+        locked_roles = list(canonical_roles) if canonical_roles and locked else None
+
+        parsed: Optional[ParsedPipeTable] = None
+        geom = getattr(seg, "table_geometry", None)
+        if geom is not None and getattr(geom, "headers", None):
+            parsed = parsed_pipe_table_from_geometry(
+                list(geom.headers),
+                list(geom.rows or []),
+                locked_columns=locked,
+                locked_roles=locked_roles,
+                source=str(getattr(geom, "source", None) or "docling_grid"),
+            )
+            if parsed is not None:
+                logger.info(
+                    "[StructuredTableIndexer] table %s via native grid (%s rows, source=%s)",
+                    table_index,
+                    len(parsed.data_rows),
+                    getattr(geom, "source", "docling_grid"),
+                )
+
+        if not parsed:
+            parsed = parse_markdown_pipe_table_schema(
+                seg.text or "",
+                locked_columns=locked,
+                locked_roles=locked_roles,
+            )
         if not parsed:
             # Fallback: legacy single-header parser for odd markdown, then same repair path.
             legacy = _parse_markdown_pipe_table(seg.text or "")
@@ -290,7 +331,7 @@ class StructuredTableIndexer:
                     "[StructuredTableIndexer] table segment %s has no parseable markdown; skipping",
                     table_index,
                 )
-                return [], list(canonical_columns or [])
+                return [], list(canonical_columns or []), list(canonical_roles or [])
             header_line, _sep, data_lines = legacy
             raw_headers = _parse_header_columns(header_line)
             local_columns, value_indices = normalize_header_schema(raw_headers)
@@ -300,7 +341,19 @@ class StructuredTableIndexer:
                 raw_header_cells=list(raw_headers),
                 value_indices=value_indices,
             )
-            parsed = repair_parsed_table(provisional)
+            parsed = repair_parsed_table(
+                provisional,
+                locked_columns=locked,
+                locked_roles=(
+                    [ColumnRole(r) for r in locked_roles] if locked_roles else None
+                ),
+            )
+
+        parsed = self._maybe_recover_amounts_from_pdf(
+            parsed,
+            page_no=seg.page_no,
+            pdf_bytes=pdf_bytes,
+        )
 
         local_columns = list(parsed.columns)
         value_indices = list(parsed.value_indices or range(len(parsed.columns)))
@@ -311,9 +364,16 @@ class StructuredTableIndexer:
             canonical=list(canonical_columns) if canonical_columns else None,
         )
         if not schema:
-            return [], list(canonical_columns or [])
+            return [], list(canonical_columns or []), list(canonical_roles or [])
 
-        next_canonical = schema if established or not canonical_columns else list(canonical_columns)
+        # Once locked, never rebuild schema from repeated page headers.
+        if canonical_columns:
+            next_canonical = list(canonical_columns)
+            next_roles = list(canonical_roles or parsed.column_roles or ())
+            schema = next_canonical
+        else:
+            next_canonical = schema if established else list(local_columns)
+            next_roles = list(parsed.column_roles or ())
 
         documents: List[Document] = []
         for row_index, values in enumerate(data_rows):
@@ -336,7 +396,10 @@ class StructuredTableIndexer:
             if not body.strip():
                 continue
 
-            chunk_text = body + "\n"
+            # Trailing newline was historically appended for display; it broke
+            # char spans vs original_text ("\n\n".join). Keep body clean —
+            # align_structured_table_row_stream owns the join contract.
+            chunk_text = body.strip()
             metadata = self._build_row_metadata(
                 base_metadata=base_metadata,
                 preseg_strategy=preseg_strategy,
@@ -350,12 +413,60 @@ class StructuredTableIndexer:
                 row_index=row_index,
                 global_row_index=global_row_index_start + row_index,
                 row_columns=row_columns,
-                column_roles=list(parsed.column_roles or ()),
+                column_roles=list(next_roles or parsed.column_roles or ()),
                 schema_quality=float(parsed.quality_score or 1.0),
             )
             documents.append(Document(page_content=chunk_text, metadata=metadata))
 
-        return documents, next_canonical
+        return documents, next_canonical, next_roles
+
+    @staticmethod
+    def _maybe_recover_amounts_from_pdf(
+        parsed: ParsedPipeTable,
+        *,
+        page_no: Optional[int],
+        pdf_bytes: Optional[bytes],
+    ) -> ParsedPipeTable:
+        """
+        Second pass via PDF word geometry: empty amount/balance cells, channel
+        text on multi-line ops, and missing amount+balance spines dropped by
+        TableFormer.
+        """
+        if not pdf_bytes or page_no is None or int(page_no) < 1:
+            return parsed
+        if not parsed.column_roles or not parsed.data_rows:
+            return parsed
+        if "amount" not in parsed.column_roles:
+            return parsed
+
+        words, _height = extract_pdf_page_words(pdf_bytes, int(page_no) - 1)
+        if not words:
+            return parsed
+
+        new_rows, geo_stats = recover_operation_table_from_page_geometry(
+            parsed.columns,
+            parsed.data_rows,
+            list(parsed.column_roles),
+            words,
+        )
+        if not geo_stats.total:
+            return parsed
+
+        warnings = tuple(parsed.quality_warnings or ()) + (
+            f"amount_geometry_recovered:{geo_stats.amounts}",
+            f"balance_geometry_recovered:{geo_stats.balances}",
+            f"category_geometry_recovered:{geo_stats.categories}",
+            f"rows_geometry_inserted:{geo_stats.rows_inserted}",
+        )
+        return ParsedPipeTable(
+            columns=list(parsed.columns),
+            data_rows=new_rows,
+            raw_header_cells=list(parsed.raw_header_cells),
+            value_indices=list(parsed.value_indices),
+            quality_score=parsed.quality_score,
+            quality_warnings=warnings,
+            column_roles=tuple(parsed.column_roles),
+        )
 
     @staticmethod
     def _build_row_metadata(
@@ -399,6 +510,13 @@ class StructuredTableIndexer:
         if column_roles:
             md["column_roles"] = list(column_roles)
         md["schema_quality"] = float(schema_quality)
+        row_score, row_warnings = assess_operation_row_quality(
+            row_columns,
+            column_roles=column_roles,
+        )
+        md["row_quality"] = float(row_score)
+        if row_warnings:
+            md["row_quality_warnings"] = list(row_warnings)
 
         if page_no is not None:
             md["page_start"] = int(page_no)

@@ -18,6 +18,7 @@ from app.config import config
 from app.models.case import File as FileModel
 from app.models.case_file_transaction import CaseFileTransaction
 from app.services.structured_table_indexer import is_structured_table_document
+from app.services.table_schema_normalize import normalize_date_cell
 from app.services.transaction_description_match import (
     description_token_match,
     sql_transaction_description_token_match,
@@ -48,6 +49,10 @@ _CREDIT_HEADER_RE = re.compile(
 )
 _DESCRIPTION_HEADER_RE = re.compile(
     r"(описан|назначен|description|purpose|контрагент|получател)",
+    re.IGNORECASE,
+)
+_CATEGORY_HEADER_RE = re.compile(
+    r"(категор|category)",
     re.IGNORECASE,
 )
 _DATE_DDMMYYYY_RE = re.compile(r"(\d{2})\.(\d{2})\.(\d{4})")
@@ -126,7 +131,7 @@ def _resolve_amount_and_flow(
 
 
 def parse_operation_date(value: str) -> Optional[date]:
-    text = (value or "").strip()
+    text = normalize_date_cell(value or "")
     if not text:
         return None
     match = _DATE_DDMMYYYY_RE.search(text)
@@ -165,18 +170,35 @@ def parse_row_from_metadata(metadata: Dict[str, Any]) -> Optional[ParsedTransact
 
     date_key = _pick_column(normalized, _DATE_HEADER_RE)
     desc_key = _pick_column(normalized, _DESCRIPTION_HEADER_RE)
+    if not desc_key:
+        # Debit-card statements often use a single "Категория" column as the
+        # operation narrative (category + merchant + card marker).
+        desc_key = _pick_column(normalized, _CATEGORY_HEADER_RE)
 
     datetime_text = normalized.get(date_key, "") if date_key else None
+    if datetime_text:
+        datetime_text = normalize_date_cell(datetime_text)
     op_date = parse_operation_date(datetime_text or "")
 
     amount_rub, amount_raw, flow_direction, _amount_key = _resolve_amount_and_flow(normalized)
 
     description = normalized.get(desc_key, "") if desc_key else None
-    if not description:
+    if not (description or "").strip():
         for key, val in normalized.items():
-            if _DESCRIPTION_HEADER_RE.search(key):
+            if _DESCRIPTION_HEADER_RE.search(key) or _CATEGORY_HEADER_RE.search(key):
                 description = val
                 break
+    if not (description or "").strip():
+        best = ""
+        for key, val in normalized.items():
+            if _DATE_HEADER_RE.search(key) or _AMOUNT_HEADER_RE.search(key):
+                continue
+            if re.search(r"(?i)остат|balance|сальдо", key or ""):
+                continue
+            s = str(val or "").strip()
+            if len(s) > len(best):
+                best = s
+        description = best or None
 
     return ParsedTransactionRow(
         global_row_index=int(metadata.get("global_row_index") or 0),

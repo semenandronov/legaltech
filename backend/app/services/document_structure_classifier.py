@@ -10,7 +10,7 @@ from app.services.legal_chunker import _Segment, _parse_markdown_pipe_table
 
 IndexingStrategy = Literal["narrative", "structured_table"]
 
-_STRUCTURED_DOC_TYPES = frozenset(
+STRUCTURED_DOC_TYPES = frozenset(
     {
         "bank_statement",
         "account_statement",
@@ -19,6 +19,8 @@ _STRUCTURED_DOC_TYPES = frozenset(
         "transaction_register",
     }
 )
+# Back-compat alias for internal callers.
+_STRUCTURED_DOC_TYPES = STRUCTURED_DOC_TYPES
 
 _FINANCIAL_HEADING_RE = re.compile(
     r"(движени[ея]\s+средств|выписк[аи]|справк[аи]\s+о\s+движении|"

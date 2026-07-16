@@ -162,6 +162,18 @@ def filter_prov_entries_for_char_span(
     return out
 
 
+def _normalize_quote_for_locate(value: str) -> str:
+    cleaned = (
+        (value or "")
+        .lower()
+        .replace("\u2026", "")
+        .replace("...", "")
+        .replace("●", " ")
+        .replace("•", " ")
+    )
+    return " ".join(cleaned.split())
+
+
 def narrow_char_span_to_quote(
     *,
     original: str,
@@ -193,6 +205,104 @@ def narrow_char_span_to_quote(
     return span_start + idx, span_start + idx + q_len
 
 
+def locate_quote_in_original(
+    original: str,
+    quote_anchor: str,
+    *,
+    min_quote_len: int = 12,
+) -> Optional[Tuple[int, int]]:
+    """
+    Find quote_anchor inside the full document text.
+
+    Returns a half-open [start, end) span in ``original``, or None when not found.
+    """
+    if not original:
+        return None
+    q = (quote_anchor or "").strip()
+    if not q:
+        return None
+
+    raw_lower = original.lower()
+    # Short quotes: exact locate only (avoid accidental matches on tiny probes).
+    if len(q) < min_quote_len:
+        idx = raw_lower.find(q.lower())
+        if idx != -1:
+            return idx, idx + len(q)
+        return None
+
+    raw_probes: List[str] = []
+    for candidate in (
+        q.lower().replace("\u2026", "").replace("...", "").strip(),
+        q.lstrip("●•·-–— ").strip().lower(),
+    ):
+        if candidate and len(candidate) >= min_quote_len and candidate not in raw_probes:
+            raw_probes.append(candidate)
+
+    for probe in raw_probes:
+        idx = raw_lower.find(probe)
+        if idx == -1 and len(probe) > 80:
+            idx = raw_lower.find(probe[:80])
+            span_len = 80
+        else:
+            span_len = len(probe)
+        if idx != -1:
+            end = min(len(original), idx + max(span_len, min(len(q), len(original) - idx)))
+            if end > idx:
+                return idx, end
+
+    norm_original = _normalize_quote_for_locate(original)
+    norm_probes: List[str] = []
+    for candidate in (_normalize_quote_for_locate(q), _normalize_quote_for_locate(q.lstrip("●•·-–— "))):
+        if candidate and len(candidate) >= min_quote_len and candidate not in norm_probes:
+            norm_probes.append(candidate)
+
+    for probe in norm_probes:
+        idx = norm_original.find(probe)
+        if idx == -1 and len(probe) > 80:
+            idx = norm_original.find(probe[:80])
+        if idx == -1:
+            continue
+        raw_start = _norm_index_to_raw(original, idx)
+        if raw_start is None:
+            continue
+        ns, ne = narrow_char_span_to_quote(
+            original=original,
+            span_start=max(0, raw_start - 40),
+            span_end=min(len(original), raw_start + max(len(q), len(probe)) + 80),
+            quote_anchor=q,
+            min_quote_len=min_quote_len,
+        )
+        head = probe[: min(40, len(probe))]
+        if head and head in _normalize_quote_for_locate(original[ns:ne]):
+            return ns, ne
+        raw_end = min(len(original), raw_start + max(len(q), len(probe)))
+        if raw_end > raw_start:
+            return raw_start, raw_end
+    return None
+
+
+def _norm_index_to_raw(original: str, norm_index: int) -> Optional[int]:
+    """Map an index in whitespace/bullet-normalized text back to raw offset."""
+    if norm_index < 0:
+        return None
+    norm_pos = 0
+    prev_space = True
+    for i, ch in enumerate(original):
+        if ch.isspace() or ch in "●•":
+            if prev_space:
+                continue
+            if norm_pos == norm_index:
+                return i
+            norm_pos += 1
+            prev_space = True
+            continue
+        if norm_pos == norm_index:
+            return i
+        norm_pos += 1
+        prev_space = False
+    return None
+
+
 __all__ = [
     "ProvSpan",
     "annotate_prov_items_char_span",
@@ -200,6 +310,7 @@ __all__ = [
     "collect_prov_spans_from_segments",
     "dl_meta_prov_entries",
     "filter_prov_entries_for_char_span",
+    "locate_quote_in_original",
     "narrow_char_span_to_quote",
     "prov_entries_have_char_spans",
     "prov_items_for_char_span",

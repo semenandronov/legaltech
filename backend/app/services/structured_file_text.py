@@ -14,6 +14,96 @@ logger = logging.getLogger(__name__)
 
 _PLAIN_JOIN_RE = re.compile(r"\n{3,}")
 
+# CITATION_CONTRACT for structured_table / statement rows:
+# original_text == STRUCTURED_ROW_SEPARATOR.join(normalized row bodies)
+# and each row's char_start/char_end are offsets into that string.
+STRUCTURED_ROW_SEPARATOR = "\n\n"
+
+
+def normalize_structured_row_body(text: str) -> str:
+    return (text or "").replace("\x00", "").strip()
+
+
+def join_structured_row_bodies(bodies: Sequence[str]) -> str:
+    parts = [normalize_structured_row_body(b) for b in bodies]
+    parts = [p for p in parts if p]
+    return STRUCTURED_ROW_SEPARATOR.join(parts)
+
+
+def structured_row_char_spans(bodies: Sequence[str]) -> List[Tuple[str, int, int]]:
+    """
+    Return (normalized_body, char_start, char_end) for each non-empty body,
+    consistent with join_structured_row_bodies().
+    """
+    out: List[Tuple[str, int, int]] = []
+    offset = 0
+    first = True
+    for raw in bodies:
+        body = normalize_structured_row_body(raw)
+        if not body:
+            continue
+        if not first:
+            offset += len(STRUCTURED_ROW_SEPARATOR)
+        first = False
+        start = offset
+        end = start + len(body)
+        out.append((body, start, end))
+        offset = end
+    return out
+
+
+def _is_structured_table_row_document(doc: Document) -> bool:
+    md = doc.metadata or {}
+    if str(md.get("chunk_level") or "").strip() != "row":
+        return False
+    profile = str(md.get("index_profile") or "").strip()
+    preseg = str(md.get("preseg_strategy") or "").strip()
+    return profile == "structured_table" or preseg in {
+        "xlsx_openpyxl_grid",
+        "statement_geometry_native",
+    }
+
+
+def align_structured_table_row_stream(
+    documents: Sequence[Document],
+) -> Tuple[List[Document], Optional[str]]:
+    """
+    Rewrite structured row docs so char spans match the canonical original_text join.
+
+    Non-row documents are left unchanged. Returns (all_docs, joined_row_text_or_none).
+    """
+    docs = list(documents or [])
+    row_indices = [i for i, d in enumerate(docs) if _is_structured_table_row_document(d)]
+    if not row_indices:
+        return docs, None
+
+    raw_bodies = [docs[i].page_content or "" for i in row_indices]
+    spanned = structured_row_char_spans(raw_bodies)
+    if len(spanned) != len(row_indices):
+        # Empty bodies dropped — rebuild index map from non-empty only.
+        keep: List[int] = []
+        for idx, raw in zip(row_indices, raw_bodies):
+            if normalize_structured_row_body(raw):
+                keep.append(idx)
+        row_indices = keep
+        if len(spanned) != len(row_indices):
+            logger.warning(
+                "[structured_row_stream] span/body mismatch (%s vs %s); skipping align",
+                len(spanned),
+                len(row_indices),
+            )
+            return docs, join_structured_row_bodies(raw_bodies) or None
+
+    joined = join_structured_row_bodies([body for body, _s, _e in spanned])
+    for idx, (body, start, end) in zip(row_indices, spanned):
+        src = docs[idx]
+        md = dict(src.metadata or {})
+        md["char_start"] = int(start)
+        md["char_end"] = int(end)
+        md["char_basis"] = "structured_row_stream"
+        docs[idx] = Document(page_content=body, metadata=md)
+    return docs, joined or None
+
 
 def structured_text_from_indexed_documents(documents: List[Document]) -> Tuple[str, str]:
     """

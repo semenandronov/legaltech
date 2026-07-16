@@ -9,6 +9,8 @@ from app.services.docling_table_geometry import (
     matrix_from_docling_table,
     refine_geometry_table,
 )
+from app.services.legal_chunker import _Segment
+from app.services.structured_table_indexer import StructuredTableIndexer
 from app.services.table_schema_normalize import parse_markdown_pipe_table_schema
 
 
@@ -26,21 +28,83 @@ def _cell(text, *, header=False, bbox=None):
     )
 
 
-def test_matrix_from_docling_grid():
-    grid = [
+def test_parsed_pipe_table_from_geometry_skips_markdown():
+    from app.services.table_schema_normalize import parsed_pipe_table_from_geometry
+
+    parsed = parsed_pipe_table_from_geometry(
+        ["Дата Операции (МСК)", "Категория", "Сумма В Валюте Счёта", "Остаток Средств"],
         [
-            _cell("Дата", header=True),
-            _cell("Сумма", header=True),
-            _cell("Описание", header=True),
+            [
+                "03.07.2024",
+                "Супермаркеты PEKARNYA. Операция по карте ****6681 "
+                "Перевод с карты Перевод для Ф. Операция по карте ****6681",
+                "85,00",
+                "5 531,58",
+            ]
         ],
-        [_cell("01.01.2024"), _cell("100"), _cell("A")],
-        [_cell("02.01.2024"), _cell("200"), _cell("B")],
-    ]
-    table = SimpleNamespace(data=SimpleNamespace(grid=grid))
-    parsed = matrix_from_docling_table(table)
+        source="docling_grid",
+    )
     assert parsed is not None
-    assert parsed.headers == ["Дата", "Сумма", "Описание"]
-    assert len(parsed.rows) == 2
+    assert len(parsed.data_rows) == 2
+    assert any(str(w).startswith("source:") for w in parsed.quality_warnings)
+    assert parsed.data_rows[0][2] == "85,00"
+    assert "Перевод" not in parsed.data_rows[0][1]
+    assert "Перевод" in parsed.data_rows[1][1]
+
+
+def test_shard_geometry_table_keeps_header():
+    from app.services.docling_table_geometry import shard_geometry_table
+
+    table = GeometryTable(
+        headers=["A", "B"],
+        rows=[["1", "x"], ["2", "y"], ["3", "z"], ["4", "w"]],
+        source="docling_grid",
+    )
+    shards = shard_geometry_table(table, rows_per_group=2)
+    assert len(shards) == 2
+    assert shards[0].headers == ["A", "B"]
+    assert len(shards[0].rows) == 2
+    assert shards[1].rows[0][0] == "3"
+
+
+def test_indexer_prefers_native_geometry_over_markdown(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.structured_table_indexer._min_transaction_rows",
+        lambda: 2,
+    )
+    geom = GeometryTable(
+        headers=["Дата операции", "Сумма", "Описание"],
+        rows=[
+            ["10.01.2024", "-100,00", "A"],
+            ["11.01.2024", "-50,00", "B"],
+        ],
+        source="docling_grid",
+    )
+    # Deliberately broken markdown that would fail/parse wrong if preferred.
+    bad_md = "| broken |\n|---|\n| x |\n| y |\n"
+    docs = StructuredTableIndexer().index(
+        segments=[
+            _Segment(
+                text=bad_md,
+                section_title="",
+                section_number="",
+                parent_path=[],
+                page_no=1,
+                char_start=0,
+                char_end=10,
+                is_table=True,
+                table_geometry=geom,
+            )
+        ],
+        full_text=bad_md,
+        base_metadata={"doc_id": "d1", "case_id": "c1"},
+        preseg_strategy="test",
+        filename="stmt.pdf",
+    )
+    rows = [d for d in docs if d.metadata.get("chunk_level") == "row"]
+    assert len(rows) == 2
+    assert rows[0].metadata["row_columns"]["Описание"] == "A"
+    assert rows[1].metadata["row_columns"]["Сумма"] == "-50,00"
 
 
 def test_refine_splits_wide_column_by_pdf_word_gaps():
