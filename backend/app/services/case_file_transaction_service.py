@@ -17,8 +17,10 @@ from sqlalchemy.orm import Session
 from app.config import config
 from app.models.case import File as FileModel
 from app.models.case_file_transaction import CaseFileTransaction
+from app.services.operations_noise_filter import sql_exclude_operational_noise
 from app.services.structured_table_indexer import is_structured_table_document
 from app.services.table_schema_normalize import normalize_date_cell
+from app.services.transaction_amount_sign import normalize_signed_amount
 from app.services.transaction_description_match import (
     description_token_match,
     sql_transaction_description_token_match,
@@ -112,22 +114,30 @@ def _cell_has_amount(value: str) -> bool:
 def _resolve_amount_and_flow(
     normalized: Dict[str, str],
 ) -> tuple[Optional[Decimal], Optional[str], Optional[str], Optional[str]]:
-    """Returns amount_rub, amount_raw, flow_direction (debit|credit)."""
+    """Returns signed amount_rub, amount_raw, flow_direction (debit|credit), column key.
+
+    Sign convention (shared with analytics): credit > 0, debit < 0.
+    """
     debit_key, credit_key = _pick_debit_credit_columns(normalized)
     debit_val = normalized.get(debit_key, "") if debit_key else ""
     credit_val = normalized.get(credit_key, "") if credit_key else ""
 
     if debit_key and _cell_has_amount(debit_val):
         amount_rub, amount_raw = parse_amount_rub(debit_val)
-        return amount_rub, amount_raw, "debit", debit_key
+        signed, flow = normalize_signed_amount(amount_rub, raw=amount_raw, flow="debit")
+        return signed, amount_raw, flow, debit_key
     if credit_key and _cell_has_amount(credit_val):
         amount_rub, amount_raw = parse_amount_rub(credit_val)
-        return amount_rub, amount_raw, "credit", credit_key
+        signed, flow = normalize_signed_amount(amount_rub, raw=amount_raw, flow="credit")
+        return signed, amount_raw, flow, credit_key
 
     amount_key = _pick_column(normalized, _AMOUNT_HEADER_RE)
     amount_raw = normalized.get(amount_key, "") if amount_key else None
     amount_rub, amount_raw_out = parse_amount_rub(amount_raw or "")
-    return amount_rub, amount_raw_out or None, None, amount_key
+    signed, flow = normalize_signed_amount(
+        amount_rub, raw=amount_raw_out or amount_raw or "", flow=None
+    )
+    return signed, amount_raw_out or None, flow, amount_key
 
 
 def parse_operation_date(value: str) -> Optional[date]:
@@ -480,6 +490,8 @@ class CaseFileTransactionService:
         abs_amount_min: Optional[Decimal] = None,
         abs_amount_max: Optional[Decimal] = None,
         flow: Optional[str] = None,
+        exclude_operational_noise: bool = False,
+        description_exact: Optional[str] = None,
     ):
         q = q.filter(CaseFileTransaction.case_id == case_id)
 
@@ -541,6 +553,11 @@ class CaseFileTransactionService:
             q = q.filter(amount_abs >= abs_amount_min, amount_abs <= abs_amount_max)
         if flow in ("debit", "credit"):
             q = q.filter(CaseFileTransaction.flow_direction == flow)
+        if exclude_operational_noise:
+            q = q.filter(sql_exclude_operational_noise())
+        exact = (description_exact or "").strip()
+        if exact:
+            q = q.filter(func.coalesce(CaseFileTransaction.description, "") == exact)
         return q
 
     @staticmethod
@@ -605,6 +622,8 @@ class CaseFileTransactionService:
         abs_amount_min: Optional[Decimal] = None,
         abs_amount_max: Optional[Decimal] = None,
         flow: Optional[str] = None,
+        exclude_operational_noise: bool = False,
+        description_exact: Optional[str] = None,
         order_by: TransactionOrderBy = "date_asc",
         limit: int = 200,
         offset: int = 0,
@@ -625,6 +644,8 @@ class CaseFileTransactionService:
             abs_amount_min=abs_amount_min,
             abs_amount_max=abs_amount_max,
             flow=flow,
+            exclude_operational_noise=exclude_operational_noise,
+            description_exact=description_exact,
             order_by=order_by,
             limit=limit,
             offset=offset,
@@ -649,6 +670,8 @@ class CaseFileTransactionService:
         abs_amount_min: Optional[Decimal] = None,
         abs_amount_max: Optional[Decimal] = None,
         flow: Optional[str] = None,
+        exclude_operational_noise: bool = False,
+        description_exact: Optional[str] = None,
         order_by: TransactionOrderBy = "date_asc",
         limit: int = 5000,
         offset: int = 0,
@@ -670,6 +693,8 @@ class CaseFileTransactionService:
             abs_amount_min=abs_amount_min,
             abs_amount_max=abs_amount_max,
             flow=flow,
+            exclude_operational_noise=exclude_operational_noise,
+            description_exact=description_exact,
         )
         total = filtered.count()
         rows = (
@@ -723,6 +748,8 @@ class CaseFileTransactionService:
         abs_amount_min: Optional[Decimal] = None,
         abs_amount_max: Optional[Decimal] = None,
         flow: Optional[str] = None,
+        exclude_operational_noise: bool = False,
+        description_exact: Optional[str] = None,
     ) -> TransactionAggregateTotals:
         """COUNT + SUM over the filtered set without loading row payloads."""
         base = db.query(
@@ -745,6 +772,8 @@ class CaseFileTransactionService:
             abs_amount_min=abs_amount_min,
             abs_amount_max=abs_amount_max,
             flow=flow,
+            exclude_operational_noise=exclude_operational_noise,
+            description_exact=description_exact,
         )
         count_val, sum_val = filtered.one()
         amount_sum = sum_val if isinstance(sum_val, Decimal) else Decimal(str(sum_val or 0))
@@ -768,6 +797,7 @@ class CaseFileTransactionService:
         abs_amount_min: Optional[Decimal] = None,
         abs_amount_max: Optional[Decimal] = None,
         flow: Optional[str] = None,
+        exclude_operational_noise: bool = False,
         order_by: DescriptionGroupOrderBy = "abs_sum_desc",
         limit: int = 10,
         min_op_count: int = 1,
@@ -803,6 +833,7 @@ class CaseFileTransactionService:
             abs_amount_min=abs_amount_min,
             abs_amount_max=abs_amount_max,
             flow=flow,
+            exclude_operational_noise=exclude_operational_noise,
         )
         grouped = filtered.group_by(desc_expr).having(op_count_expr >= max(1, min_op_count))
         if order_by == "count_desc":

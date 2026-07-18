@@ -24,6 +24,11 @@ function readAgentRunsFlag(): boolean {
 export const productFeatures = {
   /** Страница /assistant и пункт «Ассистент» в главном меню. */
   globalAssistant: parseEnvBool(import.meta.env.VITE_FEATURE_GLOBAL_ASSISTANT, false),
+  /**
+   * Внутренний ассистент по делу: /cases/:id/chat, карточка на обзоре,
+   * сессии в истории и редиректы «открыть дело → чат».
+   */
+  caseAssistant: parseEnvBool(import.meta.env.VITE_FEATURE_CASE_ASSISTANT, false),
   /** Тумблер «Справочник» в чате (НПА / legal corpus retrieval). */
   legalCorpus: parseEnvBool(import.meta.env.VITE_FEATURE_LEGAL_CORPUS, true),
   /** Страница /legal-corpus и пункт в сайдбаре (отдельно от тумблера в чате). */
@@ -50,6 +55,11 @@ export type ProductFeatureKey = keyof typeof productFeatures
 
 export function isProductFeatureEnabled(key: ProductFeatureKey): boolean {
   return productFeatures[key]
+}
+
+/** Куда вести при открытии дела: чат (если включён) или обзор. */
+export function caseHomePath(caseId: string): string {
+  return productFeatures.caseAssistant ? `/cases/${caseId}/chat` : `/cases/${caseId}`
 }
 
 /** Есть ли хотя бы один переключаемый инструмент в настройках чата. */

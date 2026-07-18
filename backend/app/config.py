@@ -729,6 +729,44 @@ class Config:
     STATEMENT_TABLE_AGENT_MAX_TOKENS: int = int(
         os.getenv("STATEMENT_TABLE_AGENT_MAX_TOKENS", "2048") or "2048"
     )
+    # Deterministic statement analytics thresholds (overview / anomaly detection).
+    # All heuristics are explainable and configurable — no LLM-invented numbers.
+    STATEMENT_ANALYTICS_LARGE_AMOUNT_RUB: int = int(
+        os.getenv("STATEMENT_ANALYTICS_LARGE_AMOUNT_RUB", "100000") or "100000"
+    )
+    STATEMENT_ANALYTICS_ROUND_STEP_RUB: int = int(
+        os.getenv("STATEMENT_ANALYTICS_ROUND_STEP_RUB", "10000") or "10000"
+    )
+    STATEMENT_ANALYTICS_ROUND_MIN_RUB: int = int(
+        os.getenv("STATEMENT_ANALYTICS_ROUND_MIN_RUB", "50000") or "50000"
+    )
+    STATEMENT_ANALYTICS_STRUCTURING_MIN_OPS: int = int(
+        os.getenv("STATEMENT_ANALYTICS_STRUCTURING_MIN_OPS", "3") or "3"
+    )
+    STATEMENT_ANALYTICS_STRUCTURING_WINDOW_DAYS: int = int(
+        os.getenv("STATEMENT_ANALYTICS_STRUCTURING_WINDOW_DAYS", "3") or "3"
+    )
+    STATEMENT_ANALYTICS_SPIKE_MULTIPLIER: float = float(
+        os.getenv("STATEMENT_ANALYTICS_SPIKE_MULTIPLIER", "5.0") or "5.0"
+    )
+    STATEMENT_ANALYTICS_MAX_FINDING_ROWS: int = int(
+        os.getenv("STATEMENT_ANALYTICS_MAX_FINDING_ROWS", "10") or "10"
+    )
+    # Transit ("pass-through"): inflow quickly followed by comparable outflow — a
+    # subsidiary-liability / tax red flag (деньги пришли и почти сразу ушли дальше).
+    STATEMENT_ANALYTICS_TRANSIT_WINDOW_DAYS: int = int(
+        os.getenv("STATEMENT_ANALYTICS_TRANSIT_WINDOW_DAYS", "3") or "3"
+    )
+    STATEMENT_ANALYTICS_TRANSIT_MIN_AMOUNT_RUB: int = int(
+        os.getenv("STATEMENT_ANALYTICS_TRANSIT_MIN_AMOUNT_RUB", "100000") or "100000"
+    )
+    STATEMENT_ANALYTICS_TRANSIT_RATIO: float = float(
+        os.getenv("STATEMENT_ANALYTICS_TRANSIT_RATIO", "0.8") or "0.8"
+    )
+    # Recurring transfers to one payee (систематичность — аффилированность / алименты).
+    STATEMENT_ANALYTICS_RECURRING_MIN_OPS: int = int(
+        os.getenv("STATEMENT_ANALYTICS_RECURRING_MIN_OPS", "4") or "4"
+    )
     # LLM формулирует ответ по структурированным фактам SQL (fallback — краткий детерминированный текст).
     STATEMENT_SQL_SYNTHESIS_ENABLED: bool = (
         os.getenv("STATEMENT_SQL_SYNTHESIS_ENABLED", "true").strip().lower() == "true"

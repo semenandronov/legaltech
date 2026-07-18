@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { CaseListItem } from '../../services/api'
+import { caseHomePath } from '../../lib/productFeatures'
 import './Dashboard.css'
 
 interface CaseCardProps {
@@ -10,7 +11,7 @@ const CaseCard = ({ caseItem }: CaseCardProps) => {
   const navigate = useNavigate()
 
   const handleClick = () => {
-    navigate(`/cases/${caseItem.id}/chat`)
+    navigate(caseHomePath(caseItem.id))
   }
 
   const handleAnalysisClick = (e: React.MouseEvent) => {

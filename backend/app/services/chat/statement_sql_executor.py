@@ -26,6 +26,7 @@ from app.services.chat.statement_sql_amount_semantics import (
     amount_filter_bounds,
     amount_semantics_label,
 )
+from app.services.transaction_amount_sign import effective_amount_rub
 from app.services.chat.statement_sql_facts import (
     StatementSqlFacts,
     filter_rows_by_time_hint,
@@ -36,6 +37,7 @@ from app.services.chat.statement_sql_facts import (
 from app.services.chat.statement_sql_models import StatementSqlPlan
 from app.services.chat.statement_sql_plan_normalize import normalize_statement_sql_plan
 from app.services.chat.statement_sql_planner import file_display_name
+from app.services.transaction_amount_sign import effective_amount_rub
 
 logger = logging.getLogger(__name__)
 
@@ -105,11 +107,19 @@ def _amount_filter_label(plan: StatementSqlPlan) -> str:
     return ""
 
 
+def _row_amount(row: CaseFileTransaction) -> Optional[Decimal]:
+    return effective_amount_rub(
+        row.amount_rub,
+        amount_raw=row.amount_raw,
+        flow_direction=getattr(row, "flow_direction", None),
+    )
+
+
 def _matches_amount_compare(row: CaseFileTransaction, plan: StatementSqlPlan) -> bool:
     compare = (plan.amount_compare or "none").strip().lower()
     if compare == "none":
         return True
-    amount = row.amount_rub
+    amount = _row_amount(row)
     if amount is None:
         return False
     value = abs(amount)
@@ -168,7 +178,7 @@ def _sort_rows_by_abs_amount(rows: Sequence[CaseFileTransaction]) -> List[CaseFi
     return sorted(
         rows,
         key=lambda r: (
-            -(abs(r.amount_rub) if r.amount_rub is not None else Decimal("0")),
+            -(abs(a) if (a := _row_amount(r)) is not None else Decimal("0")),
             r.operation_date or date.max,
             int(r.global_row_index or 0),
         ),
@@ -191,11 +201,9 @@ def _group_rows_in_memory(
     for description, bucket in buckets.items():
         if len(bucket) < min_op_count:
             continue
-        amount_sum = sum((r.amount_rub for r in bucket if r.amount_rub is not None), Decimal("0"))
-        abs_amount_sum = sum(
-            (abs(r.amount_rub) for r in bucket if r.amount_rub is not None),
-            Decimal("0"),
-        )
+        amounts = [_row_amount(r) for r in bucket]
+        amount_sum = sum((a for a in amounts if a is not None), Decimal("0"))
+        abs_amount_sum = sum((abs(a) for a in amounts if a is not None), Decimal("0"))
         groups.append(
             TransactionDescriptionGroup(
                 description=description,

@@ -32,6 +32,7 @@ import {
 } from '@mui/material'
 import { AppBreadcrumbs } from './Breadcrumbs'
 import { CommandPalette } from './CommandPalette'
+import { caseHomePath } from '../../lib/productFeatures'
 
 interface HeaderProps {
   onMenuClick?: () => void
@@ -47,7 +48,7 @@ const Header = ({ onMenuClick }: HeaderProps) => {
 
   const handleUpload = (caseId: string, _fileNames: string[]) => {
     setShowUploadModal(false)
-    navigate(`/cases/${caseId}/chat`)
+    navigate(caseHomePath(caseId))
     window.location.reload()
   }
 

@@ -23,6 +23,7 @@ import {
 } from '../lib/postCreatePendingFiles'
 import { tabularReviewApi } from '../services/tabularReviewApi'
 import { operationsApi, type OperationsAvailableFile, type OperationsSessionSummary } from '../services/operationsApi'
+import { productFeatures } from '../lib/productFeatures'
 import { CaseTabularHubModal } from '../components/TabularReview/CaseTabularHubModal'
 import { CaseOperationsHubModal } from '../components/Operations/CaseOperationsHubModal'
 import { CaseOverviewPageHeader } from '../components/CaseOverview/CaseOverviewPageHeader'
@@ -118,6 +119,10 @@ const PRESETS = [
     path: (id: string) => `/cases/${id}/tabular-review`,
   },
 ] as const
+
+function visiblePresets() {
+  return PRESETS.filter((preset) => preset.id !== 'chat' || productFeatures.caseAssistant)
+}
 
 function isCaseAssistantChatSession(sessionId: string): boolean {
   return (
@@ -600,6 +605,7 @@ const CaseOverviewPage = () => {
     )
 
   const assistantSessions = sessions.filter((s) => isCaseAssistantChatSession(s.session_id))
+  const visibleAssistantSessions = productFeatures.caseAssistant ? assistantSessions : []
 
   return (
     <div className="ws-shell ws-tabular-shell flex h-screen overflow-hidden">
@@ -635,7 +641,7 @@ const CaseOverviewPage = () => {
                 </button>
 
                 {/* Preset cards */}
-                {PRESETS.map((preset) => (
+                {visiblePresets().map((preset) => (
                   <button
                     key={preset.id}
                     onClick={() => {
@@ -665,12 +671,12 @@ const CaseOverviewPage = () => {
             <section className="mb-8">
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-xs font-medium text-gray-500">Последние действия</h2>
-                {(assistantSessions.length + reviews.length + operationsSessions.length) > 5 && (
+                {(visibleAssistantSessions.length + reviews.length + operationsSessions.length) > 5 && (
                   <button
                     onClick={() => setShowAllActions(true)}
                     className="text-xs text-gray-400 transition-colors hover:text-gray-600"
                   >
-                    Все действия ({assistantSessions.length + reviews.length + operationsSessions.length})
+                    Все действия ({visibleAssistantSessions.length + reviews.length + operationsSessions.length})
                   </button>
                 )}
               </div>
@@ -686,7 +692,7 @@ const CaseOverviewPage = () => {
                   | { kind: 'review'; id: string; name: string; status: string; date: number }
                   | { kind: 'operations'; file_id: string; name: string; date: number }
 
-                const chatItems: ActionItem[] = assistantSessions.map(s => ({
+                const chatItems: ActionItem[] = visibleAssistantSessions.map(s => ({
                   kind: 'chat' as const,
                   ...s,
                   date: s.last_message_at ? new Date(s.last_message_at).getTime() : 0,
@@ -1570,6 +1576,7 @@ const CaseOverviewPage = () => {
               </button>
 
               {/* Assistant thread */}
+              {productFeatures.caseAssistant && (
               <button
                 onClick={() => { setShowQueryTypeModal(false); navigate(`/cases/${caseId}/chat`) }}
                 className="rounded-xl border p-5 text-left transition-all duration-150 hover:bg-[var(--color-bg-hover)] hover:shadow-sm"
@@ -1591,6 +1598,7 @@ const CaseOverviewPage = () => {
                   Получите единый ответ, основанный на информации из всех файлов дела
                 </p>
               </button>
+              )}
             </div>
           </div>
         </div>
@@ -1789,7 +1797,7 @@ const CaseOverviewPage = () => {
                 | { kind: 'review'; id: string; name: string; status: string; date: number }
                 | { kind: 'operations'; file_id: string; name: string; date: number }
 
-              const chatItems: ActionItem[] = assistantSessions.map(s => ({
+              const chatItems: ActionItem[] = visibleAssistantSessions.map(s => ({
                 kind: 'chat' as const, ...s,
                 date: s.last_message_at ? new Date(s.last_message_at).getTime() : 0,
               }))

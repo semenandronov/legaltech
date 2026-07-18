@@ -13,6 +13,7 @@ interface OperationsExportDialogProps {
   /** Transaction IDs currently visible after UI filters (WYSIWYG). */
   transactionIds: string[]
   totalInStatement: number
+  exportLabel?: string
 }
 
 export function OperationsExportDialog({
@@ -23,6 +24,7 @@ export function OperationsExportDialog({
   fileId,
   transactionIds,
   totalInStatement,
+  exportLabel = 'текущих фильтров',
 }: OperationsExportDialogProps) {
   const [format, setFormat] = useState<'excel' | 'csv'>('excel')
   const [isExporting, setIsExporting] = useState(false)
@@ -79,7 +81,7 @@ export function OperationsExportDialog({
         <p className="text-sm text-gray-600 mb-4">
           {isFiltered ? (
             <>
-              Будут выгружены <strong>{filteredCount}</strong> операций с учётом текущих фильтров
+              Будут выгружены <strong>{filteredCount}</strong> операций ({exportLabel})
               {totalInStatement > 0 ? <> (из {totalInStatement} в выписке)</> : null}.
             </>
           ) : (

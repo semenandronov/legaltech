@@ -5,6 +5,7 @@ import ProtectedRoute from './components/ProtectedRoute'
 import { InternalDevToolsRoute } from './components/InternalDevToolsRoute'
 import { FeatureRoute } from './components/FeatureRoute'
 import { buildMainNavItems } from './lib/mainNavItems'
+import { isProductFeatureEnabled } from './lib/productFeatures'
 import LoginPage from './pages/LoginPage'
 import UnifiedSidebar from './components/Layout/UnifiedSidebar'
 const AssistantChatPage = lazy(() => import('./pages/AssistantChatPage'))
@@ -174,7 +175,7 @@ function App() {
         path="/cases/:caseId/chat"
         element={
           <ProtectedRoute>
-            <CaseChatPage />
+            <CaseChatRouteGate />
           </ProtectedRoute>
         }
       />
@@ -281,7 +282,7 @@ function App() {
 
 const ChunkLabRouteGate = () => {
   const { caseId } = useParams<{ caseId: string }>()
-  const fallback = caseId ? `/cases/${caseId}/chat` : '/cases'
+  const fallback = caseId ? `/cases/${caseId}` : '/cases'
   return (
     <InternalDevToolsRoute redirectTo={fallback}>
       <Suspense fallback={<PageLoader />}>
@@ -289,6 +290,15 @@ const ChunkLabRouteGate = () => {
       </Suspense>
     </InternalDevToolsRoute>
   )
+}
+
+/** Внутренний ассистент: при выключенном флаге — на обзор дела. */
+const CaseChatRouteGate = () => {
+  const { caseId } = useParams<{ caseId: string }>()
+  if (!isProductFeatureEnabled('caseAssistant')) {
+    return <Navigate to={caseId ? `/cases/${caseId}` : '/cases'} replace />
+  }
+  return <CaseChatPage />
 }
 
 const CaseChatPage = () => {

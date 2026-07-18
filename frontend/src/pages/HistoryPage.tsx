@@ -61,6 +61,9 @@ const HistoryPage = () => {
     if (!isProductFeatureEnabled('globalAssistant')) {
       list = list.filter((item) => item.type !== 'global_chat')
     }
+    if (!isProductFeatureEnabled('caseAssistant')) {
+      list = list.filter((item) => item.type !== 'case_chat')
+    }
     const q = search.trim().toLowerCase()
     if (!q) return list
     return list.filter((item) => {
@@ -70,7 +73,7 @@ const HistoryPage = () => {
   }, [items, search])
 
   const handleClick = (item: RecentActivityItem) => {
-    if (item.type === 'case_chat' && item.case_id) {
+    if (item.type === 'case_chat' && item.case_id && isProductFeatureEnabled('caseAssistant')) {
       navigate(`/cases/${item.case_id}/chat?session=${item.id}`)
     } else if (item.type === 'global_chat' && isProductFeatureEnabled('globalAssistant')) {
       navigate(`/assistant?session=${item.id}`)
@@ -164,7 +167,7 @@ const HistoryPage = () => {
                   const cfg = TYPE_CONFIG[item.type]
                   if (!cfg) return null
                   const clickable =
-                    (item.type === 'case_chat' && !!item.case_id) ||
+                    (item.type === 'case_chat' && !!item.case_id && isProductFeatureEnabled('caseAssistant')) ||
                     (item.type === 'global_chat' && isProductFeatureEnabled('globalAssistant')) ||
                     (item.type === 'tabular_review' && !!item.case_id) ||
                     (item.type === 'operations' && !!item.case_id)

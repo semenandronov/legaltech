@@ -26,6 +26,7 @@ import { buildTabularViewerCellData, type TabularCellClickPayload } from "../uti
 import { useTabularReviewWebSocket } from "../hooks/useTabularReviewWebSocket"
 import { getCase, getDocuments } from "../services/api"
 import { buildMainNavItems } from "@/lib/mainNavItems"
+import { caseHomePath } from "@/lib/productFeatures"
 import { Card } from "../components/UI/Card"
 import Spinner from "../components/UI/Spinner"
 import { toast } from "sonner"
@@ -41,10 +42,10 @@ const TabularReviewPage: React.FC = () => {
       try {
         navigate(decodeURIComponent(returnTo))
       } catch {
-        navigate(`/cases/${caseId}/chat`)
+        navigate(caseHomePath(caseId!))
       }
     } else {
-      navigate(`/cases/${caseId}/chat`)
+      navigate(caseHomePath(caseId!))
     }
   }
   

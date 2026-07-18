@@ -4,6 +4,7 @@ import { createCase, CaseInfo as CaseInfoType } from '../services/api'
 import CaseInfoForm, { CaseInfo } from './Upload/CaseInfoForm'
 import DocumentsUploadStep from './Upload/DocumentsUploadStep'
 import { useNavigate } from 'react-router-dom'
+import { caseHomePath } from '../lib/productFeatures'
 
 interface UploadAreaProps {
   onUpload: (caseId: string, fileNames: string[]) => void
@@ -41,9 +42,8 @@ const UploadArea = ({ onUpload, onCancel }: UploadAreaProps) => {
       return
     }
     // Files are already uploaded, indexed, and case.status is "completed"
-    // Go directly to chat
     onUpload(caseId, [])
-    navigate(`/cases/${caseId}/chat`)
+    navigate(caseHomePath(caseId))
   }
 
   const handleCancel = () => {

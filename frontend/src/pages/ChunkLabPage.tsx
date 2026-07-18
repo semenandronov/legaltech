@@ -7,6 +7,7 @@ import { TabularDocumentViewer } from '../components/TabularReview/TabularDocume
 import { buildChunkLabViewerCellData } from '../utils/chunkLabViewerCellData'
 import { fileTypeFromName } from '../utils/fileType'
 import { buildMainNavItems } from '../lib/mainNavItems'
+import { caseHomePath } from '../lib/productFeatures'
 
 type CitationPayload = {
   citation_id?: string
@@ -182,11 +183,11 @@ const ChunkLabPage = () => {
             </p>
           </div>
           <Link
-            to={`/cases/${caseId}/chat`}
+            to={caseHomePath(caseId!)}
             className="text-sm shrink-0"
             style={{ color: 'var(--color-info)' }}
           >
-            ← К ассистенту
+            ← К делу
           </Link>
         </header>
 

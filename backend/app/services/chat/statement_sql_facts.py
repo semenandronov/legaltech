@@ -12,6 +12,7 @@ from typing import List, Optional, Sequence
 
 from app.models.case_file_transaction import CaseFileTransaction
 from app.services.chat.statement_sql_models import StatementSqlPlan
+from app.services.transaction_amount_sign import effective_amount_rub
 
 
 @dataclass(frozen=True)
@@ -92,7 +93,18 @@ def filter_rows_by_time_hint(
 def sum_row_amounts(rows: Sequence[CaseFileTransaction]) -> Optional[Decimal]:
     if not rows:
         return None
-    return sum((r.amount_rub for r in rows if r.amount_rub is not None), Decimal("0"))
+    total = Decimal("0")
+    any_amount = False
+    for row in rows:
+        amt = effective_amount_rub(
+            row.amount_rub,
+            amount_raw=row.amount_raw,
+            flow_direction=getattr(row, "flow_direction", None),
+        )
+        if amt is not None:
+            total += amt
+            any_amount = True
+    return total if any_amount else None
 
 
 def row_fact_from_db(row: CaseFileTransaction) -> StatementSqlRowFact:

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  caseHomePath,
   chatHasActiveInstruments,
   chatInstrumentControlsEnabled,
   productFeatures,
@@ -8,6 +9,18 @@ import {
 describe('productFeatures', () => {
   it('globalAssistant defaults off (prod surface)', () => {
     expect(typeof productFeatures.globalAssistant).toBe('boolean')
+  })
+
+  it('caseAssistant defaults off (prod surface)', () => {
+    expect(typeof productFeatures.caseAssistant).toBe('boolean')
+  })
+
+  it('caseHomePath lands on overview when caseAssistant is off', () => {
+    if (!productFeatures.caseAssistant) {
+      expect(caseHomePath('abc')).toBe('/cases/abc')
+    } else {
+      expect(caseHomePath('abc')).toBe('/cases/abc/chat')
+    }
   })
 
   it('chatInstrumentControlsEnabled reflects instrument flags', () => {

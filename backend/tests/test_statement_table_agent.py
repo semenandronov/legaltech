@@ -14,6 +14,7 @@ from app.services.chat.statement_table_session import (
     StatementTableSession,
     bind_statement_table_session,
 )
+from app.services.chat.statement_insight_tools import detect_anomalies, statement_overview
 from app.services.chat.statement_table_tools import probe_description, query_statement
 
 
@@ -25,7 +26,13 @@ def _row(
     op_date: date = date(2026, 5, 1),
     idx: int = 0,
 ) -> CaseFileTransaction:
-    numeric = amount.replace(" ", "").replace(",", ".")
+    numeric = Decimal(amount.replace(" ", "").replace(",", "."))
+    if numeric < 0:
+        flow = "debit"
+    elif numeric > 0:
+        flow = "credit"
+    else:
+        flow = None
     return CaseFileTransaction(
         id=row_id,
         case_id="case-1",
@@ -35,11 +42,12 @@ def _row(
         row_index=idx,
         operation_date=op_date,
         operation_datetime_text=op_date.strftime("%d.%m.%Y"),
-        amount_rub=Decimal(numeric),
+        amount_rub=numeric,
         amount_raw=amount,
         description=desc,
         row_columns={},
         page_start=1,
+        flow_direction=flow,
     )
 
 
@@ -109,7 +117,7 @@ def test_query_statement_group_by_description():
     assert "Yandex" in text
 
 
-@patch("langchain.agents.create_agent")
+@patch("app.services.chat.statement_table_agent.create_agent")
 @patch("app.services.chat.statement_table_agent.create_legal_llm")
 def test_run_statement_table_agent_fact_binds_answer(mock_llm, mock_create_agent):
     rows = [
@@ -150,6 +158,94 @@ def test_run_statement_table_agent_fact_binds_answer(mock_llm, mock_create_agent
     assert "13" not in result["response"]
     assert result["statement_sql_meta"]["resolver"] == "table_agent"
     assert "query_statement" in result["statement_sql_meta"]["tool_calls"]
+
+
+@patch("app.services.chat.statement_table_agent.create_agent")
+@patch("app.services.chat.statement_table_agent.create_legal_llm")
+def test_run_statement_table_agent_insight_answer(mock_llm, mock_create_agent):
+    day = date(2026, 3, 1)
+    rows = [
+        _row(row_id="r1", amount="-10000", desc="Иванов", op_date=day, idx=0),
+        _row(row_id="r2", amount="-11000", desc="Иванов", op_date=day, idx=1),
+        _row(row_id="r3", amount="-12000", desc="Иванов", op_date=day, idx=2),
+    ]
+
+    def _invoke(payload, config=None):
+        statement_overview.invoke({})
+        detect_anomalies.invoke({})
+        return {
+            "messages": [
+                HumanMessage(content="q"),
+                AIMessage(
+                    content="",
+                    tool_calls=[{"name": "detect_anomalies", "args": {}, "id": "1"}],
+                ),
+                ToolMessage(content="facts", tool_call_id="1", name="detect_anomalies"),
+                AIMessage(content="Вывод: есть дробление платежей Иванову — стоит проверить."),
+            ]
+        }
+
+    mock_create_agent.return_value.invoke.side_effect = _invoke
+    mock_llm.return_value = MagicMock()
+
+    db = MagicMock()
+    result = run_statement_table_agent(
+        db,
+        case_id="case-1",
+        question="что подозрительного в выписке?",
+        file_id="stmt-1",
+        file_label="выписка.pdf",
+        rows=rows,
+    )
+
+    assert result is not None
+    assert result["transaction_agent_resolved"] is True
+    assert "проверить" in result["response"]
+    assert result["statement_sql_meta"]["resolver"] == "table_agent_insight"
+    assert "detect_anomalies" in result["statement_sql_meta"]["tool_calls"]
+
+
+@patch("app.services.chat.statement_table_agent.create_agent")
+@patch("app.services.chat.statement_table_agent.create_legal_llm")
+def test_run_statement_table_agent_insight_fallback_when_no_final_text(
+    mock_llm, mock_create_agent
+):
+    rows = [
+        _row(row_id="r1", amount="100000", desc="Зарплата", idx=0),
+        _row(row_id="r2", amount="-45000", desc="ООО Ромашка", idx=1),
+    ]
+
+    def _invoke(payload, config=None):
+        statement_overview.invoke({})
+        return {
+            "messages": [
+                HumanMessage(content="q"),
+                AIMessage(
+                    content="",
+                    tool_calls=[{"name": "statement_overview", "args": {}, "id": "1"}],
+                ),
+                ToolMessage(content="facts", tool_call_id="1", name="statement_overview"),
+                AIMessage(content=""),
+            ]
+        }
+
+    mock_create_agent.return_value.invoke.side_effect = _invoke
+    mock_llm.return_value = MagicMock()
+
+    db = MagicMock()
+    result = run_statement_table_agent(
+        db,
+        case_id="case-1",
+        question="что в выписке?",
+        file_id="stmt-1",
+        file_label="выписка.pdf",
+        rows=rows,
+    )
+
+    assert result is not None
+    # Deterministic fallback from tool summaries when model returns no prose.
+    assert "Профиль выписки" in result["response"]
+    assert result["statement_sql_meta"]["resolver"] == "table_agent_insight"
 
 
 @patch("app.services.chat.statement_sql_pipeline.statement_table_agent_enabled", return_value=False)

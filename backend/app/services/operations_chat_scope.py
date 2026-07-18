@@ -11,6 +11,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 from app.models.case_file_transaction import CaseFileTransaction
 from app.services.case_file_transaction_service import parse_operation_date, parse_amount_rub
 from app.services.table_schema_normalize import coalesce_header_union, lookup_column_value
+from app.services.transaction_amount_sign import effective_amount_rub
 from app.services.transaction_description_match import any_field_description_token_match
 
 _EMPTY_VALUES = {"", "-", "—", "N/A"}
@@ -310,7 +311,11 @@ def apply_plan_filters_to_rows(
             continue
         if date_to is not None and (op_date is None or op_date > date_to):
             continue
-        amount = row.amount_rub
+        amount = effective_amount_rub(
+            row.amount_rub,
+            amount_raw=row.amount_raw,
+            flow_direction=getattr(row, "flow_direction", None),
+        )
         if min_amount is not None and (amount is None or amount < min_amount):
             continue
         if max_amount is not None and (amount is None or amount > max_amount):

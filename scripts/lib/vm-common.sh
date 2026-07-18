@@ -10,6 +10,7 @@ vm_common_root() {
 
 export YC_VM_ID="${YC_VM_ID:-fv4jkhc0aojn5r870h3h}"
 export VM_SSH_IDENTITY="${VM_SSH_IDENTITY:-${HOME}/.ssh/yc_rsa_new}"
+export VM_SSH_LOGIN="${VM_SSH_LOGIN:-andronovsemen04}"
 export VM_REMOTE_DIR="${VM_REMOTE_DIR:-/home/andronovsemen04/legal-ai}"
 export VM_POSTGRES_CONTAINER="${VM_POSTGRES_CONTAINER:-legal-ai-postgres}"
 export VM_PG_IMAGE="${VM_PG_IMAGE:-pgvector/pgvector:pg16}"
@@ -49,6 +50,9 @@ vm_ssh() {
   local ssh_args=()
   if [[ -f "${VM_SSH_IDENTITY}" ]]; then
     ssh_args+=(--identity-file "${VM_SSH_IDENTITY}")
+  fi
+  if [[ -n "${VM_SSH_LOGIN:-}" ]]; then
+    ssh_args+=(--login "${VM_SSH_LOGIN}")
   fi
   yc compute ssh --id "${YC_VM_ID}" "${ssh_args[@]}" -- "$@"
 }

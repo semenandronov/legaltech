@@ -98,6 +98,40 @@ class OperationsChatHistoryResponse(BaseModel):
 class OperationsSessionUiState(BaseModel):
     value_filters: List[Dict[str, Any]] = Field(default_factory=list)
     row_search: str = ""
+    petition_date: Optional[str] = None
+    active_period: Optional[str] = None
+    hide_operational_noise: bool = False
+    view_mode: Literal["operations", "counterparties"] = "operations"
+    basket_ids: List[str] = Field(default_factory=list)
+
+
+class OperationsCounterpartyGroup(BaseModel):
+    description: str
+    op_count: int
+    amount_sum_rub: float
+    abs_amount_sum_rub: float
+
+
+class OperationsCounterpartyGroupsResponse(BaseModel):
+    groups: List[OperationsCounterpartyGroup] = Field(default_factory=list)
+    returned: int
+    total_groups: int
+
+
+class OperationsPeriodInsight(BaseModel):
+    period_id: str
+    label: str
+    date_from: str
+    date_to: str
+    count: int
+
+
+class OperationsAnalysisInsightsResponse(BaseModel):
+    petition_date: Optional[str] = None
+    total_operations: int
+    operational_noise_count: int
+    filtered_count: int
+    periods: List[OperationsPeriodInsight] = Field(default_factory=list)
 
 
 class OperationsSessionResponse(BaseModel):

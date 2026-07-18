@@ -41,6 +41,7 @@ import {
 } from '@mui/icons-material'
 import { CaseListItem } from "@/services/api"
 import { useNavigate } from "react-router-dom"
+import { caseHomePath, productFeatures } from "@/lib/productFeatures"
 import {
   MuiTableContainer,
   MuiTableHeader,
@@ -463,7 +464,7 @@ export function CasesTable({ data, loading, onDeleteCase }: CasesTableProps) {
                   key={row.id}
                   index={index}
                   selected={row.getIsSelected()}
-                  onClick={() => navigate(`/cases/${row.original.id}/chat`)}
+                  onClick={() => navigate(caseHomePath(row.original.id))}
                 >
                   {row.getVisibleCells().map((cell) => (
                     <MuiTableBodyCell
@@ -530,7 +531,7 @@ export function CasesTable({ data, loading, onDeleteCase }: CasesTableProps) {
             if (menuAnchorEl) {
               const row = table.getRowModel().rows.find(r => r.id === menuAnchorEl.rowId)
               if (row) {
-                navigate(`/cases/${row.original.id}/chat`)
+                navigate(caseHomePath(row.original.id))
               }
             }
             setMenuAnchorEl(null)
@@ -539,6 +540,7 @@ export function CasesTable({ data, loading, onDeleteCase }: CasesTableProps) {
           <FileTextIcon sx={{ mr: 1, fontSize: 20 }} />
           Открыть
         </MenuItem>
+        {productFeatures.caseAssistant && (
         <MenuItem
           onClick={() => {
             if (menuAnchorEl) {
@@ -553,6 +555,7 @@ export function CasesTable({ data, loading, onDeleteCase }: CasesTableProps) {
           <MessageSquareIcon sx={{ mr: 1, fontSize: 20 }} />
           Чат
         </MenuItem>
+        )}
         <MenuItem onClick={handleExport}>
           <DownloadIcon sx={{ mr: 1, fontSize: 20 }} />
           Экспорт

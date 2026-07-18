@@ -24,7 +24,6 @@ import { buildMainNavItems } from '@/lib/mainNavItems'
 import {
   buildOperationsTabularColumns,
   buildOperationsTabularRows,
-  filterOperationsBySearch,
   filterOperationsRows,
 } from '@/utils/operationsTableModel'
 import { Card } from '@/components/UI/Card'
@@ -60,6 +59,7 @@ const OperationsPage = () => {
   const [hubInitialStep, setHubInitialStep] = useState<'list' | 'pick'>('list')
   const [sessions, setSessions] = useState<OperationsSessionSummary[]>([])
   const [rowSearch, setRowSearch] = useState('')
+  const [debouncedRowSearch, setDebouncedRowSearch] = useState('')
   const [valueFilters, setValueFilters] = useState<ColumnValueFilterCondition[]>([])
   const [filterPopoverOpen, setFilterPopoverOpen] = useState(false)
   const [filterAnchorEl, setFilterAnchorEl] = useState<HTMLElement | null>(null)
@@ -69,8 +69,6 @@ const OperationsPage = () => {
   const [selectedTransaction, setSelectedTransaction] = useState<OperationTransaction | null>(null)
   const sessionReadyRef = useRef(false)
   const lastRefreshAtRef = useRef(0)
-
-  const navItems = buildMainNavItems()
 
   const selectedFile = useMemo(
     () => availableFiles.find((f) => f.file_id === selectedFileId) ?? null,
@@ -91,11 +89,10 @@ const OperationsPage = () => {
   )
 
   const filteredRows = useMemo(() => {
-    let rows = tabularRows
-    rows = filterOperationsRows(rows, valueFilters, columns)
-    rows = filterOperationsBySearch(rows, rowSearch)
-    return rows
-  }, [tabularRows, valueFilters, rowSearch, columns])
+    return filterOperationsRows(tabularRows, valueFilters, columns)
+  }, [tabularRows, valueFilters, columns])
+
+  const navItems = buildMainNavItems()
 
   const syncUrl = useCallback(
     (fileId: string | null) => {
@@ -182,18 +179,13 @@ const OperationsPage = () => {
     setLoadingTransactions(true)
     sessionReadyRef.current = false
     try {
-      const [data, session] = await Promise.all([
-        operationsApi.listTransactions(caseId, { fileId: selectedFileId }),
-        operationsApi.getSession(caseId, selectedFileId).catch(() => ({
-          valueFilters: [] as ColumnValueFilterCondition[],
-          rowSearch: '',
-        })),
-      ])
+      const data = await operationsApi.listTransactions(caseId, {
+        fileId: selectedFileId,
+        search: debouncedRowSearch.trim() || undefined,
+      })
       setTransactions(data.transactions)
       setSummary(data.summary)
       setColumnHeaders(data.column_headers)
-      setValueFilters(session.valueFilters)
-      setRowSearch(session.rowSearch)
       const name =
         availableFiles.find((f) => f.file_id === selectedFileId)?.filename ??
         data.transactions[0]?.source_filename
@@ -207,7 +199,24 @@ const OperationsPage = () => {
       setLoadingTransactions(false)
       sessionReadyRef.current = true
     }
-  }, [caseId, selectedFileId, availableFiles])
+  }, [caseId, selectedFileId, availableFiles, debouncedRowSearch])
+
+  const hydrateSession = useCallback(async (fileId: string) => {
+    if (!caseId) return
+    try {
+      const session = await operationsApi.getSession(caseId, fileId)
+      setValueFilters(session.valueFilters)
+      setRowSearch(session.rowSearch)
+    } catch {
+      setValueFilters([])
+      setRowSearch('')
+    }
+  }, [caseId])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedRowSearch(rowSearch), 300)
+    return () => window.clearTimeout(timer)
+  }, [rowSearch])
 
   useEffect(() => {
     if (!caseId) return
@@ -270,8 +279,19 @@ const OperationsPage = () => {
       setShowHub(true)
       return
     }
+  }, [selectedFileId, loadingFiles, availableFiles, syncUrl])
+
+  useEffect(() => {
+    if (!selectedFileId) return
+    void hydrateSession(selectedFileId)
+  }, [selectedFileId, hydrateSession])
+
+  useEffect(() => {
+    if (loadingFiles || !selectedFileId) return
+    const exists = availableFiles.some((f) => f.file_id === selectedFileId)
+    if (!exists && availableFiles.length > 0) return
     void loadTransactions()
-  }, [selectedFileId, loadingFiles, availableFiles, loadTransactions, syncUrl])
+  }, [loadingFiles, selectedFileId, availableFiles, loadTransactions])
 
   useEffect(() => {
     if (!caseId || !selectedFileId || !sessionReadyRef.current) return
@@ -281,7 +301,15 @@ const OperationsPage = () => {
       void operationsApi.saveSession(
         caseId,
         selectedFileId,
-        { valueFilters, rowSearch },
+        {
+          valueFilters,
+          rowSearch,
+          petitionDate: '',
+          activePeriod: null,
+          hideOperationalNoise: false,
+          viewMode: 'operations',
+          basketIds: [],
+        },
         name,
       )
     }, 400)
@@ -298,6 +326,13 @@ const OperationsPage = () => {
       void operationsApi.touchSession(caseId, fileId, name)
     }
   }
+
+  const exportTransactionIds = useMemo(() => {
+    return filteredRows.map((row) => {
+      const tx = (row as { _transaction?: { id?: string } })._transaction
+      return String(tx?.id || row.file_id || '')
+    }).filter(Boolean)
+  }, [filteredRows])
 
   const mainGridColumns = useMemo(() => {
     const parts = ['minmax(0, 1fr)']
@@ -360,10 +395,15 @@ const OperationsPage = () => {
 
             {summary && (
               <div className="px-4 py-2 border-b border-gray-100 text-xs text-gray-600 flex flex-wrap gap-x-4 gap-y-1 shrink-0">
-                <span>Операций: {summary.total}</span>
+                <span>Всего в выписке: {summary.total}</span>
                 {summary.date_min && summary.date_max ? (
                   <span>
-                    Период: {summary.date_min} — {summary.date_max}
+                    Период выписки: {summary.date_min} — {summary.date_max}
+                  </span>
+                ) : null}
+                {summary.returned < summary.total ? (
+                  <span className="text-amber-700">
+                    Загружено {summary.returned} из {summary.total} — уточните фильтры
                   </span>
                 ) : null}
               </div>
@@ -374,21 +414,23 @@ const OperationsPage = () => {
         <div className="ws-tabular-body flex-1 min-h-0" style={{ display: 'grid', gridTemplateColumns: mainGridColumns }}>
           <div className="ws-tabular-surface min-h-0 flex flex-col overflow-hidden">
             {hasRegistry ? (
-              <OperationsTable
-                columns={columns}
-                rows={filteredRows}
-                loading={loadingTransactions}
-                selectedRowId={selectedTransaction?.id ?? null}
-                onRowClick={(tx) => {
-                  setSelectedTransaction(tx)
-                  setShowChat(false)
-                }}
-                emptyMessage={
-                  loadingTransactions
-                    ? 'Загрузка…'
-                    : 'Нет операций. Проверьте фильтры.'
-                }
-              />
+              <div className="min-h-0 flex flex-1 flex-col overflow-hidden">
+                <OperationsTable
+                  columns={columns}
+                  rows={filteredRows}
+                  loading={loadingTransactions}
+                  selectedRowId={selectedTransaction?.id ?? null}
+                  onRowClick={(tx) => {
+                    setSelectedTransaction(tx)
+                    setShowChat(false)
+                  }}
+                  emptyMessage={
+                    loadingTransactions
+                      ? 'Загрузка…'
+                      : 'Нет операций. Проверьте фильтры.'
+                  }
+                />
+              </div>
             ) : (
               <div className="flex-1 flex items-center justify-center p-8">
                 <Card className="p-8 max-w-md text-center space-y-4">
@@ -429,7 +471,15 @@ const OperationsPage = () => {
                 caseId={caseId}
                 fileId={selectedFileId}
                 reviewName={statementName}
-                uiState={{ valueFilters, rowSearch }}
+                uiState={{
+                  valueFilters,
+                  rowSearch,
+                  petitionDate: '',
+                  activePeriod: null,
+                  hideOperationalNoise: false,
+                  viewMode: 'operations',
+                  basketIds: [],
+                }}
                 onClose={() => setShowChat(false)}
               />
             </aside>
@@ -471,11 +521,9 @@ const OperationsPage = () => {
         caseId={caseId}
         caseTitle={statementName || caseName || 'operations'}
         fileId={selectedFileId || ''}
-        transactionIds={filteredRows.map((row) => {
-          const tx = (row as { _transaction?: { id?: string } })._transaction
-          return String(tx?.id || row.file_id || '')
-        }).filter(Boolean)}
+        transactionIds={exportTransactionIds}
         totalInStatement={transactions.length}
+        exportLabel="текущих фильтров"
       />
 
       <OperationsHelpPanel open={showHelp} onClose={() => setShowHelp(false)} />

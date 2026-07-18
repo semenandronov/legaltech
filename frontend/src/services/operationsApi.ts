@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { extractErrorMessage } from './api'
 import type { ColumnValueFilterCondition } from '@/utils/tabularColumnFilters'
+import type { BankruptcyPeriodId, OperationsViewMode } from '@/utils/operationsBankruptcyPeriods'
 import { assertDownloadBlob, extractBlobErrorMessage } from '@/utils/fileDownload'
 
 const BASE_URL = import.meta.env.VITE_API_URL || ''
@@ -82,6 +83,8 @@ export interface OperationsListParams {
   minAmount?: string
   maxAmount?: string
   flow?: Exclude<OperationsFlowFilter, 'all'>
+  excludeOperationalNoise?: boolean
+  descriptionExact?: string
   limit?: number
   offset?: number
 }
@@ -89,6 +92,49 @@ export interface OperationsListParams {
 export interface OperationsSessionUiState {
   valueFilters: ColumnValueFilterCondition[]
   rowSearch: string
+  petitionDate: string
+  activePeriod: BankruptcyPeriodId | null
+  hideOperationalNoise: boolean
+  viewMode: OperationsViewMode
+  basketIds: string[]
+}
+
+export interface OperationsPeriodInsight {
+  period_id: BankruptcyPeriodId
+  label: string
+  date_from: string
+  date_to: string
+  count: number
+}
+
+export interface OperationsAnalysisInsights {
+  petition_date?: string | null
+  total_operations: number
+  operational_noise_count: number
+  filtered_count: number
+  periods: OperationsPeriodInsight[]
+}
+
+export interface OperationsCounterpartyGroup {
+  description: string
+  op_count: number
+  amount_sum_rub: number
+  abs_amount_sum_rub: number
+}
+
+export interface OperationsCounterpartyGroupsResponse {
+  groups: OperationsCounterpartyGroup[]
+  returned: number
+  total_groups: number
+}
+
+export interface OperationsAnalysisParams {
+  fileId: string
+  petitionDate?: string
+  excludeOperationalNoise?: boolean
+  search?: string
+  dateFrom?: string
+  dateTo?: string
 }
 
 export interface OperationsSession {
@@ -97,6 +143,16 @@ export interface OperationsSession {
   ui_state: {
     value_filters?: ColumnValueFilterCondition[]
     row_search?: string
+    petition_date?: string | null
+    active_period?: BankruptcyPeriodId | null
+    hide_operational_noise?: boolean
+    view_mode?: OperationsViewMode
+    basket_ids?: string[]
+    petitionDate?: string | null
+    activePeriod?: BankruptcyPeriodId | null
+    hideOperationalNoise?: boolean
+    viewMode?: OperationsViewMode
+    basketIds?: string[]
   }
   updated_at?: string | null
 }
@@ -112,6 +168,8 @@ export interface OperationsSessionSummary {
 
 function parseSessionUiState(raw: OperationsSession['ui_state'] | undefined): OperationsSessionUiState {
   const filters = raw?.value_filters ?? []
+  const activePeriodRaw = raw?.active_period ?? raw?.activePeriod
+  const viewModeRaw = raw?.view_mode ?? raw?.viewMode
   return {
     valueFilters: filters.map((c) => ({
       columnId: c.columnId ?? '',
@@ -124,6 +182,14 @@ function parseSessionUiState(raw: OperationsSession['ui_state'] | undefined): Op
       numberTo: c.numberTo ?? null,
     })),
     rowSearch: raw?.row_search ?? '',
+    petitionDate: String(raw?.petition_date ?? raw?.petitionDate ?? ''),
+    activePeriod:
+      activePeriodRaw === '1m' || activePeriodRaw === '6m' || activePeriodRaw === '1y' || activePeriodRaw === '3y'
+        ? activePeriodRaw
+        : null,
+    hideOperationalNoise: Boolean(raw?.hide_operational_noise ?? raw?.hideOperationalNoise ?? false),
+    viewMode: viewModeRaw === 'counterparties' ? 'counterparties' : 'operations',
+    basketIds: [...(raw?.basket_ids ?? raw?.basketIds ?? [])],
   }
 }
 
@@ -137,6 +203,8 @@ function buildQueryParams(params: OperationsListParams): Record<string, string |
   if (params.minAmount) query.min_amount = params.minAmount
   if (params.maxAmount) query.max_amount = params.maxAmount
   if (params.flow) query.flow = params.flow
+  if (params.excludeOperationalNoise) query.exclude_operational_noise = 'true'
+  if (params.descriptionExact != null) query.description_exact = params.descriptionExact
   if (params.limit != null) query.limit = params.limit
   if (params.offset != null) query.offset = params.offset
   return query
@@ -157,6 +225,43 @@ export const operationsApi = {
     const response = await apiClient.get<OperationsTransactionsResponse>(
       `/api/cases/${caseId}/operations/transactions`,
       { params: buildQueryParams(params) },
+    )
+    return response.data
+  },
+
+  async getAnalysisInsights(
+    caseId: string,
+    params: OperationsAnalysisParams,
+  ): Promise<OperationsAnalysisInsights> {
+    const response = await apiClient.get<OperationsAnalysisInsights>(
+      `/api/cases/${caseId}/operations/analysis-insights`,
+      {
+        params: {
+          file_id: params.fileId,
+          petition_date: params.petitionDate || undefined,
+          exclude_operational_noise: params.excludeOperationalNoise ? 'true' : undefined,
+          search: params.search || undefined,
+        },
+      },
+    )
+    return response.data
+  },
+
+  async listCounterpartyGroups(
+    caseId: string,
+    params: OperationsAnalysisParams,
+  ): Promise<OperationsCounterpartyGroupsResponse> {
+    const response = await apiClient.get<OperationsCounterpartyGroupsResponse>(
+      `/api/cases/${caseId}/operations/counterparty-groups`,
+      {
+        params: {
+          file_id: params.fileId,
+          date_from: params.dateFrom || undefined,
+          date_to: params.dateTo || undefined,
+          search: params.search || undefined,
+          exclude_operational_noise: params.excludeOperationalNoise ? 'true' : undefined,
+        },
+      },
     )
     return response.data
   },
@@ -216,6 +321,11 @@ export const operationsApi = {
       ui_state: {
         value_filters: uiState.valueFilters,
         row_search: uiState.rowSearch,
+        petition_date: uiState.petitionDate || null,
+        active_period: uiState.activePeriod,
+        hide_operational_noise: uiState.hideOperationalNoise,
+        view_mode: uiState.viewMode,
+        basket_ids: uiState.basketIds,
       },
     })
   },
@@ -270,6 +380,11 @@ export const operationsApi = {
         ui_state: {
           value_filters: uiState.valueFilters,
           row_search: uiState.rowSearch,
+          petition_date: uiState.petitionDate || null,
+          active_period: uiState.activePeriod,
+          hide_operational_noise: uiState.hideOperationalNoise,
+          view_mode: uiState.viewMode,
+          basket_ids: uiState.basketIds,
         },
       }),
       signal,

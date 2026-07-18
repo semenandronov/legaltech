@@ -10,6 +10,8 @@ interface OperationsTableProps {
   rows: TabularRow[]
   loading?: boolean
   selectedRowId?: string | null
+  selectedIds?: ReadonlySet<string>
+  onToggleRowSelection?: (transactionId: string, selected: boolean) => void
   onRowClick?: (transaction: OperationTransaction) => void
   emptyMessage?: string
 }
@@ -24,9 +26,12 @@ export function OperationsTable({
   rows,
   loading = false,
   selectedRowId,
+  selectedIds,
+  onToggleRowSelection,
   onRowClick,
   emptyMessage = 'Нет операций по выбранным фильтрам.',
 }: OperationsTableProps) {
+  const selectionEnabled = Boolean(selectedIds && onToggleRowSelection)
   const displayColumns = useMemo(
     () => [...columns].sort((a, b) => a.order_index - b.order_index),
     [columns],
@@ -38,6 +43,9 @@ export function OperationsTable({
         <table className="w-full border-collapse text-sm" style={{ minWidth: 720 }}>
           <thead className="sticky top-0 z-10 bg-white border-b border-gray-200">
             <tr>
+              {selectionEnabled ? (
+                <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 w-10" />
+              ) : null}
               <th className="px-3 py-2 text-left text-xs font-semibold text-gray-500 w-12">№</th>
               {displayColumns.map((column) => (
                 <th
@@ -52,13 +60,13 @@ export function OperationsTable({
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={displayColumns.length + 1} className="px-3 py-16 text-center text-gray-500">
+                <td colSpan={displayColumns.length + (selectionEnabled ? 2 : 1)} className="px-3 py-16 text-center text-gray-500">
                   Загрузка операций…
                 </td>
               </tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={displayColumns.length + 1} className="px-3 py-16 text-center text-gray-500">
+                <td colSpan={displayColumns.length + (selectionEnabled ? 2 : 1)} className="px-3 py-16 text-center text-gray-500">
                   {emptyMessage}
                 </td>
               </tr>
@@ -66,6 +74,7 @@ export function OperationsTable({
               rows.map((row, index) => {
                 const tx = getTransaction(row)
                 const isSelected = selectedRowId === row.file_id
+                const isChecked = selectedIds?.has(row.file_id) ?? false
                 return (
                   <tr
                     key={row.file_id}
@@ -76,6 +85,19 @@ export function OperationsTable({
                       if (tx) onRowClick?.(tx)
                     }}
                   >
+                    {selectionEnabled ? (
+                      <td className="px-3 py-2 align-top">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          aria-label="Добавить в корзину"
+                          onClick={(event) => event.stopPropagation()}
+                          onChange={(event) => {
+                            onToggleRowSelection?.(row.file_id, event.target.checked)
+                          }}
+                        />
+                      </td>
+                    ) : null}
                     <td className="px-3 py-2 text-gray-400 tabular-nums">{index + 1}</td>
                     {displayColumns.map((column) => {
                       const raw = row.cells[column.id]?.cell_value

@@ -8,17 +8,23 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.models.case_file_transaction import CaseFileTransaction
 from app.models.case import Case
 from app.models.user import User
 from app.schemas.operations import (
     OperationsAvailableFile,
     OperationsAvailableFilesResponse,
+    OperationsAnalysisInsightsResponse,
     OperationsChatHistoryResponse,
     OperationsChatMessage,
     OperationsChatRequest,
+    OperationsCounterpartyGroup,
+    OperationsCounterpartyGroupsResponse,
     OperationsExportRequest,
+    OperationsPeriodInsight,
     OperationsSessionResponse,
     OperationsSessionSaveRequest,
     OperationsSessionSummary,
@@ -29,6 +35,8 @@ from app.schemas.operations import (
     collect_column_headers,
     serialize_transaction,
 )
+from app.services.operations_bankruptcy_periods import all_bankruptcy_period_windows
+from app.services.operations_noise_filter import sql_operational_noise_match_expression
 from app.services.case_file_transaction_service import (
     CaseFileTransactionService,
     feature_enabled,
@@ -114,6 +122,8 @@ async def list_transactions(
     min_amount: Optional[str] = Query(None),
     max_amount: Optional[str] = Query(None),
     flow: Optional[str] = Query(None, pattern="^(debit|credit)$"),
+    exclude_operational_noise: bool = Query(False),
+    description_exact: Optional[str] = Query(None),
     limit: int = Query(5000, ge=1, le=10000),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
@@ -133,6 +143,8 @@ async def list_transactions(
         min_amount=_parse_decimal(min_amount),
         max_amount=_parse_decimal(max_amount),
         flow=flow,
+        exclude_operational_noise=exclude_operational_noise,
+        description_exact=description_exact,
         limit=limit,
         offset=offset,
     )
@@ -145,6 +157,149 @@ async def list_transactions(
         transactions=serialized,
         summary=build_summary(page.rows, total=page.total, file_id=resolved_file_id),
         column_headers=column_headers,
+    )
+
+
+def _count_operational_noise_rows(
+    db: Session,
+    *,
+    case_id: str,
+    file_id: str,
+    date_from=None,
+    date_to=None,
+    search: Optional[str] = None,
+) -> int:
+    base = db.query(func.count(CaseFileTransaction.id))
+    filtered = CaseFileTransactionService._apply_query_filters(
+        base,
+        case_id=case_id,
+        file_id=file_id,
+        date_from=date_from,
+        date_to=date_to,
+        search=search,
+    )
+    filtered = filtered.filter(sql_operational_noise_match_expression())
+    return int(filtered.scalar() or 0)
+
+
+@router.get("/{case_id}/operations/analysis-insights", response_model=OperationsAnalysisInsightsResponse)
+async def get_operations_analysis_insights(
+    case_id: str,
+    file_id: str = Query(..., min_length=1),
+    petition_date: Optional[str] = Query(None),
+    exclude_operational_noise: bool = Query(False),
+    search: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _require_feature()
+    _get_user_case(db, case_id, str(current_user.id))
+    resolved_file_id = resolve_statement_file_id(db, case_id=case_id, file_id=file_id)
+
+    totals = CaseFileTransactionService.aggregate_totals(
+        db,
+        case_id=case_id,
+        file_id=resolved_file_id,
+        search=search,
+    )
+    noise_count = _count_operational_noise_rows(
+        db,
+        case_id=case_id,
+        file_id=resolved_file_id,
+        search=search,
+    )
+    filtered_totals = CaseFileTransactionService.aggregate_totals(
+        db,
+        case_id=case_id,
+        file_id=resolved_file_id,
+        search=search,
+        exclude_operational_noise=exclude_operational_noise,
+    )
+
+    parsed_petition = parse_user_date(petition_date) if petition_date else None
+    periods: list[OperationsPeriodInsight] = []
+    if parsed_petition is not None:
+        for window in all_bankruptcy_period_windows(parsed_petition):
+            period_totals = CaseFileTransactionService.aggregate_totals(
+                db,
+                case_id=case_id,
+                file_id=resolved_file_id,
+                date_from=window.date_from,
+                date_to=window.date_to,
+                search=search,
+                exclude_operational_noise=exclude_operational_noise,
+            )
+            periods.append(
+                OperationsPeriodInsight(
+                    period_id=window.period_id,
+                    label=window.label,
+                    date_from=window.date_from.isoformat(),
+                    date_to=window.date_to.isoformat(),
+                    count=period_totals.count,
+                )
+            )
+
+    return OperationsAnalysisInsightsResponse(
+        petition_date=parsed_petition.isoformat() if parsed_petition else None,
+        total_operations=totals.count,
+        operational_noise_count=noise_count,
+        filtered_count=filtered_totals.count,
+        periods=periods,
+    )
+
+
+@router.get("/{case_id}/operations/counterparty-groups", response_model=OperationsCounterpartyGroupsResponse)
+async def list_counterparty_groups(
+    case_id: str,
+    file_id: str = Query(..., min_length=1),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    exclude_operational_noise: bool = Query(False),
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _require_feature()
+    _get_user_case(db, case_id, str(current_user.id))
+    resolved_file_id = resolve_statement_file_id(db, case_id=case_id, file_id=file_id)
+
+    groups = CaseFileTransactionService.aggregate_by_description(
+        db,
+        case_id=case_id,
+        file_id=resolved_file_id,
+        date_from=parse_user_date(date_from) if date_from else None,
+        date_to=parse_user_date(date_to) if date_to else None,
+        search=search,
+        exclude_operational_noise=exclude_operational_noise,
+        limit=limit,
+    )
+    desc_expr = func.coalesce(CaseFileTransaction.description, "")
+    total_groups_query = db.query(func.count(func.distinct(desc_expr)))
+    total_groups_filtered = CaseFileTransactionService._apply_query_filters(
+        total_groups_query,
+        case_id=case_id,
+        file_id=resolved_file_id,
+        date_from=parse_user_date(date_from) if date_from else None,
+        date_to=parse_user_date(date_to) if date_to else None,
+        search=search,
+        exclude_operational_noise=exclude_operational_noise,
+    )
+    total_groups = int(total_groups_filtered.scalar() or 0)
+
+    serialized = [
+        OperationsCounterpartyGroup(
+            description=group.description,
+            op_count=group.op_count,
+            amount_sum_rub=float(group.amount_sum),
+            abs_amount_sum_rub=float(group.abs_amount_sum),
+        )
+        for group in groups
+    ]
+    return OperationsCounterpartyGroupsResponse(
+        groups=serialized,
+        returned=len(serialized),
+        total_groups=total_groups,
     )
 
 
@@ -269,9 +424,19 @@ def _operations_export_response(*, case_title: str, rows, format: str) -> Respon
 
 def _serialize_session(row) -> OperationsSessionResponse:
     raw = row.ui_state if isinstance(row.ui_state, dict) else {}
+    view_mode_raw = raw.get("view_mode") or raw.get("viewMode") or "operations"
+    if view_mode_raw not in ("operations", "counterparties"):
+        view_mode_raw = "operations"
     ui = OperationsSessionUiState(
         value_filters=list(raw.get("value_filters") or raw.get("valueFilters") or []),
         row_search=str(raw.get("row_search") or raw.get("rowSearch") or ""),
+        petition_date=raw.get("petition_date") or raw.get("petitionDate"),
+        active_period=raw.get("active_period") or raw.get("activePeriod"),
+        hide_operational_noise=bool(
+            raw.get("hide_operational_noise") or raw.get("hideOperationalNoise") or False
+        ),
+        view_mode=view_mode_raw,
+        basket_ids=list(raw.get("basket_ids") or raw.get("basketIds") or []),
     )
     return OperationsSessionResponse(
         file_id=str(row.file_id),
@@ -350,6 +515,11 @@ async def save_operations_session(
     ui_payload = {
         "value_filters": body.ui_state.value_filters,
         "row_search": body.ui_state.row_search,
+        "petition_date": body.ui_state.petition_date,
+        "active_period": body.ui_state.active_period,
+        "hide_operational_noise": body.ui_state.hide_operational_noise,
+        "view_mode": body.ui_state.view_mode,
+        "basket_ids": body.ui_state.basket_ids,
     }
     row = save_ui_state(
         db,
