@@ -61,6 +61,7 @@ def _is_structured_table_row_document(doc: Document) -> bool:
     return profile == "structured_table" or preseg in {
         "xlsx_openpyxl_grid",
         "statement_geometry_native",
+        "statement_native_table",
     }
 
 

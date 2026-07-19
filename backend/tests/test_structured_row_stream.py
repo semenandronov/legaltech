@@ -27,6 +27,25 @@ def test_structured_row_spans_match_joined_text():
     assert spans[1][1] == len(bodies[0]) + len(STRUCTURED_ROW_SEPARATOR)
 
 
+def test_align_recognizes_statement_native_preseg():
+    docs = [
+        Document(
+            page_content="Дата операции: 01.01.2024\nСумма: 10,00",
+            metadata={
+                "chunk_level": "row",
+                "index_profile": "structured_table",
+                "preseg_strategy": "statement_native_table",
+                "char_start": 0,
+                "char_end": 1,
+                "global_row_index": 0,
+            },
+        ),
+    ]
+    aligned, joined = align_structured_table_row_stream(docs)
+    assert joined is not None
+    assert int(aligned[0].metadata["char_start"]) == 0
+
+
 def test_align_structured_table_row_stream_rewrites_offsets():
     docs = [
         Document(

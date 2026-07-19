@@ -248,6 +248,100 @@ def test_should_try_geometry_gates():
     )
 
 
+def test_indexer_prefers_native_over_geometry(monkeypatch):
+    from app.services import statement_geometry_indexer as idx
+    from app.services.statement_native_table_extract import (
+        StatementNativeResult,
+        StatementNativeRow,
+    )
+
+    native = StatementNativeResult(
+        strategy="pymupdf_tables",
+        rows=[
+            StatementNativeRow(
+                date_text=f"0{i}.02.2024",
+                amount_raw=f"-{100 + i},00",
+                description=f"Op {i}",
+                page=1,
+            )
+            for i in range(1, 12)
+        ],
+        score=95.0,
+    )
+
+    called = {"geometry": False}
+
+    monkeypatch.setattr(
+        idx,
+        "extract_best_native_statement_table",
+        lambda *a, **k: native,
+    )
+
+    def _geo_should_not_run(*a, **k):
+        called["geometry"] = True
+        raise AssertionError("geometry must not run when native wins")
+
+    monkeypatch.setattr(idx, "extract_statement_operations", _geo_should_not_run)
+
+    docs = idx.try_index_pdf_as_statement_geometry(
+        content_bytes=b"%PDF-1.4",
+        filename="x.pdf",
+        base_metadata={"doc_id": "d1"},
+        doc_type="bank_statement",
+    )
+    assert docs is not None
+    assert len(docs) == 11
+    assert docs[0].metadata["preseg_strategy"] == "statement_native_table"
+    assert docs[0].metadata["statement_extract_strategy"] == "pymupdf_tables"
+    assert called["geometry"] is False
+
+
+def test_indexer_falls_back_to_geometry_when_native_empty(monkeypatch):
+    from app.services import statement_geometry_indexer as idx
+    from app.services.statement_geometry_extractor import (
+        StatementGeometryResult,
+        StatementOperation,
+    )
+
+    monkeypatch.setattr(
+        idx,
+        "extract_best_native_statement_table",
+        lambda *a, **k: None,
+    )
+
+    ops = [
+        StatementOperation(
+            page=1,
+            date_text=f"0{i}.03.2024",
+            category_text=f"Geo {i}",
+            amount_raw=f"-{i * 10},00",
+            balance_raw="",
+            y_top=float(i),
+        )
+        for i in range(1, 12)
+    ]
+    monkeypatch.setattr(
+        idx,
+        "extract_statement_operations",
+        lambda *a, **k: StatementGeometryResult(
+            operations=ops,
+            columns=["Дата операции", "Категория", "Сумма"],
+            column_roles=["date", "category", "amount"],
+            pages_scanned=1,
+            rejection="",
+        ),
+    )
+
+    docs = idx.try_index_pdf_as_statement_geometry(
+        content_bytes=b"%PDF-1.4",
+        filename="x.pdf",
+        base_metadata={"doc_id": "d2"},
+    )
+    assert docs is not None
+    assert docs[0].metadata["preseg_strategy"] == "statement_geometry_native"
+    assert docs[0].metadata["statement_extract_strategy"] == "geometry"
+
+
 def test_quality_accept_thresholds():
     assert _quality_accept(row_count=100, with_amount=90, with_date=95) is None
     assert _quality_accept(row_count=5, with_amount=5, with_date=5) is not None

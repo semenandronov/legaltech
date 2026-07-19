@@ -40,11 +40,16 @@ _DATE_TOKEN_RE = re.compile(
 # Strict money: currency, sign at token start, thousands groups, or explicit decimals —
 # never a bare digit glued inside a word ("обработки1", "LENTA-738") and never
 # "MM NNN" sliced from "HH:MM AUTHCODE".
+#
+# Order matters: prefer full decimals / thousand-groups over a short signed prefix
+# (otherwise "-1064.65" collapses to "-106").
 _AMOUNT_TOKEN_RE = re.compile(
     r"(?:"
-    r"(?<!\S)[+\-]\s*\d{1,3}(?:[\s\u00a0]\d{3})*(?:[.,]\d{2})?"
-    r"|(?<!\S)\d{1,3}(?:[\s\u00a0]\d{3})+(?:[.,]\d{2})?"
-    r"|(?<!\S)\d+[.,]\d{2}"
+    r"(?<!\S)[+\-]\s*\d{1,3}(?:[\s\u00a0]\d{3})+(?:[.,]\d{1,2})?"
+    r"|(?<!\S)[+\-]\s*\d+[.,]\d{1,2}"
+    r"|(?<!\S)[+\-]\s*\d+"
+    r"|(?<!\S)\d{1,3}(?:[\s\u00a0]\d{3})+(?:[.,]\d{1,2})?"
+    r"|(?<!\S)\d+[.,]\d{1,2}"
     r")"
     r"(?:\s*(?:₽|руб\.?|RUB|USD|EUR))?",
     re.IGNORECASE,

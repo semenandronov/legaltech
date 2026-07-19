@@ -6,6 +6,7 @@ from app.services.table_schema_normalize import (
     lock_or_align_schema,
     lookup_column_value,
     looks_like_subtitle_row,
+    normalize_amount_cell,
     normalize_date_cell,
     normalize_stored_row_columns,
     parse_markdown_pipe_table_schema,
@@ -38,6 +39,15 @@ def test_amount_detect_ignores_footnote_digit_in_word():
     assert cell_looks_like_amount("279,00")
     assert cell_looks_like_amount("+8 000,00")
     assert cell_looks_like_amount("44,91")
+
+
+def test_normalize_amount_preserves_western_decimals():
+    """VTB-style cells use '.' decimals without thousand separators."""
+    assert normalize_amount_cell("-1064.65") == "-1064.65"
+    assert normalize_amount_cell("-139.9") == "-139.9"
+    assert normalize_amount_cell("-3018.93") == "-3018.93"
+    assert normalize_amount_cell("-1 064,65") == "-1 064,65"
+    assert normalize_amount_cell("+2 000,00") == "+2 000,00"
 
 
 def test_subtitle_row_with_footnote_digit_in_word():

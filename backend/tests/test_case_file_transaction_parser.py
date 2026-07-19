@@ -121,6 +121,34 @@ def test_parse_separate_debit_credit_columns():
     assert credit_row.flow_direction == "credit"
 
 
+def test_parse_keeps_all_money_columns_and_uses_primary():
+    """VTB-style: keep op-currency + card + commission; analytics uses card."""
+    cols = {
+        "Дата операции": "12.07.2025 10:00",
+        "Описание операции": "YANDEX*EDDA",
+        "Сумма в валюте операции": "0.0 RUB",
+        "Сумма в валюте карты": "-139.9",
+        "Комиссия": "0",
+    }
+    parsed = parse_row_from_metadata(
+        {
+            "chunk_level": "row",
+            "global_row_index": 0,
+            "table_index": 0,
+            "row_index": 0,
+            "row_columns": cols,
+            "column_headers": list(cols.keys()),
+            "column_roles": ["date", "description", "other", "amount", "other"],
+            "primary_amount_header": "Сумма в валюте карты",
+        }
+    )
+    assert parsed is not None
+    assert parsed.row_columns["Сумма в валюте операции"] == "0.0 RUB"
+    assert parsed.row_columns["Комиссия"] == "0"
+    assert parsed.amount_rub == Decimal("-139.9")
+    assert parsed.flow_direction == "debit"
+
+
 def test_parse_amount_rub_negative():
     amount, raw = parse_amount_rub("-3 100.00 ₽")
     assert amount == Decimal("-3100.00")

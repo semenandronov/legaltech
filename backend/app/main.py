@@ -341,6 +341,29 @@ async def _init_langfuse_observability():
 
 
 @app.on_event("startup")
+async def _check_statement_extract_deps():
+    """Fail loud if Camelot is missing — borderless statements need it."""
+    if not bool(getattr(config, "STATEMENT_CAMELOT_ENABLED", True)):
+        return
+    if not bool(getattr(config, "STATEMENT_NATIVE_TABLE_EXTRACT_ENABLED", True)):
+        return
+    try:
+        import camelot  # noqa: F401
+        logger.info(
+            "Statement extract deps: camelot=%s ok",
+            getattr(camelot, "__version__", "?"),
+        )
+    except Exception as exc:
+        logger.error(
+            "STATEMENT EXTRACT: camelot-py is NOT installed (%s). "
+            "Borderless statements (T-Bank etc.) will fall back to weak geometry. "
+            "Fix: pip install -r backend/requirements-core.txt  "
+            "(package: camelot-py).",
+            exc,
+        )
+
+
+@app.on_event("startup")
 async def _prewarm_case_assistant_runtime():
     """
     Prewarm heavy case-assistant dependencies to avoid first-request cold-start.

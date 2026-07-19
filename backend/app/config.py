@@ -636,10 +636,19 @@ class Config:
     STRUCTURED_TABLE_MIN_TABLE_SEGMENTS: int = int(
         os.getenv("STRUCTURED_TABLE_MIN_TABLE_SEGMENTS", "1") or "1"
     )
-    # Digital PDF statements: geometry-first indexing (PyMuPDF words + column snap).
+    # Digital PDF statements: native table extract (find_tables / Camelot) then geometry fallback.
     # Only when doc_type is a statement/register OR register probe agrees; OCR → Docling.
     STATEMENT_GEOMETRY_INDEXING_ENABLED: bool = (
         os.getenv("STATEMENT_GEOMETRY_INDEXING_ENABLED", "true").strip().lower() == "true"
+    )
+    STATEMENT_NATIVE_TABLE_EXTRACT_ENABLED: bool = (
+        os.getenv("STATEMENT_NATIVE_TABLE_EXTRACT_ENABLED", "true").strip().lower() == "true"
+    )
+    STATEMENT_CAMELOT_ENABLED: bool = (
+        os.getenv("STATEMENT_CAMELOT_ENABLED", "true").strip().lower() == "true"
+    )
+    STATEMENT_NATIVE_MIN_SCORE: float = float(
+        os.getenv("STATEMENT_NATIVE_MIN_SCORE", "55") or "55"
     )
     STATEMENT_GEOMETRY_MIN_AMOUNT_RATIO: float = float(
         os.getenv("STATEMENT_GEOMETRY_MIN_AMOUNT_RATIO", "0.85") or "0.85"

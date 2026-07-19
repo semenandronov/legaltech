@@ -19,6 +19,7 @@ from app.models.case import File as FileModel
 from app.models.case_file_transaction import CaseFileTransaction
 from app.services.operations_noise_filter import sql_exclude_operational_noise
 from app.services.structured_table_indexer import is_structured_table_document
+from app.services.statement_native_table_extract import amount_header_preference
 from app.services.table_schema_normalize import normalize_date_cell
 from app.services.transaction_amount_sign import normalize_signed_amount
 from app.services.transaction_description_match import (
@@ -113,11 +114,43 @@ def _cell_has_amount(value: str) -> bool:
 
 def _resolve_amount_and_flow(
     normalized: Dict[str, str],
+    *,
+    primary_amount_header: Optional[str] = None,
+    column_roles: Optional[Sequence[str]] = None,
+    column_headers: Optional[Sequence[str]] = None,
 ) -> tuple[Optional[Decimal], Optional[str], Optional[str], Optional[str]]:
     """Returns signed amount_rub, amount_raw, flow_direction (debit|credit), column key.
 
     Sign convention (shared with analytics): credit > 0, debit < 0.
+
+    When the original statement has several money columns, prefer:
+      1) explicit primary_amount_header from extract metadata
+      2) header marked role=amount in column_roles
+      3) debit/credit column pair
+      4) best amount-like header by amount_header_preference
     """
+    # 1) Explicit primary from native extract.
+    primary = (primary_amount_header or "").strip()
+    if primary and primary in normalized and _cell_has_amount(normalized[primary]):
+        amount_rub, amount_raw = parse_amount_rub(normalized[primary])
+        signed, flow = normalize_signed_amount(
+            amount_rub, raw=amount_raw or normalized[primary], flow=None
+        )
+        return signed, amount_raw or None, flow, primary
+
+    # 2) Role-aligned primary amount.
+    if column_roles and column_headers:
+        for header, role in zip(column_headers, column_roles):
+            if str(role) != "amount":
+                continue
+            key = str(header)
+            if key in normalized and _cell_has_amount(normalized[key]):
+                amount_rub, amount_raw = parse_amount_rub(normalized[key])
+                signed, flow = normalize_signed_amount(
+                    amount_rub, raw=amount_raw or normalized[key], flow=None
+                )
+                return signed, amount_raw or None, flow, key
+
     debit_key, credit_key = _pick_debit_credit_columns(normalized)
     debit_val = normalized.get(debit_key, "") if debit_key else ""
     credit_val = normalized.get(credit_key, "") if credit_key else ""
@@ -131,7 +164,18 @@ def _resolve_amount_and_flow(
         signed, flow = normalize_signed_amount(amount_rub, raw=amount_raw, flow="credit")
         return signed, amount_raw, flow, credit_key
 
-    amount_key = _pick_column(normalized, _AMOUNT_HEADER_RE)
+    # 4) Rank all amount-like headers; do not take the first match blindly
+    # (VTB: "валюте операции" often precedes "валюте карты").
+    amount_keys = [
+        key
+        for key in normalized
+        if _AMOUNT_HEADER_RE.search(key or "")
+        and amount_header_preference(key) >= 0
+    ]
+    if amount_keys:
+        amount_key = max(amount_keys, key=amount_header_preference)
+    else:
+        amount_key = _pick_column(normalized, _AMOUNT_HEADER_RE)
     amount_raw = normalized.get(amount_key, "") if amount_key else None
     amount_rub, amount_raw_out = parse_amount_rub(amount_raw or "")
     signed, flow = normalize_signed_amount(
@@ -190,7 +234,26 @@ def parse_row_from_metadata(metadata: Dict[str, Any]) -> Optional[ParsedTransact
         datetime_text = normalize_date_cell(datetime_text)
     op_date = parse_operation_date(datetime_text or "")
 
-    amount_rub, amount_raw, flow_direction, _amount_key = _resolve_amount_and_flow(normalized)
+    roles_raw = metadata.get("column_roles")
+    headers_raw = metadata.get("column_headers")
+    column_roles = (
+        [str(r) for r in roles_raw] if isinstance(roles_raw, (list, tuple)) else None
+    )
+    column_headers = (
+        [str(h) for h in headers_raw]
+        if isinstance(headers_raw, (list, tuple))
+        else list(normalized.keys())
+    )
+    primary_header = metadata.get("primary_amount_header")
+    if not isinstance(primary_header, str):
+        primary_header = None
+
+    amount_rub, amount_raw, flow_direction, _amount_key = _resolve_amount_and_flow(
+        normalized,
+        primary_amount_header=primary_header,
+        column_roles=column_roles,
+        column_headers=column_headers,
+    )
 
     description = normalized.get(desc_key, "") if desc_key else None
     if not (description or "").strip():
