@@ -11,6 +11,8 @@ export interface OperationsHeaderProps {
   statementName: string
   operationCount: number
   showChat: boolean
+  /** Когда false — кнопка «Ассистент» не рендерится. */
+  chatEnabled?: boolean
   rowSearch: string
   activeFilterCount?: number
   onRowSearchChange: (value: string) => void
@@ -27,6 +29,7 @@ export function OperationsHeader({
   statementName,
   operationCount,
   showChat,
+  chatEnabled = true,
   rowSearch,
   activeFilterCount = 0,
   onRowSearchChange,
@@ -92,15 +95,18 @@ export function OperationsHeader({
         ),
       },
     ],
-    [
+  ]
+
+  if (chatEnabled) {
+    actionGroups.push([
       {
         onClick: onToggleChat,
         title: showChat ? 'Закрыть ассистента' : 'Открыть ассистента',
         icon: showChat ? <X className="h-4 w-4" /> : <MessageSquare className="h-4 w-4" />,
         label: <span className="hidden sm:inline">Ассистент</span>,
       },
-    ],
-  ]
+    ])
+  }
 
   return <MikePageHeader breadcrumbs={breadcrumbs} actionGroups={actionGroups} />
 }

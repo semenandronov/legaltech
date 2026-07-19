@@ -21,6 +21,7 @@ import {
 import { getCase } from '@/services/api'
 import { useCaseProcessingPoll } from '@/hooks/useCaseProcessingPoll'
 import { buildMainNavItems } from '@/lib/mainNavItems'
+import { productFeatures } from '@/lib/productFeatures'
 import {
   buildOperationsTabularColumns,
   buildOperationsTabularRows,
@@ -63,7 +64,7 @@ const OperationsPage = () => {
   const [valueFilters, setValueFilters] = useState<ColumnValueFilterCondition[]>([])
   const [filterPopoverOpen, setFilterPopoverOpen] = useState(false)
   const [filterAnchorEl, setFilterAnchorEl] = useState<HTMLElement | null>(null)
-  const [showChat, setShowChat] = useState(true)
+  const [showChat, setShowChat] = useState(() => productFeatures.operationsAssistant)
   const [showExport, setShowExport] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
   const [selectedTransaction, setSelectedTransaction] = useState<OperationTransaction | null>(null)
@@ -334,15 +335,18 @@ const OperationsPage = () => {
     }).filter(Boolean)
   }, [filteredRows])
 
+  const chatEnabled = productFeatures.operationsAssistant
+  const chatOpen = chatEnabled && showChat
+
   const mainGridColumns = useMemo(() => {
     const parts = ['minmax(0, 1fr)']
     if (selectedTransaction) {
       parts.push('minmax(420px, min(55%, 1200px))')
-    } else if (showChat) {
+    } else if (chatOpen) {
       parts.push('380px')
     }
     return parts.join(' ')
-  }, [showChat, selectedTransaction])
+  }, [chatOpen, selectedTransaction])
 
   if (!caseId) {
     return (
@@ -375,13 +379,15 @@ const OperationsPage = () => {
               caseName={caseName}
               statementName={statementName}
               operationCount={summary?.total ?? transactions.length}
-              showChat={showChat && !selectedTransaction}
+              showChat={chatOpen && !selectedTransaction}
+              chatEnabled={chatEnabled}
               rowSearch={rowSearch}
               activeFilterCount={valueFilters.length}
               onRowSearchChange={setRowSearch}
               onNavigateCases={() => navigate('/cases')}
               onNavigateCase={() => navigate(`/cases/${caseId}`)}
               onToggleChat={() => {
+                if (!chatEnabled) return
                 setShowChat((v) => !v)
                 setSelectedTransaction(null)
               }}
@@ -465,7 +471,7 @@ const OperationsPage = () => {
               fileName={statementName}
               onClose={() => setSelectedTransaction(null)}
             />
-          ) : showChat && hasRegistry && selectedFileId ? (
+          ) : chatOpen && hasRegistry && selectedFileId ? (
             <aside className="ws-tabular-aside">
               <OperationsContextChat
                 caseId={caseId}

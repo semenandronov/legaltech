@@ -29,6 +29,11 @@ export const productFeatures = {
    * сессии в истории и редиректы «открыть дело → чат».
    */
   caseAssistant: parseEnvBool(import.meta.env.VITE_FEATURE_CASE_ASSISTANT, false),
+  /**
+   * Чат «Ассистент» на странице Операций (кнопка в шапке + боковая панель).
+   * Выключен по умолчанию — вернуть через VITE_FEATURE_OPERATIONS_ASSISTANT=true.
+   */
+  operationsAssistant: parseEnvBool(import.meta.env.VITE_FEATURE_OPERATIONS_ASSISTANT, false),
   /** Тумблер «Справочник» в чате (НПА / legal corpus retrieval). */
   legalCorpus: parseEnvBool(import.meta.env.VITE_FEATURE_LEGAL_CORPUS, true),
   /** Страница /legal-corpus и пункт в сайдбаре (отдельно от тумблера в чате). */

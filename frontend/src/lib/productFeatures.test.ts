@@ -15,6 +15,10 @@ describe('productFeatures', () => {
     expect(typeof productFeatures.caseAssistant).toBe('boolean')
   })
 
+  it('operationsAssistant defaults off (prod surface)', () => {
+    expect(typeof productFeatures.operationsAssistant).toBe('boolean')
+  })
+
   it('caseHomePath lands on overview when caseAssistant is off', () => {
     if (!productFeatures.caseAssistant) {
       expect(caseHomePath('abc')).toBe('/cases/abc')
