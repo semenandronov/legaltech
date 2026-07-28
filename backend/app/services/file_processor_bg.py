@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List
 
@@ -23,6 +22,8 @@ from app.services.file_processing_concurrency import (
     document_passport_slot,
     max_parallel_files,
 )
+from app.services.file_char_basis import resolve_ingest_original_text
+from app.services.bm25_case_prewarm import finalize_case_bm25_after_ingestion
 from app.utils.database import SessionLocal
 
 logger = logging.getLogger(__name__)
@@ -90,8 +91,6 @@ def process_files_background(file_ids: List[str], case_id: str) -> None:
         return
 
     document_processor = None
-    prewarm_documents: List[Document] = []
-    prewarm_lock = threading.Lock()
 
     try:
         try:
@@ -137,7 +136,7 @@ def process_files_background(file_ids: List[str], case_id: str) -> None:
             for fut in as_completed(futures):
                 file_id = futures[fut]
                 try:
-                    file_documents = fut.result()
+                    fut.result()
                 except Exception as exc:
                     logger.error(
                         "Worker future failed for file %s: %s",
@@ -145,10 +144,6 @@ def process_files_background(file_ids: List[str], case_id: str) -> None:
                         exc,
                         exc_info=True,
                     )
-                    continue
-                if file_documents:
-                    with prewarm_lock:
-                        prewarm_documents.extend(file_documents)
 
         stats_db = SessionLocal()
         try:
@@ -156,12 +151,10 @@ def process_files_background(file_ids: List[str], case_id: str) -> None:
         finally:
             stats_db.close()
 
-        if prewarm_documents and document_processor is not None:
-            document_processor.prewarm_bm25_index(
-                case_id,
-                documents=prewarm_documents,
-                force_rebuild=True,
-            )
+        # BM25 must cover the whole case (PGVector), not only this batch.
+        # Rebuilding from in-memory batch docs drops previously indexed files.
+        if document_processor is not None:
+            finalize_case_bm25_after_ingestion(case_id, document_processor)
 
     except Exception as exc:
         logger.error(
@@ -251,13 +244,18 @@ def _process_one_file(
 
     from datetime import datetime as _dt
 
+    from app.services.ingest_progress import reset_processing_progress
+
     file_model.processing_status = "processing"
     file_model.processing_started_at = _dt.utcnow()
-    file_model.processing_progress = {
-        "stage": "load",
-        "percent": 5,
-        "message": "Чтение файла",
-    }
+    reset_processing_progress(
+        file_model,
+        {
+            "stage": "load",
+            "percent": 5,
+            "message": "Чтение файла",
+        },
+    )
     db.commit()
     logger.info("▶ Processing file %s (%s), %s bytes", file_id, filename, len(content))
 
@@ -394,6 +392,32 @@ def _process_one_file_body(
     file_model.summary_version = passport_version
     file_model.summary_content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
 
+    try:
+        from app.services.front_matter_facts import (
+            extract_front_matter_facts,
+            front_matter_facts_enabled,
+            save_front_matter_on_file,
+        )
+
+        if front_matter_facts_enabled():
+            _report_stage(stage="front_matter", percent=22, message="Факты шапки документа")
+            fm_payload = extract_front_matter_facts(text, filename=filename, allow_llm=True)
+            save_front_matter_on_file(file_model, fm_payload)
+            logger.info(
+                "Front-matter facts for %s: n=%s zone_end=%s",
+                filename,
+                len(fm_payload.facts),
+                fm_payload.zone_end,
+            )
+    except Exception as fm_exc:
+        logger.warning(
+            "Front-matter extract skipped for %s (%s): %s",
+            filename,
+            file_id,
+            fm_exc,
+            exc_info=True,
+        )
+
     with case_metadata_lock(case_id):
         case_model = db.query(Case).filter(Case.id == case_id).first()
         if case_model:
@@ -450,10 +474,35 @@ def _process_one_file_body(
             )
             return []
 
-        # Structured rows: one join contract for original_text + char_start/char_end.
-        from app.services.structured_file_text import align_structured_table_row_stream
+        # CITATION_CONTRACT: original_text must be the char-offset basis used by chunks.
+        file_documents, citation_text, char_basis = resolve_ingest_original_text(
+            file_documents,
+            loader_text=text,
+        )
+        max_text = 50 * 1024 * 1024
+        if len(citation_text) > max_text:
+            logger.warning(
+                "File %s citation basis truncated from %s to %s chars",
+                filename,
+                len(citation_text),
+                max_text,
+            )
+            citation_text = citation_text[:max_text]
 
-        file_documents, structured_row_text = align_structured_table_row_stream(file_documents)
+        _reconnect(db)
+        file_for_text = db.query(FileModel).filter(FileModel.id == file_id).first()
+        if file_for_text:
+            prev_len = len(file_for_text.original_text or "")
+            file_for_text.original_text = citation_text
+            db.commit()
+            if citation_text != text or char_basis != "loader_join":
+                logger.info(
+                    "original_text aligned to char basis for %s (basis=%s, chars=%s, was=%s)",
+                    filename,
+                    char_basis,
+                    len(citation_text),
+                    prev_len,
+                )
 
         _report_stage(stage="store", percent=90, message="Запись в векторный индекс")
         _reconnect(db)
@@ -463,34 +512,36 @@ def _process_one_file_body(
             db=db,
             bm25_after_store="invalidate_only",
         )
-        # Structured Excel/registers: store row text as original_text so tools/expand
-        # never treat the loader sheet dump as citable evidence.
-        if structured_row_text and structured_row_text.strip():
-            _reconnect(db)
-            file_for_text = db.query(FileModel).filter(FileModel.id == file_id).first()
-            if file_for_text:
-                file_for_text.original_text = structured_row_text
-                db.commit()
-                row_n = sum(
-                    1
-                    for d in file_documents
-                    if str((d.metadata or {}).get("chunk_level") or "") == "row"
-                )
-                logger.info(
-                    "original_text replaced with %s structured row chunk(s) for %s "
-                    "(char_basis=structured_row_stream)",
-                    row_n,
-                    filename,
-                )
         docling_count = sum(
             1 for d in file_documents if d.metadata.get("chunk_level") == "docling"
         )
         logger.info(
-            "✅ Indexed %s chunks for %s (docling=%s)",
+            "✅ Indexed %s chunks for %s (docling=%s, char_basis=%s)",
             len(file_documents),
             filename,
             docling_count,
+            char_basis,
         )
+        try:
+            from app.services.file_document_outline import (
+                outline_payload_from_chunks,
+                persist_outline_on_file,
+            )
+
+            _reconnect(db)
+            file_for_outline = db.query(FileModel).filter(FileModel.id == file_id).first()
+            if file_for_outline:
+                persist_outline_on_file(
+                    file_for_outline,
+                    outline_payload_from_chunks(file_documents),
+                )
+                db.commit()
+        except Exception as outline_exc:
+            logger.warning(
+                "Document outline persist skipped for %s: %s",
+                filename,
+                outline_exc,
+            )
     except Exception as e:
         logger.error("Indexing failed for %s (%s): %s", filename, file_id, e, exc_info=True)
         _set_error(db, file_id, f"Ошибка индексирования: {str(e)[:500]}")
@@ -499,13 +550,18 @@ def _process_one_file_body(
     _reconnect(db)
     file_model = db.query(FileModel).filter(FileModel.id == file_id).first()
     if file_model:
+        from app.services.ingest_progress import apply_processing_progress
+
         file_model.processing_status = "ready"
         file_model.processing_error = None
-        file_model.processing_progress = {
-            "stage": "ready",
-            "percent": 100,
-            "message": "Готово",
-        }
+        apply_processing_progress(
+            file_model,
+            {
+                "stage": "ready",
+                "percent": 100,
+                "message": "Готово",
+            },
+        )
         db.commit()
     logger.info("✅ File %s (%s) is ready", file_id, filename)
     return file_documents
@@ -513,6 +569,7 @@ def _process_one_file_body(
 
 def _set_error(db: Session, file_id: str, message: str) -> None:
     from app.models.case import File as FileModel
+    from app.services.ingest_progress import apply_processing_progress
 
     try:
         _reconnect(db)
@@ -520,21 +577,25 @@ def _set_error(db: Session, file_id: str, message: str) -> None:
         if file_model:
             file_model.processing_status = "error"
             file_model.processing_error = message
-            file_model.processing_progress = {
-                "stage": "error",
-                "percent": 100,
-                "message": message[:200],
-            }
+            apply_processing_progress(
+                file_model,
+                {
+                    "stage": "error",
+                    "percent": 100,
+                    "message": message[:200],
+                },
+            )
             db.commit()
     except Exception as e:
         logger.error("Could not set error status for file %s: %s", file_id, e)
 
 
 def _make_progress_sink(db: Session, file_id: str):
-    """Persist IngestProgress onto File.processing_progress (best-effort)."""
+    """Persist IngestProgress onto File.processing_progress (best-effort merge-patch)."""
 
     def _sink(progress) -> None:
         from app.models.case import File as FileModel
+        from app.services.ingest_progress import apply_processing_progress
 
         try:
             _reconnect(db)
@@ -544,7 +605,7 @@ def _make_progress_sink(db: Session, file_id: str):
             if file_model.processing_status == "cancelled":
                 return
             payload = progress.as_dict() if hasattr(progress, "as_dict") else dict(progress)
-            file_model.processing_progress = payload
+            apply_processing_progress(file_model, payload)
             db.commit()
         except Exception as exc:
             logger.debug("progress sink failed for %s: %s", file_id, exc)

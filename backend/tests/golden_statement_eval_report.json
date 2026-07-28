@@ -1,0 +1,226 @@
+{
+  "file_id": "06857e7d-d710-4e13-944c-1e9144636533",
+  "case_id": "ddbdb101-9c46-4aba-9bbe-317531d05e28",
+  "row_count": 2237,
+  "gold": {
+    "inflow": "2511563.84",
+    "outflow": "2522550.36",
+    "op_count_db": "2237",
+    "op_count_pdf_approx": "2209",
+    "wildberries_mentions": "24",
+    "autoplatezh_min": "50",
+    "anastasia_min": "50"
+  },
+  "results": [
+    {
+      "id": "DATA",
+      "question": "sign health",
+      "status": "WARN",
+      "detail": "Legacy unsigned DB: pos=2213 neg=0; recovery via effective_amount_rub",
+      "tools": []
+    },
+    {
+      "id": "S1",
+      "question": "Сколько всего операций?",
+      "status": "PASS",
+      "detail": "count=2237",
+      "tools": [
+        "statement_overview"
+      ]
+    },
+    {
+      "id": "S2",
+      "question": "Сумма поступлений",
+      "status": "PASS",
+      "detail": "2511564.84 (gold 2511563.84), n=403",
+      "tools": [
+        "statement_overview"
+      ]
+    },
+    {
+      "id": "S3",
+      "question": "Сумма списаний",
+      "status": "WARN",
+      "detail": "2524717.36 ~ gold 2522550.36 (recovery drift)",
+      "tools": [
+        "statement_overview"
+      ]
+    },
+    {
+      "id": "S3b",
+      "question": "Не все как поступления",
+      "status": "PASS",
+      "detail": "in=403 out=1810",
+      "tools": []
+    },
+    {
+      "id": "S4",
+      "question": "10.07.2026 19:28",
+      "status": "PASS",
+      "detail": "eff=-8000.00; Перевод с карты АО \"TБанк\". Операция по карте ****6681",
+      "tools": []
+    },
+    {
+      "id": "S5",
+      "question": "Наличные/банкомат",
+      "status": "WARN",
+      "detail": "cash_rows=9 findings=['large_cash_out']",
+      "tools": [
+        "detect_anomalies"
+      ]
+    },
+    {
+      "id": "S6",
+      "question": "Wildberries",
+      "status": "PASS",
+      "detail": "rows=24",
+      "tools": []
+    },
+    {
+      "id": "S7",
+      "question": "Топ категорий",
+      "status": "PASS",
+      "detail": "Переводы физлицам(451) | Прочее(996) | Покупки и оплата товаров/услуг(744) | Наличные(19) | ЖКХ, связь, аренда(27)",
+      "tools": [
+        "category_breakdown"
+      ]
+    },
+    {
+      "id": "M1",
+      "question": "Обзор выписки",
+      "status": "PASS",
+      "detail": "in=2511564.84 out=2524717.36 net=-13152.52",
+      "tools": [
+        "statement_overview"
+      ]
+    },
+    {
+      "id": "M2",
+      "question": "Разбивка по категориям",
+      "status": "PASS",
+      "detail": "n_cats=5",
+      "tools": [
+        "category_breakdown"
+      ]
+    },
+    {
+      "id": "M3",
+      "question": "AUTOPLATEZH/P2P",
+      "status": "PASS",
+      "detail": "ops=101",
+      "tools": [
+        "counterparty_profile"
+      ]
+    },
+    {
+      "id": "M4",
+      "question": "Анастасия",
+      "status": "PASS",
+      "detail": "ops=243 out=370 607,89 ₽",
+      "tools": [
+        "counterparty_profile"
+      ]
+    },
+    {
+      "id": "M5",
+      "question": "TБанк",
+      "status": "PASS",
+      "detail": "ops=6",
+      "tools": [
+        "counterparty_profile"
+      ]
+    },
+    {
+      "id": "M6",
+      "question": "Помесячно 2026",
+      "status": "PASS",
+      "detail": "months=7",
+      "tools": [
+        "monthly_breakdown"
+      ]
+    },
+    {
+      "id": "H1",
+      "question": "Многошаговый разбор",
+      "status": "PASS",
+      "detail": "tools chained; findings=['structuring', 'transit', 'large_cash_out', 'round_large_debit', 'recurring_transfer', 'outflow_spike']",
+      "tools": [
+        "statement_overview",
+        "detect_anomalies",
+        "category_breakdown"
+      ]
+    },
+    {
+      "id": "H2",
+      "question": "Транзит",
+      "status": "PASS",
+      "detail": "Транзит средств (пришло и сразу ушло); day_pair=True",
+      "tools": [
+        "detect_anomalies"
+      ]
+    },
+    {
+      "id": "H3",
+      "question": "Систематические переводы",
+      "status": "PASS",
+      "detail": "recurring=True structuring=True anastasia=243",
+      "tools": [
+        "detect_anomalies"
+      ]
+    },
+    {
+      "id": "H4",
+      "question": "Периоды подозрительности",
+      "status": "PASS",
+      "detail": "1m ops=46 out=56 004,16 ₽",
+      "tools": [
+        "suspicion_period_analysis"
+      ]
+    },
+    {
+      "id": "H5",
+      "question": "Супермаркеты vs переводы",
+      "status": "PASS",
+      "detail": "categories ok; probe_keys=['token', 'match_count', 'ok', 'examples', 'hint']",
+      "tools": [
+        "category_breakdown",
+        "probe_description"
+      ]
+    },
+    {
+      "id": "H6",
+      "question": "Опасные за ~2 месяца",
+      "status": "PASS",
+      "detail": "ops=76 findings=['recurring_transfer']",
+      "tools": [
+        "detect_anomalies",
+        "statement_overview"
+      ]
+    },
+    {
+      "id": "N1",
+      "question": "Газпром",
+      "status": "PASS",
+      "detail": "not found",
+      "tools": []
+    },
+    {
+      "id": "N3",
+      "question": "Не всё как приход",
+      "status": "PASS",
+      "detail": "out_c=1810",
+      "tools": []
+    },
+    {
+      "id": "N4",
+      "question": "Вне периода 2019",
+      "status": "PASS",
+      "detail": "no_rows",
+      "tools": []
+    }
+  ],
+  "counts": {
+    "PASS": 21,
+    "WARN": 2
+  }
+}

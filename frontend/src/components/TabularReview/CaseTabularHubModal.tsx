@@ -9,6 +9,7 @@ import {
   Loader2,
   Search,
   Trash2,
+  Scale,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { tabularReviewApi } from '@/services/tabularReviewApi'
@@ -163,12 +164,15 @@ export function CaseTabularHubModal({
   if (!open) return null
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ backgroundColor: 'rgba(0,0,0,0.25)' }}
-    >
+    <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+      <button
+        type="button"
+        className="absolute inset-0 bg-black/30"
+        onClick={onClose}
+        aria-label="Закрыть"
+      />
       <div
-        className="rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden"
+        className="relative w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden rounded-2xl shadow-xl"
         style={{
           backgroundColor: 'var(--color-bg-elevated)',
           border: '1px solid var(--color-border)',
@@ -176,29 +180,35 @@ export function CaseTabularHubModal({
       >
         {/* Header */}
         <div
-          className="flex items-center justify-between px-6 py-4 border-b shrink-0"
+          className="flex items-center justify-between px-5 py-4 border-b shrink-0"
           style={{ borderColor: 'var(--color-border)' }}
         >
-          <div className="flex items-center gap-3 min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
             {step !== 'list' && (
               <button
                 type="button"
                 onClick={() => setStep(step === 'files' ? (selectedTemplate ? 'templates' : 'list') : 'list')}
                 className="p-1.5 rounded-lg hover:bg-[var(--color-bg-hover)]"
                 style={{ color: 'var(--color-text-muted)' }}
+                aria-label="Назад"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
             )}
             <div className="min-w-0">
-              <h2 className="text-lg font-semibold truncate" style={{ color: 'var(--color-text-primary)' }}>
+              <h2 className="text-base font-semibold truncate" style={{ color: 'var(--color-text-primary)' }}>
                 {step === 'list' && 'Таблицы по делу'}
-                {step === 'templates' && 'Шаблоны: банкротство (РФ)'}
+                {step === 'templates' && 'Шаблоны банкротства'}
                 {step === 'files' && (selectedTemplate ? 'Документы для шаблона' : 'Новая таблица')}
               </h2>
               {step === 'list' && (
                 <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
-                  Сравнивайте документы по одним и тем же вопросам
+                  Одинаковые вопросы ко всем выбранным документам
+                </p>
+              )}
+              {step === 'templates' && (
+                <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
+                  Три рабочих пресета для арбитражной практики
                 </p>
               )}
             </div>
@@ -208,13 +218,14 @@ export function CaseTabularHubModal({
             onClick={onClose}
             className="p-1.5 rounded-lg hover:bg-[var(--color-bg-hover)] shrink-0"
             style={{ color: 'var(--color-text-muted)' }}
+            aria-label="Закрыть"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto px-6 py-5">
+        <div className="flex-1 overflow-y-auto px-5 py-4">
           {step === 'list' && (
             <>
               {loadingReviews ? (
@@ -224,44 +235,44 @@ export function CaseTabularHubModal({
               ) : reviews.length === 0 ? (
                 <div className="text-center py-6">
                   <div
-                    className="w-12 h-12 rounded-xl mx-auto mb-4 flex items-center justify-center"
-                    style={{ backgroundColor: 'var(--color-bg-primary)' }}
+                    className="w-11 h-11 rounded-xl mx-auto mb-4 flex items-center justify-center"
+                    style={{ backgroundColor: 'var(--color-bg-primary)', border: '1px solid var(--color-border)' }}
                   >
-                    <Table className="w-6 h-6" style={{ color: 'var(--color-text-muted)' }} />
+                    <Table className="w-5 h-5" style={{ color: 'var(--color-text-muted)' }} />
                   </div>
                   <p className="text-sm font-medium mb-1" style={{ color: 'var(--color-text-primary)' }}>
                     Таблиц в этом деле пока нет
                   </p>
-                  <p className="text-sm mb-6 max-w-sm mx-auto" style={{ color: 'var(--color-text-muted)' }}>
-                    Создайте пустую таблицу или возьмите готовый шаблон для банкротства — с колонками
-                    для дат, судебных актов, платежей и т.д.
+                  <p className="text-sm mb-6 max-w-sm mx-auto leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>
+                    Возьмите шаблон: оспаривание сделок, проверка требований кредиторов или аудит под субсидиарку —
+                    либо создайте пустую таблицу.
                   </p>
-                  <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                  <div className="flex flex-col sm:flex-row gap-2.5 justify-center">
+                    <button
+                      type="button"
+                      onClick={() => setStep('templates')}
+                      className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium"
+                      style={{
+                        backgroundColor: 'var(--color-accent)',
+                        color: '#fff',
+                      }}
+                    >
+                      <LayoutTemplate className="w-4 h-4" />
+                      Выбрать шаблон
+                    </button>
                     <button
                       type="button"
                       onClick={startBlankCreate}
                       disabled={files.length === 0}
-                      className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium disabled:opacity-40"
-                      style={{
-                        backgroundColor: 'var(--color-text-primary)',
-                        color: 'var(--color-bg-primary)',
-                      }}
-                    >
-                      <Plus className="w-4 h-4" />
-                      Создать таблицу
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setStep('templates')}
-                      className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium border"
+                      className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium border disabled:opacity-40"
                       style={{
                         borderColor: 'var(--color-border)',
                         color: 'var(--color-text-primary)',
                         backgroundColor: 'var(--color-bg-primary)',
                       }}
                     >
-                      <LayoutTemplate className="w-4 h-4" />
-                      Готовые шаблоны
+                      <Plus className="w-4 h-4" />
+                      Пустая таблица
                     </button>
                   </div>
                   {files.length === 0 && (
@@ -275,28 +286,31 @@ export function CaseTabularHubModal({
                   <div className="flex gap-2 mb-4">
                     <button
                       type="button"
+                      onClick={() => setStep('templates')}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium"
+                      style={{
+                        backgroundColor: 'var(--color-accent)',
+                        color: '#fff',
+                      }}
+                    >
+                      <LayoutTemplate className="w-3.5 h-3.5" />
+                      Шаблоны
+                    </button>
+                    <button
+                      type="button"
                       onClick={startBlankCreate}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm border"
                       style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-primary)' }}
                     >
                       <Plus className="w-3.5 h-3.5" />
-                      Новая таблица
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setStep('templates')}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm border"
-                      style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-primary)' }}
-                    >
-                      <LayoutTemplate className="w-3.5 h-3.5" />
-                      Шаблоны
+                      Пустая таблица
                     </button>
                   </div>
                   <ul className="space-y-2">
                     {reviews.map((review) => (
                       <li key={review.id}>
                         <div
-                          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border hover:bg-[var(--color-bg-hover)] transition-colors group"
+                          className="w-full flex items-center gap-3 px-3.5 py-3 rounded-xl border hover:bg-[var(--color-bg-hover)] transition-colors group"
                           style={{ borderColor: 'var(--color-border)' }}
                         >
                           <button
@@ -340,50 +354,88 @@ export function CaseTabularHubModal({
 
           {step === 'templates' && (
             <>
-              <p className="text-sm mb-4" style={{ color: 'var(--color-text-muted)' }}>
-                Шаблон добавит готовые колонки с вопросами. После создания нажмите ▶ у каждой колонки
-                или запустите заполнение из таблицы.
+              <p className="text-sm mb-4 leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>
+                Выберите сценарий — в таблицу добавятся готовые колонки-вопросы. Заполните их по однотипным
+                документам, затем сверьте ответы по подсветке в оригинале.
               </p>
               {loadingTemplates ? (
                 <div className="flex justify-center py-10">
                   <Loader2 className="w-6 h-6 animate-spin" style={{ color: 'var(--color-text-muted)' }} />
                 </div>
               ) : (
-                <ul className="space-y-3">
+                <ul className="space-y-2.5">
                   {templates.map((template) => (
                     <li key={template.id}>
                       <button
                         type="button"
                         onClick={() => startTemplateCreate(template)}
-                        className="w-full text-left rounded-xl border p-4 hover:bg-[var(--color-bg-hover)] transition-colors"
-                        style={{ borderColor: 'var(--color-border)' }}
+                        className="w-full text-left rounded-xl border p-4 transition-colors hover:bg-[var(--color-bg-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+                        style={{
+                          borderColor: 'var(--color-border)',
+                          backgroundColor: 'var(--color-bg-primary)',
+                        }}
                       >
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <p className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-                              {template.name}
-                              {template.featured && (
-                                <span
-                                  className="ml-2 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded"
-                                  style={{
-                                    backgroundColor: 'rgba(16,185,129,0.1)',
-                                    color: 'rgba(16,185,129,0.95)',
-                                  }}
-                                >
-                                  рекомендуем
-                                </span>
-                              )}
-                            </p>
+                        <div className="flex items-start gap-3">
+                          <div
+                            className="mt-0.5 w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+                            style={{
+                              backgroundColor: 'color-mix(in srgb, var(--color-accent) 12%, transparent)',
+                              color: 'var(--color-accent)',
+                            }}
+                          >
+                            <Scale className="w-4 h-4" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                                  {template.name}
+                                </p>
+                                {template.legalBasis && (
+                                  <span
+                                    className="inline-block mt-1.5 text-[11px] font-medium px-2 py-0.5 rounded-md"
+                                    style={{
+                                      backgroundColor: 'color-mix(in srgb, var(--color-accent) 10%, transparent)',
+                                      color: 'var(--color-accent)',
+                                    }}
+                                  >
+                                    {template.legalBasis}
+                                  </span>
+                                )}
+                              </div>
+                              <ChevronRight
+                                className="w-4 h-4 shrink-0 mt-1"
+                                style={{ color: 'var(--color-text-muted)' }}
+                              />
+                            </div>
                             {template.description && (
-                              <p className="text-xs mt-1 leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>
+                              <p className="text-xs mt-2 leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>
                                 {template.description}
                               </p>
                             )}
-                            <p className="text-xs mt-2" style={{ color: 'var(--color-text-muted)' }}>
-                              {template.columnsCount} колонок
-                            </p>
+                            {template.documentHint && (
+                              <p className="text-xs mt-1.5" style={{ color: 'var(--color-text-muted)' }}>
+                                Документы: {template.documentHint}
+                              </p>
+                            )}
+                            {template.columnLabels && template.columnLabels.length > 0 && (
+                              <div className="flex flex-wrap gap-1.5 mt-3">
+                                {template.columnLabels.map((label) => (
+                                  <span
+                                    key={label}
+                                    className="text-[11px] px-2 py-0.5 rounded-md border"
+                                    style={{
+                                      borderColor: 'var(--color-border)',
+                                      color: 'var(--color-text-secondary, var(--color-text-muted))',
+                                      backgroundColor: 'var(--color-bg-elevated)',
+                                    }}
+                                  >
+                                    {label}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                           </div>
-                          <ChevronRight className="w-4 h-4 shrink-0 mt-0.5" style={{ color: 'var(--color-text-muted)' }} />
                         </div>
                       </button>
                     </li>
@@ -396,27 +448,38 @@ export function CaseTabularHubModal({
           {step === 'files' && (
             <>
               <label className="block mb-4">
-                <span className="text-xs font-medium mb-1 block" style={{ color: 'var(--color-text-muted)' }}>
+                <span className="text-xs font-medium mb-1.5 block" style={{ color: 'var(--color-text-muted)' }}>
                   Название таблицы
                 </span>
                 <input
                   type="text"
                   value={tableName}
                   onChange={(e) => setTableName(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border text-sm"
+                  className="w-full px-3 py-2 rounded-lg border text-sm outline-none focus:border-[var(--color-accent)]"
                   style={{
                     borderColor: 'var(--color-border)',
                     backgroundColor: 'var(--color-bg-primary)',
                     color: 'var(--color-text-primary)',
                   }}
-                  placeholder="Например: Документы по банкротству"
+                  placeholder="Например: Оспаривание сделок — договоры 2022–2024"
                 />
               </label>
               {selectedTemplate && (
-                <p className="text-xs mb-3 px-3 py-2 rounded-lg" style={{ backgroundColor: 'var(--color-bg-primary)', color: 'var(--color-text-muted)' }}>
-                  Шаблон: <strong style={{ color: 'var(--color-text-primary)' }}>{selectedTemplate.name}</strong>
-                  {' '}— будет добавлено {selectedTemplate.columnsCount} колонок
-                </p>
+                <div
+                  className="text-xs mb-3 px-3 py-2.5 rounded-lg border"
+                  style={{
+                    borderColor: 'var(--color-border)',
+                    backgroundColor: 'var(--color-bg-primary)',
+                    color: 'var(--color-text-muted)',
+                  }}
+                >
+                  <span style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>
+                    {selectedTemplate.name}
+                  </span>
+                  {selectedTemplate.legalBasis ? ` · ${selectedTemplate.legalBasis}` : ''}
+                  {' — '}
+                  {selectedTemplate.columnsCount} колонки
+                </div>
               )}
               <div
                 className="flex items-center gap-2 px-3 py-2 rounded-lg border mb-3"
@@ -479,7 +542,7 @@ export function CaseTabularHubModal({
         {/* Footer */}
         {step === 'files' && (
           <div
-            className="flex items-center justify-between px-6 py-4 border-t shrink-0"
+            className="flex items-center justify-between px-5 py-3.5 border-t shrink-0"
             style={{ borderColor: 'var(--color-border)' }}
           >
             <span className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
@@ -491,10 +554,10 @@ export function CaseTabularHubModal({
               type="button"
               onClick={handleCreate}
               disabled={creating || selectedFileIds.size === 0}
-              className="inline-flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium disabled:opacity-40"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-40"
               style={{
-                backgroundColor: 'var(--color-text-primary)',
-                color: 'var(--color-bg-primary)',
+                backgroundColor: 'var(--color-accent)',
+                color: '#fff',
               }}
             >
               {creating && <Loader2 className="w-3.5 h-3.5 animate-spin" />}

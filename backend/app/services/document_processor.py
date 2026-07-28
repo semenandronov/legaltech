@@ -6,6 +6,12 @@ from app.config import config
 from app.services.yandex_embeddings import get_yandex_embeddings
 from app.services.chunk_ids import generate_chunk_id
 from app.services.bm25_retriever import BM25Retriever
+from app.services.file_char_basis import (
+    CHAR_BASIS_DOCLING_DIRECT,
+    attach_char_basis,
+    docling_direct_char_basis,
+    peel_char_basis,
+)
 from sqlalchemy.orm import Session
 import logging
 
@@ -89,6 +95,7 @@ class DocumentProcessor:
             doc_metadata["file_id"] = file_id
 
         documents: List[Document] = []
+        pending_char_basis: Optional[tuple[str, Optional[str]]] = None
 
         dual_enabled = bool(getattr(config, "LEGAL_CHUNKING_DUAL_ENABLED", True))
         if dual_enabled:
@@ -147,6 +154,8 @@ class DocumentProcessor:
                     prepared_pdf_text=prepared_pdf_text,
                 )
                 if v2_documents:
+                    # Carrier holds citation full-text; exclude from chunk budget.
+                    v2_documents, basis_text, basis_name = peel_char_basis(v2_documents)
                     if use_norm_corpus:
                         norm_n = sum(
                             1 for d in v2_documents if d.metadata.get("chunk_level") == "norm"
@@ -184,6 +193,8 @@ class DocumentProcessor:
                             v2_documents[0].metadata.get("preseg_strategy") if v2_documents else "?",
                         )
                     documents = v2_documents
+                    if basis_text:
+                        pending_char_basis = (basis_text, basis_name)
             except Exception as e:
                 logger.warning(
                     "[LegalChunkerV2] failed for %s: %s — fallback to docling-direct-v1",
@@ -191,6 +202,7 @@ class DocumentProcessor:
                     e,
                     exc_info=True,
                 )
+                pending_char_basis = None
 
         if not documents:
             if not langchain_docs:
@@ -219,10 +231,16 @@ class DocumentProcessor:
                     "char_end": char_end,
                     "chunk_level": "docling",
                     "chunking_contract_version": "docling-direct-v1",
+                    "char_basis": CHAR_BASIS_DOCLING_DIRECT,
                 }
 
                 documents.append(Document(page_content=chunk_text, metadata=chunk_meta))
                 offset = char_end + sep_len
+
+            pending_char_basis = (
+                docling_direct_char_basis(langchain_docs),
+                CHAR_BASIS_DOCLING_DIRECT,
+            )
 
         if not documents:
             raise ValueError(
@@ -259,6 +277,13 @@ class DocumentProcessor:
                 len(documents),
                 warn_threshold,
             )
+
+        if pending_char_basis:
+            basis_text, basis_name = pending_char_basis
+            if basis_text:
+                documents = attach_char_basis(
+                    documents, basis_text, basis_name or CHAR_BASIS_DOCLING_DIRECT
+                )
 
         return documents
 
@@ -315,6 +340,13 @@ class DocumentProcessor:
         """
         if not documents:
             raise ValueError(f"No documents provided for case {case_id}. Cannot store in PGVector without documents.")
+
+        # Never persist ingest-only char-basis carriers.
+        documents, _basis_text, _basis_name = peel_char_basis(documents)
+        if not documents:
+            raise ValueError(
+                f"No indexable documents for case {case_id} after peeling char-basis carrier."
+            )
         
         logger.info(f"Storing {len(documents)} document chunks in PGVector for case {case_id}")
         
@@ -404,7 +436,10 @@ class DocumentProcessor:
 
         Args:
             case_id: Case identifier
-            documents: Optional pre-collected documents/chunks for indexing
+            documents: Optional chunk list. When provided it MUST be the complete
+                case corpus already — a partial batch silently replaces the whole
+                in-memory index. Prefer ``prewarm_bm25_from_store`` /
+                ``finalize_case_bm25_after_ingestion`` after file ingest.
             force_rebuild: Rebuild index even if one already exists
 
         Returns:
@@ -537,17 +572,19 @@ class DocumentProcessor:
         metadata_filter: Optional[Dict[str, Any]] = None,
         bm25_sync: Optional[bool] = None,
         query_embedding: Optional[List[float]] = None,
+        exact_query: Optional[str] = None,
     ) -> List[Document]:
         """
         Hybrid search: объединяет dense search (semantic) и sparse search (BM25)
         
         Args:
             case_id: Case identifier
-            query: Search query
+            query: Semantic search query (dense / FTS / BM25)
             k: Number of documents to retrieve
             alpha: Weight for dense search (0.0-1.0), sparse weight = 1.0 - alpha
                   alpha=0.7 означает 70% weight для dense, 30% для sparse
             db: Optional database session (not used, kept for API compatibility)
+            exact_query: Optional clause anchor for boundary-exact recall (e.g. "1.4")
             
         Returns:
             List of relevant Document objects with combined scores
@@ -622,7 +659,8 @@ class DocumentProcessor:
                 if isinstance(fts_out, dict):
                     fts_out["docs_count"] = len(sparse_docs or [])
 
-            # Product requirement: address/anchor queries (e.g. "пункт 6.8") must have deterministic recall.
+            # Product requirement: address/anchor queries (e.g. "пункт 6.8") must have
+            # deterministic clause-boundary recall (not ILIKE %1.4% false positives).
             anchor_docs: List[Document] = []
             if hasattr(self.vector_store, "anchor_substring_search"):
                 try:
@@ -632,14 +670,19 @@ class DocumentProcessor:
                             case_id=case_id,
                             k=k * 2,
                             filter=filter_payload,
+                            exact_query=exact_query,
                         )
                         if isinstance(anchor_out, dict):
                             anchor_out["docs_count"] = len(anchor_docs or [])
+                            if exact_query:
+                                anchor_out["exact_query"] = str(exact_query)[:64]
                     if anchor_docs:
                         logger.info(
-                            "Anchor substring search hit for case %s (returned %s docs)",
+                            "Anchor clause-boundary search hit for case %s "
+                            "(returned %s docs, exact_query=%r)",
                             case_id,
                             len(anchor_docs),
+                            exact_query,
                         )
                 except Exception as e:
                     logger.warning(
@@ -699,15 +742,43 @@ class DocumentProcessor:
                     key=lambda x: rrf_scores[x[0]],
                     reverse=True,
                 )
-                result_docs = [doc for doc_id, doc in sorted_docs[:k]]
-                for doc_id, doc in sorted_docs[:k]:
+                # Clause-boundary hits must surface first: RRF with alpha=0.7 otherwise
+                # lets dense similarity bury the correct пункт behind related sections.
+                result_docs: List[Document] = []
+                seen_result: set = set()
+                if anchor_docs:
+                    for doc in anchor_docs:
+                        try:
+                            did = self._get_doc_id(doc)
+                        except Exception:
+                            did = None
+                        key = did or str(id(doc))
+                        if key in seen_result:
+                            continue
+                        seen_result.add(key)
+                        if hasattr(doc, "metadata"):
+                            doc.metadata["combined_score"] = max(
+                                float(doc.metadata.get("combined_score") or 0.0),
+                                1.0,
+                            )
+                        result_docs.append(doc)
+                        if len(result_docs) >= k:
+                            break
+                for doc_id, doc in sorted_docs:
+                    if len(result_docs) >= k:
+                        break
+                    if doc_id in seen_result:
+                        continue
+                    seen_result.add(doc_id)
                     if hasattr(doc, "metadata"):
                         doc.metadata["combined_score"] = float(rrf_scores[doc_id])
                     else:
                         doc.metadata = {"combined_score": float(rrf_scores[doc_id])}
+                    result_docs.append(doc)
                 if isinstance(rrf_out, dict):
                     rrf_out["dense_in"] = len(dense_docs or [])
                     rrf_out["sparse_in"] = len(sparse_docs or [])
+                    rrf_out["anchor_boosted"] = len(anchor_docs or [])
                     rrf_out["docs_out"] = len(result_docs)
 
             logger.info(

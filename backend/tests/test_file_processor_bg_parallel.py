@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import threading
 import time
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -45,17 +45,52 @@ def test_process_files_background_uses_parallel_workers(monkeypatch):
     monkeypatch.setattr(fpb, "_update_case_stats", lambda _db, _cid: None)
     monkeypatch.setattr(
         "app.services.document_processor.get_document_processor",
-        lambda: MagicMock(prewarm_bm25_index=MagicMock()),
+        lambda: MagicMock(),
     )
     monkeypatch.setattr(fpb, "SessionLocal", lambda: MagicMock())
 
-    started = time.monotonic()
-    fpb.process_files_background(["f1", "f2", "f3"], "case-parallel")
-    elapsed = time.monotonic() - started
+    with patch.object(fpb, "finalize_case_bm25_after_ingestion") as finalize:
+        started = time.monotonic()
+        fpb.process_files_background(["f1", "f2", "f3"], "case-parallel")
+        elapsed = time.monotonic() - started
+        finalize.assert_called_once()
 
     assert max_active >= 2
     # Sequential would be ~0.36s; parallel capped at ~0.12s + overhead.
     assert elapsed < per_file_delay * 2.5
+
+
+def test_process_files_background_rebuilds_bm25_from_pgvector_not_batch(monkeypatch):
+    """
+    Regression: after adding files to a case that already has chunks, BM25 must be
+    rebuilt from PGVector (whole case), never from the current batch alone.
+    """
+    dp = MagicMock()
+    monkeypatch.setattr(
+        "app.services.document_processor.get_document_processor",
+        lambda: dp,
+    )
+    monkeypatch.setattr(fpb, "SessionLocal", lambda: MagicMock())
+    monkeypatch.setattr(fpb, "_update_case_stats", lambda _db, _cid: None)
+
+    def _fake_process_one_file(db, file_id, case_id, document_processor):
+        from langchain_core.documents import Document
+
+        # Batch returns only the new file's chunks — must NOT become BM25 corpus.
+        return [
+            Document(
+                page_content=f"chunk from {file_id}",
+                metadata={"file_id": file_id, "case_id": case_id},
+            )
+        ]
+
+    monkeypatch.setattr(fpb, "_process_one_file", _fake_process_one_file)
+
+    with patch.object(fpb, "finalize_case_bm25_after_ingestion") as finalize:
+        fpb.process_files_background(["file-new"], "case-existing")
+
+    finalize.assert_called_once_with("case-existing", dp)
+    dp.prewarm_bm25_index.assert_not_called()
 
 
 def test_document_passport_uses_passport_slot(monkeypatch):

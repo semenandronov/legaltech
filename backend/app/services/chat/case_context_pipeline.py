@@ -4,7 +4,7 @@ Case assistant context pipeline helpers: recall pool + rerank + prompt assembly.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from langchain_core.documents import Document
 from sqlalchemy.orm import Session
@@ -182,10 +182,15 @@ def run_hybrid_recall(
     attached_file_ids: Optional[List[str]],
     budget_profile: Optional[Dict[str, Any]],
     query_embedding: Optional[List[float]] = None,
+    exact_query: Optional[str] = None,
+    section_root_ids: Optional[List[str]] = None,
 ) -> Tuple[List[Document], Dict[str, Any]]:
     """Stage 2: hybrid retrieval over scoped case chunks."""
     meta: Dict[str, Any] = {"strategy": "hybrid", "pipeline": True}
     search_query = (retrieval_task.search_query if retrieval_task else None) or question
+    exact_q = (exact_query or "").strip() or None
+    if exact_q:
+        meta["exact_query"] = exact_q[:64]
     k = recall_k_for_budget(budget_profile)
     if k <= 0:
         meta["recall_k"] = 0
@@ -208,6 +213,16 @@ def run_hybrid_recall(
         file_ids = [str(x) for x in attached_file_ids if str(x).strip()]
         meta["scope_mode"] = "attached"
 
+    section_ids = [str(x).strip() for x in (section_root_ids or []) if str(x).strip()]
+    if section_ids:
+        from app.services.chat.retrieval_router import merge_metadata_filters
+
+        section_filter: Dict[str, Any] = {
+            "section_root_id": section_ids[0] if len(section_ids) == 1 else section_ids
+        }
+        metadata_filter = merge_metadata_filters(metadata_filter, section_filter)
+        meta["section_root_filter"] = section_ids[:12]
+
     scope_meta = summarize_metadata_filter(metadata_filter, file_ids=file_ids)
     meta["metadata_filter"] = scope_meta
 
@@ -215,6 +230,7 @@ def run_hybrid_recall(
         "hybrid_recall",
         input_payload={
             "question": (search_query or "")[:800],
+            "exact_query": exact_q,
             "recall_k": k,
             "scope": scope_meta,
             "doc_types": doc_types,
@@ -237,6 +253,7 @@ def run_hybrid_recall(
             doc_types=doc_types,
             pipeline_micro_only=True,
             query_embedding=query_embedding,
+            exact_query=exact_q,
         )
         docs = [d for d in (docs or []) if d is not None and hasattr(d, "page_content")]
 
@@ -466,18 +483,55 @@ def rerank_and_resolve_documents(
     case_id: str,
     rag_service,
     budget_profile: Optional[Dict[str, Any]] = None,
+    exact_query: Optional[str] = None,
+    pin_clause_anchors: bool = True,
+    lexical_terms: Optional[Sequence[str]] = None,
 ) -> Tuple[List[Document], Dict[str, Any]]:
-    """Rerank micro pool, then expand to deduplicated macro parents for LLM context."""
+    """Rerank micro pool, then expand to macro parents for LLM context.
+
+    Exact + lexical channels bypass rerank: verified literal hits lead the model
+    context and are merged additively with the reranked pool.
+    """
     from app.services.chat.context_resolution import (
         filter_rerank_pool_to_micro,
         parent_context_enabled,
         resolve_parent_context,
     )
+    from app.services.clause_anchor import (
+        exclude_docs_by_identity,
+        select_pinned_clause_anchor_docs,
+    )
     from app.services.observability.case_assistant_langfuse_tracing import case_assistant_span
+    from app.services.retrieval_channels import (
+        merge_evidence_pins,
+        select_pinned_lexical_docs,
+    )
 
     meta: Dict[str, Any] = {}
+    exact_q = (exact_query or "").strip() or None
+    terms = tuple(
+        str(t).strip() for t in (lexical_terms or ()) if str(t).strip()
+    )
+    exact_pins: List[Document] = []
+    lexical_pins: List[Document] = []
+    if pin_clause_anchors:
+        exact_pins = select_pinned_clause_anchor_docs(docs, exact_query=exact_q)
+        if exact_pins:
+            meta["clause_anchor_pins"] = len(exact_pins)
+            meta["clause_anchor_exact_query"] = (exact_q or "")[:64]
+            meta["exact_channel"] = True
+    if terms:
+        lexical_pins = select_pinned_lexical_docs(docs, terms=terms)
+        if lexical_pins:
+            meta["lexical_pins"] = len(lexical_pins)
+            meta["lexical_channel"] = True
+
     use_parent = _parent_context_for_budget(budget_profile)
     pool = filter_rerank_pool_to_micro(docs) if use_parent and parent_context_enabled() else list(docs)
+    # Literal hits do not compete in rerank — they already have a reserved lane.
+    reserved = exact_pins + lexical_pins
+    if reserved:
+        pool = exclude_docs_by_identity(pool, reserved)
     meta["rerank_pool_in"] = len(docs)
     meta["rerank_pool_micro"] = len(pool)
 
@@ -489,26 +543,36 @@ def rerank_and_resolve_documents(
     )
     meta["rerank_out"] = len(ranked)
 
-    if not use_parent or not parent_context_enabled() or not rag_service:
-        return ranked, meta
-
-    vector_store = getattr(getattr(rag_service, "document_processor", None), "vector_store", None)
-    if vector_store is None:
-        meta["context_resolution"] = {"parent_context": False, "reason": "no_vector_store"}
-        return ranked, meta
-
-    with case_assistant_span(
-        "context_resolution",
-        input_payload={"ranked_micro": len(ranked), "final_k": final_k},
-        metadata={"case_id": case_id},
-    ) as span_out:
-        resolved, resolve_meta = resolve_parent_context(
-            ranked,
-            case_id=str(case_id),
-            vector_store=vector_store,
+    resolved = ranked
+    if use_parent and parent_context_enabled() and rag_service:
+        vector_store = getattr(
+            getattr(rag_service, "document_processor", None),
+            "vector_store",
+            None,
         )
-        span_out.update(resolve_meta)
-        meta.update(resolve_meta)
+        if vector_store is None:
+            meta["context_resolution"] = {"parent_context": False, "reason": "no_vector_store"}
+        else:
+            with case_assistant_span(
+                "context_resolution",
+                input_payload={"ranked_micro": len(ranked), "final_k": final_k},
+                metadata={"case_id": case_id},
+            ) as span_out:
+                resolved, resolve_meta = resolve_parent_context(
+                    ranked,
+                    case_id=str(case_id),
+                    vector_store=vector_store,
+                )
+                span_out.update(resolve_meta)
+                meta.update(resolve_meta)
+
+    if exact_pins or lexical_pins:
+        resolved = merge_evidence_pins(
+            exact_pins=exact_pins,
+            lexical_pins=lexical_pins,
+            ranked=resolved,
+            final_k=final_k,
+        )
     return resolved, meta
 
 
@@ -613,6 +677,8 @@ def complete_retrieval_after_recall(
             case_id=str(case_id),
             rag_service=rag_service,
             budget_profile=budget,
+            exact_query=(str(budget.get("exact_query") or "").strip() or None),
+            pin_clause_anchors=True,
         )
         meta.update(resolve_meta or {})
         meta["rerank_docs"] = len(ranked)

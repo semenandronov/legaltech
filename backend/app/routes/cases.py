@@ -20,6 +20,7 @@ from app.config import config
 from fastapi.responses import Response, StreamingResponse, JSONResponse
 from app.services.langchain_loaders import DocumentLoaderService
 from app.services.document_processor import DocumentProcessor, get_document_processor
+from app.services.bm25_case_prewarm import finalize_case_bm25_after_ingestion
 from app.services.chat.entity_index_service import merge_case_entity_index
 from app.services.case_file_bytes import case_file_content_for_db
 from app.services.case_file_serve import (
@@ -1314,11 +1315,7 @@ async def reindex_case_files(
                 db=db,
                 original_files=None
             )
-            document_processor.prewarm_bm25_index(
-                case_id=case_id,
-                documents=all_documents,
-                force_rebuild=True,
-            )
+            finalize_case_bm25_after_ingestion(case_id, document_processor)
             
             logger.info(f"Successfully reindexed {len(all_documents)} document chunks for case {case_id}")
         
@@ -1441,11 +1438,7 @@ async def reindex_all_cases(
                     db=db,
                     original_files=None
                 )
-                document_processor.prewarm_bm25_index(
-                    case_id=case.id,
-                    documents=all_documents,
-                    force_rebuild=True,
-                )
+                finalize_case_bm25_after_ingestion(case.id, document_processor)
                 total_chunks += len(all_documents)
                 
                 # Update case full_text
@@ -1619,11 +1612,7 @@ async def process_case_files(
                     db=process_db,
                     original_files=None  # Not used for PGVector
                 )
-                document_processor.prewarm_bm25_index(
-                    case_id=case_id,
-                    documents=all_documents,
-                    force_rebuild=True,
-                )
+                finalize_case_bm25_after_ingestion(case_id, document_processor)
                 
                 logger.info(f"Successfully stored {len(all_documents)} document chunks in PGVector collection '{collection_name}' for case {case_id}")
             

@@ -408,8 +408,10 @@ export const TabularDocumentViewer: React.FC<TabularDocumentViewerProps> = ({
               highlightBBoxRegions={cellData?.highlightBBoxRegions}
               highlightPageBBox={cellData?.highlightPageBBox}
               expandHighlightSearchAllPages={Boolean(
-                activeHighlightText ||
-                  cellData?.verbatimAlternates?.some((x) => String(x).trim().length >= 2),
+                !cellData?.highlightBBox &&
+                  !(cellData?.highlightBBoxRegions && cellData.highlightBBoxRegions.length > 0) &&
+                  (activeHighlightText ||
+                    cellData?.verbatimAlternates?.some((x) => String(x).trim().length >= 2)),
               )}
               showDocumentSearch={!citationPreview}
               showPrint={!citationPreview}

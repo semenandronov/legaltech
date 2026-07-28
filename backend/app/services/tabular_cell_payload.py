@@ -207,18 +207,29 @@ def _build_source_references(
         elif page is None:
             page = source_page
 
-        bbox = _copy_bbox(ref.get("bbox"))
-        ref_page_bbox = _copy_page_bbox(ref.get("page_bbox"))
-        if bbox is None and matched_meta and char_start is not None and char_end is not None:
+        # Pixel highlight: leaf chunks only (micro/row), never parent macro / LLM stamp.
+        from app.services.tabular_source_geometry import best_doc_for_geometry
+
+        geometry_doc = best_doc_for_geometry(
+            docs,
+            quote=ref_text,
+            char_start=char_start,
+            char_end=char_end,
+        )
+        geometry_meta = (getattr(geometry_doc, "metadata", None) or {}) if geometry_doc else {}
+
+        bbox: Optional[Dict[str, float]] = None
+        ref_page_bbox: Optional[Dict[str, float]] = None
+        if geometry_meta and char_start is not None and char_end is not None:
             try:
                 regions, matched_page_bbox = RAGService._extract_bbox_regions(
-                    matched_meta,
+                    geometry_meta,
                     char_start=char_start,
                     char_end=char_end,
                 )
                 if regions:
                     bbox = _copy_bbox(regions[0])
-                    ref_page_bbox = _copy_page_bbox(matched_page_bbox) or ref_page_bbox
+                    ref_page_bbox = _copy_page_bbox(matched_page_bbox)
             except Exception:
                 pass
 
@@ -276,16 +287,25 @@ def build_tabular_cell_db_payload(
     column: TabularColumn,
     result: TabularCellExtractionModel,
     included_docs: Optional[List[Document]] = None,
+    geometry_docs: Optional[List[Document]] = None,
     db: Optional[Session] = None,
     verification_outcome: Optional[CellVerificationOutcome] = None,
 ) -> Dict[str, Any]:
     """
     Map extraction model → persisted cell dict with status gates and deep links.
+
+    included_docs: LLM context (often macro parents after small-to-big).
+    geometry_docs: leaf chunks (micro/row) for PDF bbox; macros never drive pixels.
     """
     from app.services.chat.citation_payload import resolve_citation_page_from_metadata
     from app.services.prov_span_utils import narrow_char_span_to_quote
     from app.services.rag_service import RAGService
     from app.services.tabular_review_verifier import TabularReviewVerifier
+    from app.services.tabular_source_geometry import (
+        best_doc_for_geometry,
+        enrich_source_references_with_geometry,
+        filter_docs_for_geometry,
+    )
 
     verifier_result = None
     if db is not None:
@@ -313,6 +333,10 @@ def build_tabular_cell_db_payload(
         cell_status = "completed"
 
     included_docs = included_docs or []
+    leaf_docs = filter_docs_for_geometry(
+        geometry_docs if geometry_docs is not None else included_docs
+    )
+    match_docs = list(included_docs) + [d for d in leaf_docs if d not in included_docs]
     top_doc = included_docs[0] if included_docs else None
     top_meta: Dict[str, Any] = (getattr(top_doc, "metadata", None) or {}) if top_doc else {}
     original_text = file.original_text or ""
@@ -337,8 +361,9 @@ def build_tabular_cell_db_payload(
         primary_source_char_start, primary_source_char_end = located_anchor
         verified_flag = True
     else:
-        raw_cs = top_meta.get("char_start")
-        raw_ce = top_meta.get("char_end")
+        # Prefer grounding micro span from small-to-big over wide macro span.
+        raw_cs = top_meta.get("grounding_micro_char_start", top_meta.get("char_start"))
+        raw_ce = top_meta.get("grounding_micro_char_end", top_meta.get("char_end"))
         try:
             if raw_cs is not None and raw_ce is not None:
                 cs_i = int(raw_cs)
@@ -379,7 +404,7 @@ def build_tabular_cell_db_payload(
     try:
         if primary_source_char_start is not None and primary_source_char_end is not None:
             matched = _best_doc_for_quote(
-                included_docs,
+                match_docs,
                 quote=anchor_text,
                 char_start=primary_source_char_start,
                 char_end=primary_source_char_end,
@@ -395,24 +420,27 @@ def build_tabular_cell_db_payload(
 
     source_page = strict_page if strict_page is not None else result.source_page
     source_section = result.source_section
+    if not source_section:
+        source_section = (top_meta.get("section_title") or "").strip() or None
 
     bbox_regions: List[Dict[str, float]] = []
     page_bbox: Optional[Dict[str, float]] = None
     try:
-        bbox_meta = top_meta
-        matched_for_bbox = _best_doc_for_quote(
-            included_docs,
+        matched_for_bbox = best_doc_for_geometry(
+            leaf_docs,
             quote=anchor_text,
             char_start=primary_source_char_start,
             char_end=primary_source_char_end,
         )
         if matched_for_bbox is not None:
-            bbox_meta = getattr(matched_for_bbox, "metadata", None) or top_meta
-        bbox_regions, page_bbox = RAGService._extract_bbox_regions(
-            bbox_meta,
-            char_start=primary_source_char_start,
-            char_end=primary_source_char_end,
-        )
+            bbox_meta = getattr(matched_for_bbox, "metadata", None) or {}
+            bbox_regions, page_bbox = RAGService._extract_bbox_regions(
+                bbox_meta,
+                char_start=primary_source_char_start,
+                char_end=primary_source_char_end,
+            )
+        else:
+            bbox_regions, page_bbox = [], None
     except Exception:
         bbox_regions, page_bbox = [], None
 
@@ -428,8 +456,16 @@ def build_tabular_cell_db_payload(
         page_bbox=page_bbox if isinstance(page_bbox, dict) else None,
         anchor_text=anchor_text,
         original_text=original_text,
-        included_docs=included_docs,
+        included_docs=match_docs,
     )
+
+    # Second pass: leaf geometry only (never parent macro boxes).
+    if source_references and leaf_docs:
+        source_references = enrich_source_references_with_geometry(
+            refs=source_references,
+            docs=leaf_docs,
+            original_text=original_text,
+        )
 
     if source_references:
         first = source_references[0]

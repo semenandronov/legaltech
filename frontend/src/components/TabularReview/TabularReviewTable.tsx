@@ -119,10 +119,10 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, documentSea
       const column = tableData.columns.find((c) => c.id === columnId)
 
       let details: CellDetails | null = null
-      const rowHasSourceRefs = Boolean(rowCell?.source_references?.length)
+      // Always load cell details on open: API enriches missing bbox from chunk provenance.
       if (cellDetailsCache.current.has(cacheKey)) {
         details = cellDetailsCache.current.get(cacheKey)!
-      } else if (!rowHasSourceRefs) {
+      } else {
         try {
           details = await tabularReviewApi.getCellDetails(reviewId, fileId, columnId)
           cellDetailsCache.current.set(cacheKey, details)

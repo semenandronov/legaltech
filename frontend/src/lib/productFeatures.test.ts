@@ -15,8 +15,8 @@ describe('productFeatures', () => {
     expect(typeof productFeatures.caseAssistant).toBe('boolean')
   })
 
-  it('operationsAssistant defaults off (prod surface)', () => {
-    expect(typeof productFeatures.operationsAssistant).toBe('boolean')
+  it('operationsAssistant defaults on (agent-first ops chat)', () => {
+    expect(productFeatures.operationsAssistant).toBe(true)
   })
 
   it('caseHomePath lands on overview when caseAssistant is off', () => {

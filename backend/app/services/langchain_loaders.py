@@ -1,5 +1,5 @@
 """LangChain document loaders for Legal AI Vault"""
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Mapping, Sequence
 from langchain_community.document_loaders import (
     PyPDFLoader,
     UnstructuredWordDocumentLoader,
@@ -21,6 +21,12 @@ class DocumentLoaderService:
     """Service for loading documents using LangChain loaders"""
 
     @staticmethod
+    def _pdf_min_chars_per_page() -> int:
+        return max(
+            1, int(getattr(config, "PDF_OCR_MIN_EXPECTED_CHARS_PER_PAGE", 5) or 5)
+        )
+
+    @staticmethod
     def _pdf_text_quality_ok(documents: List[Document]) -> bool:
         """
         Базовая эвристика качества OCR для PDF:
@@ -30,16 +36,199 @@ class DocumentLoaderService:
             return False
         pages_with_text = sum(1 for d in documents if (d.page_content or "").strip())
         total_chars = sum(len((d.page_content or "").strip()) for d in documents)
-        min_chars_per_page = max(
-            1, int(getattr(config, "PDF_OCR_MIN_EXPECTED_CHARS_PER_PAGE", 5) or 5)
-        )
+        min_chars_per_page = DocumentLoaderService._pdf_min_chars_per_page()
         min_total_chars = min_chars_per_page * max(1, pages_with_text)
         return total_chars >= min_total_chars
 
     @staticmethod
-    def _ocr_pdf(content: bytes, filename: str) -> List[Document]:
+    def _inspect_pdf_page_signals(content: bytes) -> List[Dict[str, Any]]:
+        """
+        Per-page signals from PyMuPDF: native text length + visual content.
+        Used to detect mixed PDFs (digital text on some pages, scans on others).
+        """
+        try:
+            import fitz  # pymupdf
+        except ImportError:
+            logger.warning("pymupdf unavailable — cannot inspect PDF page coverage")
+            return []
+
+        signals: List[Dict[str, Any]] = []
+        try:
+            pdf_doc = fitz.open(stream=content, filetype="pdf")
+            try:
+                for page_num in range(len(pdf_doc)):
+                    page = pdf_doc[page_num]
+                    text = (page.get_text("text") or "").strip()
+                    images = page.get_images(full=True) or []
+                    drawings = page.get_drawings() or []
+                    signals.append(
+                        {
+                            "page_index": page_num,
+                            "text_chars": len(text),
+                            "text": text,
+                            "image_count": len(images),
+                            "drawing_count": len(drawings),
+                            "has_visual": bool(images) or bool(drawings),
+                        }
+                    )
+            finally:
+                pdf_doc.close()
+        except Exception as exc:
+            logger.warning("PDF page inspection failed: %s", exc, exc_info=True)
+            return []
+        return signals
+
+    @staticmethod
+    def _pages_needing_ocr(
+        documents: Sequence[Document],
+        page_signals: Sequence[Mapping[str, Any]],
+        *,
+        min_chars: Optional[int] = None,
+    ) -> List[int]:
+        """
+        Pages that look like scans: little/no extractable text but have images/drawings.
+
+        Blank pages (no text, no visuals) are left alone — they are not OCR targets.
+        Pages with enough native (or PyMuPDF) text are kept as native.
+        """
+        threshold = (
+            DocumentLoaderService._pdf_min_chars_per_page()
+            if min_chars is None
+            else max(1, int(min_chars))
+        )
+        weak: List[int] = []
+        for idx, doc in enumerate(documents):
+            pypdf_chars = len((doc.page_content or "").strip())
+            sig = page_signals[idx] if idx < len(page_signals) else {}
+            fitz_chars = int(sig.get("text_chars") or 0)
+            effective = max(pypdf_chars, fitz_chars)
+            if effective >= threshold:
+                continue
+            if bool(sig.get("has_visual")):
+                weak.append(idx)
+        return weak
+
+    @staticmethod
+    def _enrich_native_docs_from_fitz(
+        documents: List[Document],
+        page_signals: Sequence[Mapping[str, Any]],
+        *,
+        filename: str,
+    ) -> None:
+        """
+        If PyPDF missed text that PyMuPDF can read, promote that text into the page doc.
+        Avoids OCR when a better native extractor already has the content.
+        """
+        threshold = DocumentLoaderService._pdf_min_chars_per_page()
+        for idx, doc in enumerate(documents):
+            pypdf_chars = len((doc.page_content or "").strip())
+            if pypdf_chars >= threshold:
+                continue
+            if idx >= len(page_signals):
+                continue
+            sig = page_signals[idx]
+            fitz_text = str(sig.get("text") or "").strip()
+            if len(fitz_text) < threshold:
+                continue
+            doc.page_content = fitz_text
+            doc.metadata["extraction_source"] = "native_text_fitz"
+            doc.metadata["ocr"] = False
+            doc.metadata["source_file"] = filename
+            doc.metadata["source_page"] = idx
+            logger.info(
+                "PDF %s page %s: promoted PyMuPDF text (%s chars, PyPDF had %s)",
+                filename,
+                idx + 1,
+                len(fitz_text),
+                pypdf_chars,
+            )
+
+    @staticmethod
+    def _pdf_subset_bytes(content: bytes, page_indices: Sequence[int]) -> bytes:
+        """Build a PDF containing only the given 0-based pages (stable order)."""
+        import fitz  # pymupdf
+
+        ordered = sorted({int(i) for i in page_indices})
+        if not ordered:
+            raise ValueError("page_indices must not be empty")
+        src = fitz.open(stream=content, filetype="pdf")
+        try:
+            sub = fitz.open()
+            try:
+                for page_i in ordered:
+                    if page_i < 0 or page_i >= len(src):
+                        raise ValueError(
+                            f"page index {page_i} out of range for PDF with {len(src)} pages"
+                        )
+                    sub.insert_pdf(src, from_page=page_i, to_page=page_i)
+                return sub.tobytes()
+            finally:
+                sub.close()
+        finally:
+            src.close()
+
+    @staticmethod
+    def _normalize_page_docs(
+        documents: List[Document],
+        *,
+        filename: str,
+        default_extraction_source: str,
+    ) -> List[Document]:
+        """Ensure each page has stable source_page = enumerate index when missing."""
+        out: List[Document] = []
+        for idx, doc in enumerate(documents):
+            md = dict(doc.metadata or {})
+            md.setdefault("source_file", filename)
+            md.setdefault("extraction_source", default_extraction_source)
+            if "page" in md and md["page"] is not None:
+                try:
+                    md["source_page"] = int(md["page"])
+                except (TypeError, ValueError):
+                    md["source_page"] = idx
+            else:
+                md["source_page"] = idx
+            out.append(Document(page_content=doc.page_content or "", metadata=md))
+        return out
+
+    @staticmethod
+    def _merge_native_with_page_ocr(
+        native_docs: List[Document],
+        ocr_by_page: Mapping[int, Document],
+        *,
+        filename: str,
+    ) -> List[Document]:
+        """Keep strong native pages; replace scan pages with OCR results."""
+        merged: List[Document] = []
+        for idx, native in enumerate(native_docs):
+            ocr_doc = ocr_by_page.get(idx)
+            ocr_text = (ocr_doc.page_content or "").strip() if ocr_doc is not None else ""
+            if ocr_doc is not None and ocr_text:
+                md = dict(ocr_doc.metadata or {})
+                md["source_file"] = filename
+                md["source_page"] = idx
+                md["ocr"] = True
+                md["extraction_source"] = md.get("extraction_source") or "ocr"
+                md["pdf_extraction"] = "hybrid_native_ocr"
+                merged.append(Document(page_content=ocr_doc.page_content or "", metadata=md))
+                continue
+            md = dict(native.metadata or {})
+            md["source_file"] = filename
+            md["source_page"] = idx
+            md["ocr"] = False
+            md.setdefault("extraction_source", "native_text")
+            md["pdf_extraction"] = "hybrid_native_ocr"
+            merged.append(Document(page_content=native.page_content or "", metadata=md))
+        return merged
+
+    @staticmethod
+    def _ocr_pdf(
+        content: bytes,
+        filename: str,
+        page_indices: Optional[Sequence[int]] = None,
+    ) -> List[Document]:
         """
         OCR fallback for scanned PDFs using PyMuPDF + Tesseract.
+        If page_indices is set, only those 0-based pages are OCR'd.
         """
         try:
             import fitz  # pymupdf
@@ -52,36 +241,240 @@ class DocumentLoaderService:
         documents = []
         try:
             pdf_doc = fitz.open(stream=content, filetype="pdf")
-            for page_num in range(len(pdf_doc)):
-                page = pdf_doc[page_num]
-                # Render page to image at 300 DPI for good OCR quality
-                mat = fitz.Matrix(300 / 72, 300 / 72)
-                pix = page.get_pixmap(matrix=mat)
-                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            try:
+                if page_indices is None:
+                    targets = list(range(len(pdf_doc)))
+                else:
+                    targets = sorted({int(i) for i in page_indices})
+                for page_num in targets:
+                    if page_num < 0 or page_num >= len(pdf_doc):
+                        continue
+                    page = pdf_doc[page_num]
+                    # Render page to image at 300 DPI for good OCR quality
+                    mat = fitz.Matrix(300 / 72, 300 / 72)
+                    pix = page.get_pixmap(matrix=mat)
+                    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
-                # OCR with Russian + English
-                text = pytesseract.image_to_string(img, lang='rus+eng')
-                text = text.strip()
+                    # OCR with Russian + English
+                    text = pytesseract.image_to_string(img, lang="rus+eng")
+                    text = text.strip()
 
-                if text:
-                    documents.append(Document(
-                        page_content=text,
-                        metadata={
-                            "source_file": filename,
-                            "source_page": page_num,
-                            "ocr": True,
-                        }
-                    ))
-            pdf_doc.close()
+                    if text:
+                        documents.append(
+                            Document(
+                                page_content=text,
+                                metadata={
+                                    "source_file": filename,
+                                    "source_page": page_num,
+                                    "ocr": True,
+                                    "ocr_engine": "tesseract",
+                                    "extraction_source": "ocr",
+                                },
+                            )
+                        )
+            finally:
+                pdf_doc.close()
 
             if documents:
                 total_chars = sum(len(d.page_content) for d in documents)
-                logger.info(f"OCR extracted text from {filename}: {len(documents)} pages, {total_chars} chars")
+                logger.info(
+                    "OCR extracted text from %s: %s pages, %s chars",
+                    filename,
+                    len(documents),
+                    total_chars,
+                )
 
         except Exception as e:
             logger.error(f"OCR failed for {filename}: {e}", exc_info=True)
 
         return documents
+
+    @staticmethod
+    def _yandex_ocr_selected_pages(
+        content: bytes,
+        filename: str,
+        page_indices: Sequence[int],
+    ) -> Dict[int, Document]:
+        """
+        OCR only the given pages via Yandex Vision (subset PDF), remap to original indices.
+        """
+        from app.services.yandex_vision_ocr import yandex_vision_ocr_pdf_documents_for_langchain
+
+        ordered = sorted({int(i) for i in page_indices})
+        if not ordered:
+            return {}
+        subset = DocumentLoaderService._pdf_subset_bytes(content, ordered)
+        ocr_docs = yandex_vision_ocr_pdf_documents_for_langchain(
+            subset, filename, use_structured=True
+        )
+        by_page: Dict[int, Document] = {}
+        for local_idx, doc in enumerate(ocr_docs or []):
+            md = dict(doc.metadata or {})
+            raw_local = md.get("source_page", local_idx)
+            try:
+                local_page = int(raw_local)
+            except (TypeError, ValueError):
+                local_page = local_idx
+            if local_page < 0 or local_page >= len(ordered):
+                if local_idx >= len(ordered):
+                    continue
+                local_page = local_idx
+            real_page = ordered[local_page]
+            md["source_page"] = real_page
+            md["source_file"] = filename
+            md["ocr"] = True
+            md["extraction_source"] = "ocr"
+            by_page[real_page] = Document(page_content=doc.page_content or "", metadata=md)
+        return by_page
+
+    @staticmethod
+    def _tesseract_ocr_selected_pages(
+        content: bytes,
+        filename: str,
+        page_indices: Sequence[int],
+    ) -> Dict[int, Document]:
+        docs = DocumentLoaderService._ocr_pdf(content, filename, page_indices=page_indices)
+        return {
+            int((d.metadata or {}).get("source_page", i)): d
+            for i, d in enumerate(docs)
+            if (d.page_content or "").strip()
+        }
+
+    @staticmethod
+    def _ocr_selected_pages_with_fallback(
+        content: bytes,
+        filename: str,
+        page_indices: Sequence[int],
+        *,
+        yandex_err_state: Optional[Dict[str, Any]] = None,
+    ) -> Dict[int, Document]:
+        """Yandex (preferred) → Tesseract for the given page indices only."""
+        state = yandex_err_state if yandex_err_state is not None else {}
+        use_yandex = getattr(config, "PDF_OCR_PREFER_YANDEX", True)
+        if use_yandex:
+            try:
+                from app.services.yandex_vision_ocr import vision_api_configured
+
+                if vision_api_configured():
+                    by_page = DocumentLoaderService._yandex_ocr_selected_pages(
+                        content, filename, page_indices
+                    )
+                    recovered = sum(
+                        1
+                        for i in page_indices
+                        if i in by_page and (by_page[i].page_content or "").strip()
+                    )
+                    if recovered > 0:
+                        logger.info(
+                            "PDF %s: Yandex OCR recovered %s/%s weak pages",
+                            filename,
+                            recovered,
+                            len(list(page_indices)),
+                        )
+                        return by_page
+                    logger.warning(
+                        "PDF %s: Yandex OCR returned no text for weak pages %s",
+                        filename,
+                        list(page_indices),
+                    )
+                else:
+                    logger.warning(
+                        "PDF %s: Yandex OCR not configured; Tesseract for weak pages %s",
+                        filename,
+                        list(page_indices),
+                    )
+            except Exception as yv_err:
+                from app.services.yandex_vision_ocr import (
+                    YandexOcrOperationFailedError,
+                    yandex_ocr_is_temporary,
+                    yandex_ocr_quota_or_temporary_message,
+                )
+
+                state["yandex_rate_limited"] = yandex_ocr_is_temporary(yv_err)
+                state["yandex_op_failed"] = isinstance(yv_err, YandexOcrOperationFailedError)
+                state["yv_err"] = yv_err
+                logger.warning(
+                    "PDF %s: Yandex OCR failed for weak pages (%s); Tesseract fallback",
+                    filename,
+                    yv_err,
+                )
+                if state.get("yandex_rate_limited"):
+                    logger.warning(
+                        "PDF %s: %s",
+                        filename,
+                        yandex_ocr_quota_or_temporary_message(yv_err),
+                    )
+
+        return DocumentLoaderService._tesseract_ocr_selected_pages(
+            content, filename, page_indices
+        )
+
+    @staticmethod
+    def _try_hybrid_native_ocr(
+        content: bytes,
+        filename: str,
+        native_docs: List[Document],
+    ) -> Optional[List[Document]]:
+        """
+        Mixed PDF path: keep digital pages, OCR only scan-like pages.
+        Returns merged docs, or None if hybrid is not applicable / disabled / failed.
+        """
+        if not bool(getattr(config, "PDF_MIXED_PAGE_OCR_ENABLED", True)):
+            return None
+        if not native_docs:
+            return None
+
+        page_signals = DocumentLoaderService._inspect_pdf_page_signals(content)
+        DocumentLoaderService._enrich_native_docs_from_fitz(
+            native_docs, page_signals, filename=filename
+        )
+        weak_pages = DocumentLoaderService._pages_needing_ocr(native_docs, page_signals)
+        if not weak_pages:
+            return None
+
+        strong_pages = [
+            i
+            for i, d in enumerate(native_docs)
+            if i not in weak_pages and (d.page_content or "").strip()
+        ]
+        # Pure scan (no recoverable native pages): let the full-document OCR path handle it.
+        if not strong_pages:
+            logger.info(
+                "PDF %s: all non-blank pages need OCR (%s) — using full-document OCR path",
+                filename,
+                weak_pages,
+            )
+            return None
+
+        logger.info(
+            "PDF %s: mixed native/scan — OCR pages %s (keep native %s)",
+            filename,
+            [p + 1 for p in weak_pages],
+            [p + 1 for p in strong_pages],
+        )
+        ocr_by_page = DocumentLoaderService._ocr_selected_pages_with_fallback(
+            content, filename, weak_pages
+        )
+        recovered = [i for i in weak_pages if i in ocr_by_page and (ocr_by_page[i].page_content or "").strip()]
+        if not recovered:
+            logger.warning(
+                "PDF %s: hybrid OCR recovered 0/%s weak pages — falling back to full OCR",
+                filename,
+                len(weak_pages),
+            )
+            return None
+
+        merged = DocumentLoaderService._merge_native_with_page_ocr(
+            native_docs, ocr_by_page, filename=filename
+        )
+        logger.info(
+            "PDF %s: hybrid extraction done — native=%s ocr=%s total_chars=%s",
+            filename,
+            len(strong_pages),
+            len(recovered),
+            sum(len((d.page_content or "").strip()) for d in merged),
+        )
+        return merged
 
     @staticmethod
     def load_pdf(content: bytes, filename: str) -> List[Document]:
@@ -90,38 +483,89 @@ class DocumentLoaderService:
 
         Important:
         - Prefer the native text layer first (fast, deterministic, no OCR costs).
-        - Use OCR (Yandex Vision) only when the PDF is scanned / has no extractable text.
+        - Mixed PDFs (some digital pages + some scans): OCR only weak pages, keep native text.
+        - Fully scanned PDFs: Yandex Vision, then Tesseract fallback.
         """
         try:
             # Fallback #1: native text layer via PyPDF
             yandex_rate_limited = False
             yandex_op_failed = False
+            yv_err = None
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
                 tmp_file.write(content)
                 tmp_path = tmp_file.name
             try:
                 loader = PyPDFLoader(tmp_path)
                 documents = loader.load()
-                for doc in documents:
+                for idx, doc in enumerate(documents):
                     doc.metadata["source_file"] = filename
                     doc.metadata["extraction_source"] = "native_text"
                     doc.metadata["ocr"] = False
-                    source = doc.metadata.get("source", "")
-                    if source and "page" in source.lower():
+                    # Prefer LangChain's 0-based page index when present.
+                    if doc.metadata.get("page") is not None:
                         try:
-                            page_match = re.search(r"page[=:]?\s*(\d+)", source, re.IGNORECASE)
-                            if page_match:
-                                doc.metadata["source_page"] = int(page_match.group(1))
-                        except Exception as e:
-                            logger.debug("Could not extract page number from source '%s': %s", source, e)
+                            doc.metadata["source_page"] = int(doc.metadata["page"])
+                        except (TypeError, ValueError):
+                            doc.metadata["source_page"] = idx
+                    else:
+                        doc.metadata["source_page"] = idx
+                        source = doc.metadata.get("source", "")
+                        if source and "page" in str(source).lower():
+                            try:
+                                page_match = re.search(
+                                    r"page[=:]?\s*(\d+)", str(source), re.IGNORECASE
+                                )
+                                if page_match:
+                                    # source strings are often 1-based; store 0-based.
+                                    doc.metadata["source_page"] = max(
+                                        0, int(page_match.group(1)) - 1
+                                    )
+                            except Exception as e:
+                                logger.debug(
+                                    "Could not extract page number from source '%s': %s",
+                                    source,
+                                    e,
+                                )
+
                 total_text = "".join((d.page_content or "").strip() for d in documents)
-                if documents and total_text.strip() and DocumentLoaderService._pdf_text_quality_ok(documents):
-                    logger.info(
-                        "PDF %s: native text layer (PyPDFLoader), %s pages — chunker will use Docling AST without OCR",
-                        filename,
-                        len(documents),
+                if documents and total_text.strip():
+                    hybrid = DocumentLoaderService._try_hybrid_native_ocr(
+                        content, filename, documents
                     )
-                    return documents
+                    if hybrid is not None:
+                        return hybrid
+
+                    page_signals = DocumentLoaderService._inspect_pdf_page_signals(content)
+                    DocumentLoaderService._enrich_native_docs_from_fitz(
+                        documents, page_signals, filename=filename
+                    )
+                    weak_pages = DocumentLoaderService._pages_needing_ocr(
+                        documents, page_signals
+                    )
+                    if (
+                        not weak_pages
+                        and DocumentLoaderService._pdf_text_quality_ok(documents)
+                    ):
+                        documents = DocumentLoaderService._normalize_page_docs(
+                            documents,
+                            filename=filename,
+                            default_extraction_source="native_text",
+                        )
+                        for d in documents:
+                            d.metadata["pdf_extraction"] = "native"
+                        logger.info(
+                            "PDF %s: native text layer (PyPDFLoader), %s pages — "
+                            "chunker will use Docling AST without OCR",
+                            filename,
+                            len(documents),
+                        )
+                        return documents
+                    if weak_pages:
+                        logger.info(
+                            "PDF %s: native layer incomplete (weak pages %s) — full OCR path",
+                            filename,
+                            [p + 1 for p in weak_pages],
+                        )
             finally:
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
@@ -155,22 +599,27 @@ class DocumentLoaderService:
                             "PDF %s: Yandex OCR не сконфигурирован, используем локальный OCR fallback.",
                             filename,
                         )
-                except Exception as yv_err:
+                except Exception as err:
                     from app.services.yandex_vision_ocr import (
                         YandexOcrOperationFailedError,
                         yandex_ocr_is_temporary,
                         yandex_ocr_operation_failed_message,
                         yandex_ocr_quota_or_temporary_message,
                     )
-                    yandex_rate_limited = yandex_ocr_is_temporary(yv_err)
-                    yandex_op_failed = isinstance(yv_err, YandexOcrOperationFailedError)
+                    yv_err = err
+                    yandex_rate_limited = yandex_ocr_is_temporary(err)
+                    yandex_op_failed = isinstance(err, YandexOcrOperationFailedError)
                     logger.warning(
                         "PDF %s: Yandex OCR не удался (%s), используем локальный OCR fallback.",
                         filename,
-                        yv_err,
+                        err,
                     )
                     if yandex_rate_limited:
-                        logger.warning("PDF %s: %s", filename, yandex_ocr_quota_or_temporary_message(yv_err))
+                        logger.warning(
+                            "PDF %s: %s",
+                            filename,
+                            yandex_ocr_quota_or_temporary_message(err),
+                        )
 
             # Local OCR fallback (Tesseract). Сканы не гоняем через Docling в лоадере:
             # Yandex/Tesseract текст передаётся в LegalChunkerV2, который пропускает _docling_pre_segmentation.
@@ -186,12 +635,16 @@ class DocumentLoaderService:
             ocr_docs = DocumentLoaderService._ocr_pdf(content, filename)
             if ocr_docs:
                 return ocr_docs
-            if yandex_op_failed:
+            if yandex_op_failed and yv_err is not None:
+                from app.services.yandex_vision_ocr import yandex_ocr_operation_failed_message
+
                 raise ValueError(
                     yandex_ocr_operation_failed_message(yv_err)
                     + " Локальный OCR fallback не дал результата."
                 )
-            if yandex_rate_limited:
+            if yandex_rate_limited and yv_err is not None:
+                from app.services.yandex_vision_ocr import yandex_ocr_quota_or_temporary_message
+
                 raise ValueError(
                     yandex_ocr_quota_or_temporary_message(yv_err)
                     + " Локальный OCR fallback не настроен (pytesseract/pymupdf)."
@@ -202,7 +655,7 @@ class DocumentLoaderService:
         except Exception as e:
             logger.error(f"Error loading PDF {filename}: {e}", exc_info=True)
             raise
-    
+
     @staticmethod
     def load_docx(content: bytes, filename: str) -> List[Document]:
         """

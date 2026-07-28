@@ -3,7 +3,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import pytest
+import asyncio
 
 from app.models.case_file_transaction import CaseFileTransaction
 from app.services.chat.conversation_turn_state import ConversationTurnState
@@ -36,12 +36,11 @@ class _UiState:
     row_search: str = ""
 
 
-@pytest.mark.asyncio
-@patch("app.services.operations_chat_service.run_statement_sql_pipeline")
+@patch("app.services.operations_chat_service.resolve_operations_chat")
 @patch("app.services.operations_chat_service.resolve_turn_execution_contract")
-async def test_stream_analyze_uses_turn_execution_contract(
+def test_stream_analyze_routes_through_resolver(
     mock_contract,
-    mock_pipeline,
+    mock_resolve,
 ):
     service = OperationsChatService(SimpleNamespace())
     service._get_case_for_user = lambda case_id, user_id: SimpleNamespace(id=case_id)  # type: ignore[method-assign]
@@ -67,27 +66,37 @@ async def test_stream_analyze_uses_turn_execution_contract(
         resolver="baseline",
         reason="explicit_question",
     )
-    mock_pipeline.return_value = {
-        "response": "Найдена одна операция.",
-        "citations": [],
-        "outbound_turn_state": {},
-    }
+    mock_resolve.return_value = (
+        {
+            "response": "Найдена одна операция.",
+            "citations": [],
+            "outbound_turn_state": {},
+            "statement_sql_meta": {"resolver": "operations_sql_scope", "row_count": 1},
+        },
+        "factual_list",
+    )
 
-    events = []
-    async for event in service.stream_analyze(
-        "case-1",
-        "user-1",
-        "по всей выписке найди операции больше 10к",
-        "stmt-1",
-        _UiState(value_filters=[], row_search=""),
-    ):
-        events.append(event)
+    async def _run():
+        events = []
+        async for event in service.stream_analyze(
+            "case-1",
+            "user-1",
+            "по всей выписке найди операции больше 10к",
+            "stmt-1",
+            _UiState(value_filters=[], row_search=""),
+        ):
+            events.append(event)
+        return events
+
+    events = asyncio.run(_run())
 
     assert any(event.get("type") == "done" for event in events)
-    _, kwargs = mock_pipeline.call_args
+    _, kwargs = mock_resolve.call_args
     assert kwargs["question"] == "по всей выписке найди операции где сумма была больше 10к рублей"
-    assert kwargs["sql_plan_hints"]["amount_compare"] == "gt"
-    assert kwargs["sql_plan_hints"]["amount_min"] == "10000"
+    assert kwargs["sql_hints"]["amount_compare"] == "gt"
+    assert kwargs["sql_hints"]["amount_min"] == "10000"
+    assert kwargs["rows"] is not None
+    assert len(kwargs["rows"]) == 1
 
 
 def _prior_filtered_scope_evidence() -> PriorTurnEvidence:
@@ -109,12 +118,11 @@ def _prior_filtered_scope_evidence() -> PriorTurnEvidence:
     )
 
 
-@pytest.mark.asyncio
-@patch("app.services.operations_chat_service.run_statement_sql_pipeline")
+@patch("app.services.operations_chat_service.resolve_operations_chat")
 @patch("app.services.operations_chat_service.resolve_turn_execution_contract")
-async def test_stream_analyze_resets_prior_context_when_ui_scope_expands(
+def test_stream_analyze_resets_prior_context_when_ui_scope_expands(
     mock_contract,
-    mock_pipeline,
+    mock_resolve,
 ):
     service = OperationsChatService(SimpleNamespace())
     service._get_case_for_user = lambda case_id, user_id: SimpleNamespace(id=case_id)  # type: ignore[method-assign]
@@ -143,25 +151,33 @@ async def test_stream_analyze_resets_prior_context_when_ui_scope_expands(
         resolver="baseline",
         reason="explicit_question",
     )
-    mock_pipeline.return_value = {
-        "response": "Все операции выписки.",
-        "citations": [],
-        "outbound_turn_state": {"domain": "statement_analytics", "operation": "list"},
-    }
+    mock_resolve.return_value = (
+        {
+            "response": "Все операции выписки.",
+            "citations": [],
+            "outbound_turn_state": {"domain": "statement_analytics", "operation": "list"},
+            "statement_sql_meta": {"resolver": "table_agent", "row_count": 5},
+        },
+        "unknown",
+    )
 
-    events = []
-    async for event in service.stream_analyze(
-        "case-1",
-        "user-1",
-        "что за операции?",
-        "stmt-1",
-        _UiState(value_filters=[], row_search=""),
-    ):
-        events.append(event)
+    async def _run():
+        events = []
+        async for event in service.stream_analyze(
+            "case-1",
+            "user-1",
+            "что за операции?",
+            "stmt-1",
+            _UiState(value_filters=[], row_search=""),
+        ):
+            events.append(event)
+        return events
+
+    events = asyncio.run(_run())
 
     assert any(event.get("type") == "done" for event in events)
     mock_contract.assert_called_once()
     assert mock_contract.call_args.kwargs["prior_evidence"] is None
-    _, kwargs = mock_pipeline.call_args
-    assert kwargs["prior_turn_state"] is None
+    _, kwargs = mock_resolve.call_args
     assert kwargs["conversation_history"] == []
+    assert len(kwargs["rows"]) == 335

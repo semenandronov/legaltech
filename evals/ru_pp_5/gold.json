@@ -1,0 +1,142 @@
+{
+  "title": "RU tabular — 5 платёжных поручений (ИПК)",
+  "case_title": "RU tabular PP×5 honest eval",
+  "source": "01. Онлайн ознакомление/09. Январь 2025/12.01.2024_ИПК",
+  "documents": [
+    {
+      "id": "pp_71",
+      "filename": "Platezhnoe poruchenie 71 1l.pdf",
+      "label": "ПП №71 — логистика"
+    },
+    {
+      "id": "pp_126",
+      "filename": "Platezhnoe poruchenie 126 1 l.pdf",
+      "label": "ПП №126 — аренда май"
+    },
+    {
+      "id": "pp_214",
+      "filename": "Platezhnoe poruchenie 214 1l.pdf",
+      "label": "ПП №214 — аренда июнь"
+    },
+    {
+      "id": "pp_315",
+      "filename": "Platezhnoe poruchenie 315 1l.pdf",
+      "label": "ПП №315 — коммуналка"
+    },
+    {
+      "id": "pp_401",
+      "filename": "Platezhnoe poruchenie 401 1l.pdf",
+      "label": "ПП №401 — коммуналка август"
+    }
+  ],
+  "questions": [
+    {
+      "id": "pp_number",
+      "label": "№ п/п",
+      "difficulty": "easy",
+      "column_type": "text",
+      "prompt": "Номер платёжного поручения."
+    },
+    {
+      "id": "payment_date",
+      "label": "Дата платежа",
+      "difficulty": "easy",
+      "column_type": "date",
+      "prompt": "Дата платежа по платёжному поручению (дата списания / оплаты). Формат YYYY-MM-DD."
+    },
+    {
+      "id": "payer",
+      "label": "Плательщик",
+      "difficulty": "easy",
+      "column_type": "text",
+      "prompt": "Наименование плательщика (кто перечислил деньги)."
+    },
+    {
+      "id": "amount",
+      "label": "Сумма",
+      "difficulty": "medium",
+      "column_type": "currency",
+      "prompt": "Сумма платежа в рублях (число из поля «Сумма» платёжного поручения)."
+    },
+    {
+      "id": "payee",
+      "label": "Получатель",
+      "difficulty": "medium",
+      "column_type": "text",
+      "prompt": "Наименование получателя платежа."
+    },
+    {
+      "id": "payee_inn",
+      "label": "ИНН получателя",
+      "difficulty": "medium",
+      "column_type": "text",
+      "prompt": "ИНН получателя денежных средств. Если в документе не указан — N/A."
+    },
+    {
+      "id": "contract_ref",
+      "label": "Договор в назначении",
+      "difficulty": "hard",
+      "column_type": "text",
+      "prompt": "Номер договора или иное основание из назначения платежа (например КР-0104, 02/2022). Кратко, как в тексте назначения."
+    },
+    {
+      "id": "payment_kind",
+      "label": "За что платёж",
+      "difficulty": "hard",
+      "column_type": "text",
+      "prompt": "Кратко: за что этот платёж по смыслу назначения — аренда помещения, коммунальные услуги, транспорт/логистика или иное (1–4 слова)."
+    }
+  ],
+  "gold": {
+    "pp_71": {
+      "pp_number": "71",
+      "payment_date": "2022-04-11",
+      "payer": "ИП Красноштанова Ольга Борисовна",
+      "amount": "98000",
+      "payee": "ООО Западтранс-Логистика",
+      "payee_inn": "7604368576",
+      "contract_ref": "КР-0104",
+      "payment_kind": "транспорт"
+    },
+    "pp_126": {
+      "pp_number": "126",
+      "payment_date": "2022-05-13",
+      "payer": "ИП Красноштанова Ольга Борисовна",
+      "amount": "40000",
+      "payee": "ИП Чикишева Татьяна Александровна",
+      "payee_inn": "380805294578",
+      "contract_ref": "02/2022",
+      "payment_kind": "аренда"
+    },
+    "pp_214": {
+      "pp_number": "214",
+      "payment_date": "2022-06-09",
+      "payer": "ИП Красноштанова Ольга Борисовна",
+      "amount": "40000",
+      "payee": "ИП Чикишева Татьяна Александровна",
+      "payee_inn": "380805294578",
+      "contract_ref": "02/2022",
+      "payment_kind": "аренда"
+    },
+    "pp_315": {
+      "pp_number": "315",
+      "payment_date": "2022-07-19",
+      "payer": "ИП Красноштанова Ольга Борисовна",
+      "amount": "3129",
+      "payee": "ИП Чикишева Татьяна Александровна",
+      "payee_inn": "380805294578",
+      "contract_ref": "02/2022",
+      "payment_kind": "коммунальные"
+    },
+    "pp_401": {
+      "pp_number": "401",
+      "payment_date": "2022-08-25",
+      "payer": "ИП Красноштанова Ольга Борисовна",
+      "amount": "1841",
+      "payee": "ИП Чикишева Татьяна Александровна",
+      "payee_inn": "380805294578",
+      "contract_ref": "02/2022",
+      "payment_kind": "коммунальные"
+    }
+  }
+}

@@ -1,9 +1,14 @@
 """Unit tests for async Yandex embedding HTTP engine."""
+from __future__ import annotations
+
+import asyncio
+import time
 from unittest.mock import MagicMock, patch
 
 import app.services.yandex_embedding_http as http_mod
 from app.services.yandex_embedding_http import (
     YandexEmbeddingHttpEngine,
+    _AdmissionControl,
     parse_openai_embeddings_json,
     reset_embedding_http_engine_for_tests,
 )
@@ -74,7 +79,9 @@ def test_priority_embed_processed_when_first_job():
     model = "emb://fld/text-search-query/latest"
     vector = [0.3] + [0.0] * 255
 
-    async def _fake_fetch(_client, _url, *, model, text, attempt=0):
+    async def _fake_fetch(_client, _url, *, model, text, attempt=0, acquire_rps=None):
+        if acquire_rps is not None:
+            await acquire_rps()
         return vector
 
     with patch.object(engine, "_fetch_embedding", side_effect=_fake_fetch):
@@ -90,5 +97,89 @@ def test_batch_cap_respects_max_parallel_burst(monkeypatch):
     monkeypatch.setattr(http_mod.config, "YANDEX_EMBEDDING_RPS_LIMIT", 100, raising=False)
     monkeypatch.setattr(http_mod.config, "YANDEX_EMBEDDING_MAX_PARALLEL_REQUESTS", 8, raising=False)
     assert http_mod._batch_cap() == 8
+    assert http_mod._max_in_flight() == 8
     monkeypatch.setattr(http_mod.config, "YANDEX_EMBEDDING_MAX_PARALLEL_REQUESTS", 200, raising=False)
     assert http_mod._batch_cap() == 99
+    assert http_mod._max_in_flight() == 100
+
+
+def test_admission_token_bucket_refills(monkeypatch):
+    async def _run():
+        admission = _AdmissionControl(rps=10.0, max_in_flight=2)
+        # Drain initial burst capacity.
+        for _ in range(10):
+            await admission.acquire_rps()
+        t0 = time.monotonic()
+        await admission.acquire_rps()
+        elapsed = time.monotonic() - t0
+        assert elapsed >= 0.05
+
+    asyncio.run(_run())
+
+
+def test_slow_request_does_not_block_siblings(monkeypatch):
+    """
+    Continuous pipeline regression: a slow in-flight request must not stall
+    siblings that can take a free concurrency slot.
+
+    With max_in_flight=2 and jobs [slow, fast, slow, fast]:
+    - old batch-gather: ~2 * slow (~0.8s)
+    - pipeline: both slows overlap → ~1 * slow (~0.4s)
+    """
+    monkeypatch.setattr(http_mod.config, "YANDEX_EMBEDDING_RPS_LIMIT", 100, raising=False)
+    monkeypatch.setattr(http_mod.config, "YANDEX_EMBEDDING_MAX_PARALLEL_REQUESTS", 2, raising=False)
+
+    reset_embedding_http_engine_for_tests()
+    engine = YandexEmbeddingHttpEngine()
+    model = "emb://fld/text-search-doc/latest"
+    slow_delay = 0.35
+
+    async def _fake_fetch(_client, _url, *, model, text, attempt=0, acquire_rps=None):
+        if acquire_rps is not None:
+            await acquire_rps()
+        if text.startswith("slow"):
+            await asyncio.sleep(slow_delay)
+        return [float(len(text) % 7)] + [0.0] * 255
+
+    texts = ["slow-0", "fast-1", "slow-2", "fast-3"]
+
+    with patch.object(engine, "_fetch_embedding", side_effect=_fake_fetch):
+        t0 = time.monotonic()
+        out = engine.embed_texts(model=model, texts=texts)
+        elapsed = time.monotonic() - t0
+
+    assert len(out) == 4
+    # Pipeline should finish close to one slow delay, not two serialised batches.
+    assert elapsed < slow_delay * 1.75, f"pipeline still head-of-line blocked: {elapsed:.3f}s"
+    assert elapsed >= slow_delay * 0.8
+
+
+def test_max_in_flight_is_respected(monkeypatch):
+    monkeypatch.setattr(http_mod.config, "YANDEX_EMBEDDING_RPS_LIMIT", 100, raising=False)
+    monkeypatch.setattr(http_mod.config, "YANDEX_EMBEDDING_MAX_PARALLEL_REQUESTS", 3, raising=False)
+
+    reset_embedding_http_engine_for_tests()
+    engine = YandexEmbeddingHttpEngine()
+    model = "emb://fld/text-search-doc/latest"
+
+    current = 0
+    peak = 0
+    lock = asyncio.Lock()
+
+    async def _fake_fetch(_client, _url, *, model, text, attempt=0, acquire_rps=None):
+        nonlocal current, peak
+        if acquire_rps is not None:
+            await acquire_rps()
+        async with lock:
+            current += 1
+            peak = max(peak, current)
+        await asyncio.sleep(0.05)
+        async with lock:
+            current -= 1
+        return [0.1] + [0.0] * 255
+
+    with patch.object(engine, "_fetch_embedding", side_effect=_fake_fetch):
+        engine.embed_texts(model=model, texts=[f"t{i}" for i in range(12)])
+
+    assert peak <= 3
+    assert peak >= 2

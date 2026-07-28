@@ -193,6 +193,8 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   const searchInputRef = useRef<HTMLInputElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [pageTextItems, setPageTextItems] = useState<any[]>([])
+  /** True after pdf.js getTextContent for the current page (even if the page is a scan with 0 strings). */
+  const [pageTextReady, setPageTextReady] = useState(false)
   const [highlightItemIndices, setHighlightItemIndices] = useState<number[]>([])
   const [derivedPageBBox, setDerivedPageBBox] = useState<{ width: number; height: number } | null>(null)
   const pdfDocRef = useRef<{ getPage: (n: number) => Promise<any>; numPages: number } | null>(null)
@@ -222,6 +224,7 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
 
   useEffect(() => {
     setPageTextItems([])
+    setPageTextReady(false)
     setHighlightItemIndices([])
     setDerivedPageBBox(null)
   }, [pageNumber, fileId])
@@ -261,6 +264,7 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   const handleGetTextSuccess = (textContent: any) => {
     const items = (textContent.items as any[]).filter(item => 'str' in item)
     setPageTextItems(items)
+    setPageTextReady(true)
   }
 
   const bboxRegionsToDraw = useMemo((): PdfBBoxCompat[] => {
@@ -322,7 +326,13 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
       setHighlightItemIndices([])
       return
     }
-    if (highlightSearchStrings.length === 0 || pageTextItems.length === 0) {
+    if (!preferTextHighlight) {
+      setHighlightItemIndices([])
+      return
+    }
+    // Wait until text layer is known. Empty layer = scan/OCR PDF → no text search.
+    if (!pageTextReady) return
+    if (pageTextItems.length === 0) {
       setHighlightItemIndices([])
       return
     }
@@ -341,7 +351,7 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
       return a.tx - b.tx
     })
 
-    const MAX_WINDOW = Math.min(rawItems.length, 400)
+    const MAX_WINDOW = Math.min(rawItems.length, 120)
 
     /** Не полагаемся на norm целой страницы — только скользящие окна (как в скане по документу). */
     let matchedRaw = ''
@@ -349,7 +359,10 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
     let bestJ = -1
 
     rawLoop: for (const raw of highlightSearchStrings) {
-      const probes = [...buildPdfCitationProbes(raw)].sort((a, b) => b.length - a.length)
+      // Few longest probes first — enough for citation match, cheap on main thread.
+      const probes = [...buildPdfCitationProbes(raw)]
+        .sort((a, b) => b.length - a.length)
+        .slice(0, 8)
       for (const pr of probes) {
         let localBest = Infinity
         let li = -1
@@ -404,7 +417,7 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
       const mark = containerRef.current?.querySelector('[data-pdf-mark]')
       if (mark) mark.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }, 300)
-  }, [hasCitationBbox, highlightSearchStrings, pageTextItems, pageNumber])
+  }, [hasCitationBbox, preferTextHighlight, highlightSearchStrings, pageTextItems, pageTextReady, pageNumber])
 
   useEffect(() => {
     if (!useBboxHighlight) return
@@ -447,8 +460,10 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
     let cancelled = false
 
     const runScan = async () => {
+      let pagesWithText = 0
+      let pagesChecked = 0
       for (const raw of highlightSearchStrings) {
-        const probes = buildPdfCitationProbes(raw)
+        const probes = buildPdfCitationProbes(raw).slice(0, 8)
         if (probes.length === 0) continue
         for (let p = 1; p <= n; p++) {
           if (cancelled) return
@@ -458,6 +473,13 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
             const items = (textContent.items as any[]).filter(
               (item) => item && typeof item.str === 'string' && item.str.trim(),
             )
+            pagesChecked += 1
+            if (items.length === 0) {
+              // Image-only page. If the first pages have no text layer, stop — text search cannot work.
+              if (pagesChecked >= 2 && pagesWithText === 0) return
+              continue
+            }
+            pagesWithText += 1
             const joined = normPageTextFromPdfItems(items)
             for (const pr of probes) {
               if (joined.includes(pr)) {
@@ -478,6 +500,11 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
 
     const hasPageHint = highlightPageProp != null && highlightPageProp >= 1
 
+    // Hinted page with empty text layer → do not burn CPU scanning the whole file.
+    if (hasPageHint && pageTextReady && pageTextItems.length === 0) {
+      return
+    }
+
     if (!hasPageHint) {
       void runScan()
       return () => {
@@ -491,11 +518,12 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
       }
     }
 
-    const textLayerKnown = pageTextItems.length > 0
+    const textLayerKnown = pageTextReady
     const delayMs = textLayerKnown ? 450 : 900
     const t = window.setTimeout(() => {
       if (cancelled) return
       if (highlightMatchRef.current) return
+      if (pageTextReady && pageTextItems.length === 0) return
       void runScan()
     }, delayMs)
 
@@ -506,14 +534,14 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   }, [
     expandHighlightSearchAllPages,
     highlightSearchStrings,
-    highlightPageProp,
     highlightBBox,
     highlightBBoxRegions,
+    highlightPageProp,
     numPages,
-    fileId,
     pageNumber,
-    pageTextItems,
-    highlightItemIndices,
+    pageTextItems.length,
+    pageTextReady,
+    fileId,
   ])
 
   const customTextRenderer = ({ str, itemIndex }: { str: string; itemIndex: number }) => {

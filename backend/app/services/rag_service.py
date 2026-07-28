@@ -199,6 +199,20 @@ class RAGService:
                 except (TypeError, ValueError):
                     return None
 
+            # Docling l/t/r/b (coord origin may flip t/b)
+            left = value.get("l")
+            top = value.get("t")
+            right = value.get("r")
+            bottom = value.get("b")
+            if None not in (left, top, right, bottom):
+                try:
+                    wf = abs(float(right) - float(left))
+                    hf = abs(float(bottom) - float(top))
+                    if wf > 0 and hf > 0:
+                        return {"width": wf, "height": hf}
+                except (TypeError, ValueError):
+                    return None
+
         return None
 
     @staticmethod
@@ -561,6 +575,7 @@ class RAGService:
         pipeline_micro_only: bool = False,
         bm25_sync: Optional[bool] = None,
         query_embedding: Optional[List[float]] = None,
+        exact_query: Optional[str] = None,
     ) -> List[Document]:
         """
         Retrieve relevant context for a query using Yandex Index
@@ -578,26 +593,29 @@ class RAGService:
             metadata_filter: Optional pgvector JSONB filter (file_id, doc_type, instrument_id, …)
             pipeline_micro_only: Case-assistant/tabular path: skip macro recall, search micro+docling only
             bm25_sync: When False, never block on BM25 build (schedule background prewarm instead).
+            exact_query: Optional clause anchor for boundary-exact hybrid recall.
             
         Returns:
             List of relevant Document objects
         """
         # Проверить кэш RAG перед выполнением запроса
+        # Skip cache when exact_query is set — cache key is query-only.
         try:
-            from app.services.langchain_agents.rag_cache import get_rag_cache
-            rag_cache = get_rag_cache()
-            
-            cached_docs = rag_cache.get(
-                case_id=case_id,
-                query=query,
-                k=k,
-                retrieval_strategy=retrieval_strategy if not use_iterative and not use_hybrid else None,
-                doc_types=doc_types
-            )
-            
-            if cached_docs:
-                logger.debug(f"[RAGService] Cache hit for query: {query[:50]}... (case: {case_id})")
-                return cached_docs
+            if not (exact_query and str(exact_query).strip()):
+                from app.services.langchain_agents.rag_cache import get_rag_cache
+                rag_cache = get_rag_cache()
+                
+                cached_docs = rag_cache.get(
+                    case_id=case_id,
+                    query=query,
+                    k=k,
+                    retrieval_strategy=retrieval_strategy if not use_iterative and not use_hybrid else None,
+                    doc_types=doc_types
+                )
+                
+                if cached_docs:
+                    logger.debug(f"[RAGService] Cache hit for query: {query[:50]}... (case: {case_id})")
+                    return cached_docs
         except Exception as cache_error:
             logger.debug(f"RAG cache check failed (non-critical): {cache_error}")
         
@@ -610,12 +628,14 @@ class RAGService:
             # Product requirement: hybrid must be reliable for "anchor/address" queries
             # like "пункт 6.8", "ст. 15", "6.8.1". Dense similarity is not sufficient.
             q = (query or "").strip()
-            has_numeric_anchor = False
-            try:
-                import re as _re
-                has_numeric_anchor = bool(_re.search(r"\b\d+(?:[.,]\d+)+\b", q))
-            except Exception:
-                has_numeric_anchor = False
+            exact_q = (exact_query or "").strip() or None
+            has_numeric_anchor = bool(exact_q)
+            if not has_numeric_anchor:
+                try:
+                    import re as _re
+                    has_numeric_anchor = bool(_re.search(r"\b\d+(?:[.,]\d+)+\b", q))
+                except Exception:
+                    has_numeric_anchor = False
             if has_numeric_anchor:
                 use_hybrid = True
 
@@ -637,6 +657,7 @@ class RAGService:
                     pipeline_micro_only=pipeline_micro_only,
                     bm25_sync=bm25_sync,
                     query_embedding=query_embedding,
+                    exact_query=exact_q,
                 )
                 # Filter out None or invalid documents
                 valid_docs = [doc for doc in docs if doc is not None and hasattr(doc, 'page_content')]
@@ -762,6 +783,7 @@ class RAGService:
         pipeline_micro_only: bool = False,
         bm25_sync: Optional[bool] = None,
         query_embedding: Optional[List[float]] = None,
+        exact_query: Optional[str] = None,
     ) -> List[Document]:
         funnel = {
             "strategy": "hybrid_macro_micro",
@@ -772,6 +794,7 @@ class RAGService:
             "fallback_global_micro_used": 0,
             "docling_exact_added": 0,
             "final": 0,
+            "exact_query": (str(exact_query).strip()[:64] if exact_query else None),
         }
         base_filter = _merge_retrieval_metadata_filter(metadata_filter, file_ids=file_ids)
 
@@ -788,12 +811,14 @@ class RAGService:
                 )
 
         # "Anchor/address" queries must have deterministic recall on docling chunks.
-        is_anchor_query = False
-        try:
-            import re as _re
-            is_anchor_query = bool(_re.search(r"\b\d+(?:[.,]\d+)+\b", (query or "").strip()))
-        except Exception:
-            is_anchor_query = False
+        exact_q = (exact_query or "").strip() or None
+        is_anchor_query = bool(exact_q)
+        if not is_anchor_query:
+            try:
+                import re as _re
+                is_anchor_query = bool(_re.search(r"\b\d+(?:[.,]\d+)+\b", (query or "").strip()))
+            except Exception:
+                is_anchor_query = False
 
         macro_docs: List[Document] = []
         micro_docs: List[Document] = []
@@ -811,6 +836,7 @@ class RAGService:
                 metadata_filter=base_filter,
                 bm25_sync=bm25_sync,
                 query_embedding=query_embedding,
+                exact_query=exact_q,
             )
             merged_micro = list(micro_docs)
             funnel["initial_micro"] = len(micro_docs)
@@ -825,6 +851,7 @@ class RAGService:
                 metadata_filter=base_filter,
                 bm25_sync=bm25_sync,
                 query_embedding=query_embedding,
+                exact_query=exact_q,
             )
             micro_docs = self.document_processor.hybrid_search(
                 case_id=case_id,
@@ -836,6 +863,7 @@ class RAGService:
                 metadata_filter=base_filter,
                 bm25_sync=bm25_sync,
                 query_embedding=query_embedding,
+                exact_query=exact_q,
             )
             macro_ids = [
                 str((d.metadata or {}).get("macro_id") or (d.metadata or {}).get("chunk_id") or "")
@@ -858,6 +886,7 @@ class RAGService:
                     metadata_filter=scoped_filter,
                     bm25_sync=bm25_sync,
                     query_embedding=query_embedding,
+                    exact_query=exact_q,
                 )
             funnel["initial_macro"] = len(macro_docs)
             funnel["initial_micro"] = len(micro_docs)
@@ -897,6 +926,7 @@ class RAGService:
                     metadata_filter=base_filter,
                     bm25_sync=bm25_sync,
                     query_embedding=query_embedding,
+                    exact_query=exact_q,
                 )
             except Exception:
                 docling_exact_docs = []
@@ -919,6 +949,7 @@ class RAGService:
                     metadata_filter=base_filter,
                     bm25_sync=bm25_sync,
                     query_embedding=query_embedding,
+                    exact_query=exact_q,
                 )
             except Exception:
                 combined = []

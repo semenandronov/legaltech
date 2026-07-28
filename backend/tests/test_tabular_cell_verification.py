@@ -2,7 +2,6 @@
 
 from types import SimpleNamespace
 
-import pytest
 from langchain_core.documents import Document
 
 from app.services.tabular_cell_verification import (
@@ -15,6 +14,7 @@ from app.services.tabular_extraction_policy import (
     count_nonempty_cells,
     is_na_cell_value,
 )
+from app.services.tabular_quote_then_answer import quote_grounded_in_corpus
 from app.services.tabular_review_models import TabularCellExtractionModel
 
 
@@ -53,7 +53,12 @@ def test_quote_exists_in_document():
     assert not quote_exists_in_document("несуществующая цитата xyz", f)
 
 
-def test_assess_evidence_chunk_provenance():
+def test_quote_grounded_in_corpus_tolerates_whitespace():
+    corpus = "Material  Adverse\nEffect means any change"
+    assert quote_grounded_in_corpus("Material Adverse Effect means any change", corpus)
+
+
+def test_assess_evidence_chunk_provenance_alone_is_insufficient():
     result = TabularCellExtractionModel(
         cell_value="Договор",
         reasoning="r",
@@ -61,7 +66,8 @@ def test_assess_evidence_chunk_provenance():
     )
     docs = [Document(page_content="x", metadata={"char_start": 0, "char_end": 50})]
     ev = assess_evidence(result, _file(), docs)
-    assert ev.has_sufficient_evidence
+    assert not ev.has_sufficient_evidence
+    assert ev.has_chunk_provenance
 
 
 def test_date_column_with_grounded_iso_passes_evidence(monkeypatch):
@@ -111,7 +117,7 @@ def test_fact_column_without_evidence_forced_to_na(monkeypatch):
     assert "missing_evidence" in outcome.issues
 
 
-def test_text_column_without_evidence_keeps_value_but_needs_review(monkeypatch):
+def test_text_column_without_evidence_forced_to_na(monkeypatch):
     monkeypatch.setattr(
         "app.services.tabular_extraction_policy.config.TABULAR_EVIDENCE_REQUIRED",
         True,
@@ -129,10 +135,33 @@ def test_text_column_without_evidence_keeps_value_but_needs_review(monkeypatch):
         file=_file("нет совпадений в тексте"),
         included_docs=[],
     )
-    assert outcome.needs_review
-    assert not outcome.forced_na
-    assert outcome.result.cell_value == "Краткое описание документа"
-    assert outcome.result.confidence <= 0.45
+    assert outcome.forced_na
+    assert outcome.result.cell_value == "N/A"
+    assert "missing_evidence" in outcome.issues
+
+
+def test_yes_no_with_ungrounded_citation_forced_to_na(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.tabular_extraction_policy.config.TABULAR_EVIDENCE_REQUIRED",
+        True,
+        raising=False,
+    )
+    result = TabularCellExtractionModel(
+        cell_value="Да",
+        verbatim_extract="выдуманная цитата которой нет в документе совсем",
+        reasoning="модель сослалась мимо",
+        column_type="yes_no",
+        confidence=0.9,
+        source_references=[{"text": "выдуманная цитата которой нет в документе совсем"}],
+    )
+    outcome = apply_evidence_first_policy(
+        result,
+        column=_column("yes_no"),
+        file=_file("Material Adverse Effect means a material adverse effect"),
+        included_docs=[],
+    )
+    assert outcome.forced_na
+    assert outcome.result.cell_value == "N/A"
 
 
 def test_evidence_from_grounded_quote_passes_fact_column(monkeypatch):
@@ -159,3 +188,29 @@ def test_evidence_from_grounded_quote_passes_fact_column(monkeypatch):
     assert not outcome.forced_na
     assert not outcome.needs_review
     assert outcome.result.cell_value == "Договор поставки"
+
+
+def test_evidence_grounded_in_retrieval_context_passes(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.tabular_extraction_policy.config.TABULAR_EVIDENCE_REQUIRED",
+        True,
+        raising=False,
+    )
+    quote = "Change in Law shall not constitute a Material Adverse Effect"
+    result = TabularCellExtractionModel(
+        cell_value="Да",
+        verbatim_extract=quote,
+        reasoning="carveout",
+        column_type="yes_no",
+        confidence=0.9,
+        source_references=[{"text": quote}],
+    )
+    docs = [Document(page_content=f"Section 1.1 Definitions. {quote}. End.")]
+    outcome = apply_evidence_first_policy(
+        result,
+        column=_column("yes_no"),
+        file=_file("full file text without this quote"),
+        included_docs=docs,
+    )
+    assert not outcome.forced_na
+    assert outcome.result.cell_value == "Да"

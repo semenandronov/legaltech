@@ -1,12 +1,15 @@
 """LegalChunkerV2 — Docling-aware двухуровневый chunker (macro/micro).
 
-Восстанавливает контракт `v2.1` из `backend/docs/LEGAL_CHUNKING_CONTRACT.md`:
+Восстанавливает контракт `v2.2` из `backend/docs/LEGAL_CHUNKING_CONTRACT.md`:
 
-- macro: section-level блоки (1100–1400 chars) для широкого контекста.
-- micro: clause-level блоки (240–320 chars) для точного цитирования.
+- macro: size-window внутри hard-раздела (для эмбеддингов).
+- micro: clause-level блоки для поиска и цитирования/bbox.
+- section_root_id: логический parent для LLM (весь hard-раздел).
+- Инвариант: каждый micro имеет parent_macro_id и section_root_id.
 
 Pre-segmentation работает напрямую по AST DoclingDocument (sections, paragraphs,
-list items, tables). Для не-Docling форматов (TXT, прочее) — fallback на
+list items, tables). Для OCR-сканов — блоки Yandex Vision с layout/legal headings.
+Для не-Docling форматов (TXT, прочее) — fallback на
 RecursiveCharacterTextSplitter с legal-сепараторами.
 
 Все чанки получают набор полей метаданных, описанный в контракте:
@@ -41,6 +44,10 @@ from app.services.docling_table_geometry import (
     export_table_item_markdown,
     geometry_table_to_markdown,
     shard_geometry_table,
+)
+from app.services.file_char_basis import (
+    CHAR_BASIS_LEGAL_CHUNKER,
+    attach_char_basis,
 )
 
 logger = logging.getLogger(__name__)
@@ -134,6 +141,49 @@ _SECTION_HEAD_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Numbered openers: "1. …", "1.1. …", "1.1.1. …"
+_NUMBERED_CLAUSE_HEAD_RE = re.compile(
+    r"^\s*(?P<num>\d+(?:\.\d+){0,3})\.\s+(?P<body>\S.*)$",
+)
+
+# Legal keyword kinds that always open a new macro parent.
+_HARD_SECTION_KINDS = frozenset(
+    {
+        "часть",
+        "раздел",
+        "глава",
+        "параграф",
+        "§",
+        "статья",
+        "приложение",
+    }
+)
+# Explicit "Пункт"/"Подпункт" words are rarer; treat as soft breadcrumbs unless short title-like.
+_SOFT_SECTION_KINDS = frozenset({"пункт", "подпункт"})
+
+# Compact top-level section titles ("1. ПРЕДМЕТ ДОГОВОРА"), not long prose clauses.
+_MAX_HARD_NUMBERED_TITLE_CHARS = 100
+_MAX_HARD_NUMBERED_TITLE_WORDS = 8
+
+
+@dataclass(frozen=True)
+class _StructureHit:
+    """Detected structural cue on an OCR/text block.
+
+    strength:
+      hard — starts a new macro parent (TITLE, Статья/Раздел/…, compact "1. TITLE").
+      soft — updates section breadcrumbs only (1.1 / long "1. prose…"); never flushes macro.
+    """
+
+    level: int
+    title: str
+    section_number: str
+    strength: str  # "hard" | "soft"
+
+    @property
+    def is_hard(self) -> bool:
+        return self.strength == "hard"
+
 _CLAUSE_KIND_MAP: Dict[str, str] = {
     "часть": "part",
     "раздел": "section",
@@ -194,6 +244,8 @@ class _MacroChunk:
     page_end: Optional[int]
     macro_id: str
     macro_index: int
+    # Hard-section identity: all size-windows inside one legal section share this id.
+    section_root_id: str = ""
     has_table_fragment: bool = False
     prov_items: List[Dict[str, Any]] = field(default_factory=list)
     page_bbox: Optional[Dict[str, float]] = None
@@ -204,7 +256,7 @@ class _MacroChunk:
 # --- Public API ------------------------------------------------------------
 
 class LegalChunkerV2:
-    """Двухуровневый legal-aware chunker (контракт v2.1).
+    """Двухуровневый legal-aware chunker (контракт v2.2).
 
     Использование:
         chunker = LegalChunkerV2()
@@ -218,7 +270,7 @@ class LegalChunkerV2:
         )
     """
 
-    contract_version = "v2.1"
+    contract_version = "v2.2"
 
     def chunk(
         self,
@@ -276,6 +328,9 @@ class LegalChunkerV2:
             raise ValueError(f"LegalChunkerV2: macro layer is empty for {filename}")
 
         micros = _build_micro_chunks(macros, profile, base_metadata)
+        # Small-to-big invariant: every parent must have ≥1 searchable leaf.
+        if not micros:
+            micros = _micros_from_macros_passthrough(macros)
 
         documents: List[Document] = []
         chunk_index = 0
@@ -299,6 +354,7 @@ class LegalChunkerV2:
                 chunk_index=chunk_index,
                 macro_id=macro.macro_id,
                 parent_macro_id=None,
+                section_root_id=macro.section_root_id,
                 doc_id=doc_id,
                 filename=filename,
                 is_table_fragment=bool(getattr(macro, "has_table_fragment", False)),
@@ -309,6 +365,16 @@ class LegalChunkerV2:
             chunk_index += 1
 
         for micro in micros:
+            parent_id = str(micro.get("macro_id") or "").strip()
+            if not parent_id:
+                raise ValueError(
+                    f"LegalChunkerV2: orphan micro without parent_macro_id in {filename}"
+                )
+            section_root = str(micro.get("section_root_id") or "").strip()
+            if not section_root:
+                raise ValueError(
+                    f"LegalChunkerV2: micro without section_root_id in {filename}"
+                )
             md = _build_chunk_metadata(
                 base_metadata=base_metadata,
                 profile=profile,
@@ -324,8 +390,9 @@ class LegalChunkerV2:
                 char_end=micro["char_end"],
                 chunk_text=micro["text"],
                 chunk_index=chunk_index,
-                macro_id=micro["macro_id"],
-                parent_macro_id=micro["macro_id"],
+                macro_id=parent_id,
+                parent_macro_id=parent_id,
+                section_root_id=section_root,
                 doc_id=doc_id,
                 filename=filename,
                 is_table_fragment=bool(micro.get("is_table_fragment", False)),
@@ -335,12 +402,14 @@ class LegalChunkerV2:
             documents.append(Document(page_content=micro["text"], metadata=md))
             chunk_index += 1
 
+        _assert_parent_child_invariant(documents, filename=filename)
+
         _apply_hidden_embedding_context(
             documents,
             enabled=bool(getattr(config, "LEGAL_CHUNK_EMBED_PREFIX_ENABLED", True)),
         )
 
-        return documents
+        return attach_char_basis(documents, full_text or "", CHAR_BASIS_LEGAL_CHUNKER)
 
     def chunk_corpus_norms(
         self,
@@ -393,6 +462,8 @@ class LegalChunkerV2:
         if not documents:
             raise ValueError(f"LegalChunkerV2: norm layer is empty for {filename}")
 
+        basis_text = full_text
+
         if pdf_text and not use_pdf_text_only and not _norm_documents_look_structured(documents):
             logger.info(
                 "[LegalChunkerV2] PDF norm structure weak for %s — retry with PyMuPDF text extract",
@@ -422,12 +493,13 @@ class LegalChunkerV2:
                     or len(documents2) > len(documents)
                 ):
                     documents = documents2
+                    basis_text = full_text2
 
         _apply_hidden_embedding_context(
             documents,
             enabled=bool(getattr(config, "LEGAL_CHUNK_EMBED_PREFIX_ENABLED", True)),
         )
-        return documents
+        return attach_char_basis(documents, basis_text or "", CHAR_BASIS_LEGAL_CHUNKER)
 
 
 # --- Docling AST pre-segmentation -----------------------------------------
@@ -1140,39 +1212,98 @@ def _embedding_breadcrumb_prefix(parent_path: Sequence[str], section_title: str)
     return " > ".join(parts)
 
 
+def _section_retrieval_label(metadata: Dict[str, Any]) -> str:
+    """
+    Deterministic hard-section label for retrieval (no LLM).
+
+    Prefer explicit section_embedding_label (optional LLM/enrichment), else
+    section_title / leading parent_path entry from indexing.
+    """
+    md = metadata or {}
+    custom = str(md.get("section_embedding_label") or "").strip()
+    if custom:
+        return custom[:240]
+
+    title = str(md.get("section_title") or "").strip()
+    number = str(md.get("section_number") or "").strip()
+    path = [str(p).strip() for p in (md.get("parent_path") or []) if str(p).strip()]
+    # Hard section is usually the first path element (or the dedicated title).
+    head = path[0] if path else ""
+    label = title or head
+    if not label:
+        return ""
+    if number and number not in label and not re.match(rf"^\s*{re.escape(number)}\b", label):
+        return f"{number}. {label}"[:240]
+    return label[:240]
+
+
+def build_document_retrieval_text(doc: Document) -> str:
+    """
+    Text used for dense embed + lexical search (FTS/BM25).
+
+    Prefer metadata.embedding_text (section label + body); page_content stays clean
+    for LLM prompts and citations.
+    """
+    md = getattr(doc, "metadata", None) or {}
+    et = md.get("embedding_text")
+    if isinstance(et, str) and et.strip():
+        return et.strip()
+    return (getattr(doc, "page_content", None) or "") or ""
+
+
 def _apply_hidden_embedding_context(documents: List[Document], *, enabled: bool) -> None:
-    """Мутирует metadata: embedding_text = префикс + page_content; page_content без изменений."""
+    """
+    Mutate metadata: embedding_text = retrieval label + page_content.
+
+    page_content is unchanged (LLM / citations / bbox). embedding_text is what
+    dense embeddings and lexical search must use so queries like «предмет договора»
+    hit clause micros that never repeat the section heading in the body.
+    """
     if not enabled or not documents:
         return
     for d in documents:
         md = dict(d.metadata or {})
+        body = d.page_content or ""
         inst = str(md.get("instrument_short_name") or "").strip()
+        section_label = _section_retrieval_label(md)
         path = _embedding_breadcrumb_prefix(
             md.get("parent_path") or [],
             str(md.get("section_title") or ""),
         )
-        body = d.page_content or ""
-        # Hidden context should reduce cross-instrument noise: include act short name when available.
-        ctx_parts = []
+
+        ctx_lines: List[str] = []
         if inst:
-            ctx_parts.append(inst)
-        if path:
-            ctx_parts.append(path)
-        ctx = " > ".join([p for p in ctx_parts if p])
+            ctx_lines.append(f"Документ: {inst}")
+        if section_label:
+            ctx_lines.append(f"Раздел документа: {section_label}")
+            md["section_retrieval_label"] = section_label
+            if path.startswith(section_label) and path != section_label:
+                rest = path[len(section_label) :].lstrip(" >")
+                if rest:
+                    ctx_lines.append(f"Фрагмент в разделе: {rest[:160]}")
+            elif path and path != section_label and not path.startswith(section_label):
+                ctx_lines.append(f"Путь: {path[:200]}")
+        elif path:
+            ctx_lines.append(f"Контекст: {path}")
+
         syn = ""
         if bool(getattr(config, "LEGAL_CORPUS_EMBED_SYNONYM_HINTS_ENABLED", False)):
             iid = str(md.get("instrument_id") or "").strip().lower()
             hint = _EMBED_HINTS.get(iid, "")
             if hint:
-                syn = f" | {hint}"
-        if ctx and syn:
-            md["embedding_text"] = f"[Контекст: {ctx}{syn}]\n{body}"
-        elif ctx:
-            md["embedding_text"] = f"[Контекст: {ctx}]\n{body}"
-        elif syn:
-            md["embedding_text"] = f"[Контекст:{syn}]\n{body}"
-        else:
+                syn = hint
+
+        if not ctx_lines and not syn:
             md.pop("embedding_text", None)
+            md.pop("section_retrieval_label", None)
+            d.metadata = md
+            continue
+
+        header_parts = list(ctx_lines)
+        if syn:
+            header_parts.append(f"Синонимы: {syn}")
+        header = "\n".join(header_parts)
+        md["embedding_text"] = f"[Контекст поиска]\n{header}\n\n{body}"
         d.metadata = md
 
 
@@ -1189,7 +1320,13 @@ def _looks_like_markdown(text: str) -> bool:
 def _yandex_loader_documents_segmentation(
     loader_documents: List[Document],
 ) -> Tuple[List[_Segment], str]:
-    """Build segments from per-page Yandex OCR blocks (bbox + page)."""
+    """Build segments from per-page Yandex OCR blocks (bbox + page).
+
+    Parent hierarchy uses layout TITLE/HEADER when present, else legal
+    section keywords (Статья/Раздел/…) and numbered clause openers as soft
+    breadcrumbs. Parent links for retrieval come from macro→micro, not from
+    these labels alone.
+    """
     from app.services.yandex_ocr_structured import YandexOcrBlock, yandex_blocks_to_prov_items
 
     segments: List[_Segment] = []
@@ -1218,11 +1355,20 @@ def _yandex_loader_documents_segmentation(
                 if not btext:
                     continue
                 layout = str(block.get("layout_type") or "")
-                is_heading = layout.upper().endswith("TITLE") or layout.upper().endswith("HEADER")
-                if is_heading:
-                    while parent_stack and parent_stack[-1][0] >= 2:
+                hit = _classify_ocr_block_heading(btext, layout)
+                # Only HARD boundaries flush macros; SOFT only updates breadcrumbs.
+                is_heading = bool(hit is not None and hit.is_hard)
+                section_title = ""
+                section_number = ""
+                if hit is not None:
+                    while parent_stack and parent_stack[-1][0] >= hit.level:
                         parent_stack.pop()
-                    parent_stack.append((2, btext[:200]))
+                    parent_stack.append((hit.level, hit.title))
+                    section_title = hit.title
+                    section_number = hit.section_number
+                else:
+                    section_title = parent_stack[-1][1] if parent_stack else ""
+                    section_number = _extract_section_number(section_title)
                 segment_text = btext + "\n\n"
                 char_start = offset
                 char_end = char_start + len(segment_text)
@@ -1244,8 +1390,8 @@ def _yandex_loader_documents_segmentation(
                 segments.append(
                     _Segment(
                         text=segment_text,
-                        section_title=btext[:200] if is_heading else (parent_stack[-1][1] if parent_stack else ""),
-                        section_number="",
+                        section_title=section_title,
+                        section_number=section_number,
                         parent_path=[t for _l, t in parent_stack],
                         page_no=page_1based,
                         char_start=char_start,
@@ -1261,11 +1407,12 @@ def _yandex_loader_documents_segmentation(
             char_start = offset
             char_end = char_start + len(segment_text)
             offset = char_end
+            title = parent_stack[-1][1] if parent_stack else ""
             segments.append(
                 _Segment(
                     text=segment_text,
-                    section_title="",
-                    section_number="",
+                    section_title=title,
+                    section_number=_extract_section_number(title),
                     parent_path=[t for _l, t in parent_stack],
                     page_no=page_1based,
                     char_start=char_start,
@@ -1277,6 +1424,95 @@ def _yandex_loader_documents_segmentation(
             full_parts.append(segment_text)
 
     return segments, "".join(full_parts)
+
+
+def _classify_ocr_block_heading(text: str, layout: str) -> Optional[_StructureHit]:
+    """
+    Classify an OCR block as a structural cue (or None).
+
+    Production policy (macro boundaries ≠ breadcrumbs):
+    1. layout TITLE/HEADER → hard parent boundary
+    2. legal keywords Статья/Раздел/Глава/… → hard; Пункт/Подпункт → soft unless compact title
+    3. nested numbers 1.1 / 1.1.1 → soft breadcrumb only
+    4. top-level "1. …" → hard only if the line looks like a section title, else soft
+
+    Parent links for retrieval are always macro_id / parent_macro_id, never these labels alone.
+    """
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return None
+    first_line = cleaned.split("\n", 1)[0].strip()
+    layout_u = (layout or "").upper()
+    if layout_u.endswith("TITLE") or layout_u.endswith("HEADER"):
+        title = first_line[:200]
+        return _StructureHit(
+            level=2,
+            title=title,
+            section_number=_extract_section_number(title) or _numbered_section_number(title),
+            strength="hard",
+        )
+
+    head_m = _SECTION_HEAD_RE.match(first_line)
+    if head_m:
+        kind = (head_m.group("kind") or "").strip()
+        num = (head_m.group("num") or "").strip()
+        level = _heading_level(kind)
+        kind_l = kind.lower()
+        title = first_line[:200]
+        if kind_l in _HARD_SECTION_KINDS:
+            return _StructureHit(level=level, title=title, section_number=num, strength="hard")
+        if kind_l in _SOFT_SECTION_KINDS:
+            strength = "hard" if _looks_like_compact_section_title(first_line) else "soft"
+            return _StructureHit(level=level, title=title, section_number=num, strength=strength)
+        return _StructureHit(level=level, title=title, section_number=num, strength="hard")
+
+    num_m = _NUMBERED_CLAUSE_HEAD_RE.match(first_line)
+    if num_m:
+        num = (num_m.group("num") or "").strip()
+        title = first_line[:200]
+        depth = num.count(".")
+        level = 6 + depth
+        # Nested clauses (1.1, 1.2.3) never open a new macro parent.
+        if depth >= 1:
+            return _StructureHit(level=level, title=title, section_number=num, strength="soft")
+        # Top-level "1. …": hard only for compact section titles, not prose.
+        if _looks_like_compact_section_title(first_line):
+            return _StructureHit(level=level, title=title, section_number=num, strength="hard")
+        return _StructureHit(level=level, title=title, section_number=num, strength="soft")
+
+    return None
+
+
+def _numbered_section_number(title: str) -> str:
+    m = _NUMBERED_CLAUSE_HEAD_RE.match((title or "").strip())
+    if not m:
+        return ""
+    return (m.group("num") or "").strip()
+
+
+def _looks_like_compact_section_title(line: str) -> bool:
+    """
+    Distinguish "1. ПРЕДМЕТ ДОГОВОРА" from "1. Подрядчик обязуется выполнить …".
+
+    Used only for top-level numbered lines without layout TITLE — never for 1.1+.
+    """
+    s = (line or "").strip()
+    if not s or len(s) > _MAX_HARD_NUMBERED_TITLE_CHARS:
+        return False
+    body_m = _NUMBERED_CLAUSE_HEAD_RE.match(s)
+    body = (body_m.group("body") if body_m else s).strip()
+    # Drop leading legal keyword if present for word-count check.
+    body = _SECTION_HEAD_RE.sub("", body, count=1).strip() or body
+    words = [w for w in re.split(r"\s+", body) if w]
+    if not words:
+        return False
+    if len(words) <= _MAX_HARD_NUMBERED_TITLE_WORDS:
+        return True
+    letters = [c for c in body if c.isalpha()]
+    if not letters:
+        return False
+    upper_ratio = sum(1 for c in letters if c.isupper()) / len(letters)
+    return upper_ratio >= 0.7
 
 
 def _heading_aware_markdown_segmentation(text: str) -> Tuple[List[_Segment], str]:
@@ -1423,7 +1659,13 @@ def _build_macro_chunks(
     profile: _Profile,
     base_metadata: Dict[str, Any],
 ) -> List[_MacroChunk]:
-    """Склеиваем сегменты в macro-чанки по target size профиля."""
+    """
+    Build size-window macros inside hard-section roots.
+
+    - Hard heading → new section_root_id (logical parent for LLM expand).
+    - Size/overlap still splits long sections into multiple macros for embedding.
+    - All macros between two hard headings share the same section_root_id.
+    """
 
     target = max(400, int(profile.macro_size))
     overlap = max(0, int(profile.macro_overlap))
@@ -1431,8 +1673,25 @@ def _build_macro_chunks(
     macros: List[_MacroChunk] = []
     buffer: List[_Segment] = []
     buffer_chars = 0
+    current_root_id: Optional[str] = None
+    current_root_title: str = ""
+    current_root_number: str = ""
+
+    def _ensure_root(char_start: int) -> str:
+        nonlocal current_root_id, current_root_title, current_root_number
+        if current_root_id:
+            return current_root_id
+        current_root_id = _section_root_id(
+            base_metadata,
+            title="__preamble__",
+            char_start=int(char_start),
+        )
+        current_root_title = ""
+        current_root_number = ""
+        return current_root_id
 
     def flush(buf: List[_Segment]) -> None:
+        nonlocal current_root_id, current_root_title, current_root_number
         if not buf:
             return
         text = "".join(s.text for s in buf).rstrip("\n") + "\n"
@@ -1441,7 +1700,18 @@ def _build_macro_chunks(
 
         first = buf[0]
         last = buf[-1]
-        section_segment = next((s for s in buf if s.section_title), first)
+        root_id = _ensure_root(first.char_start)
+
+        # Prefer hard-section title for the whole root; fall back to buffer cues.
+        section_segment = next((s for s in buf if s.is_heading and s.section_title), None)
+        if section_segment is None:
+            section_segment = next((s for s in buf if s.section_title), first)
+        title = current_root_title or (section_segment.section_title or "")
+        number = current_root_number or (section_segment.section_number or "")
+        path = list(section_segment.parent_path or [])
+        if title and (not path or path[0] != title):
+            path = [title] + [p for p in path if p != title]
+
         macro_index = len(macros)
         macro_id = _macro_id(base_metadata, macro_index, first.char_start)
 
@@ -1463,13 +1733,14 @@ def _build_macro_chunks(
                 text=text,
                 char_start=macro_cs,
                 char_end=macro_ce,
-                section_title=section_segment.section_title or "",
-                section_number=section_segment.section_number or "",
-                parent_path=list(section_segment.parent_path or []),
+                section_title=title,
+                section_number=number,
+                parent_path=path,
                 page_start=first.page_no,
                 page_end=last.page_no,
                 macro_id=macro_id,
                 macro_index=macro_index,
+                section_root_id=root_id,
                 has_table_fragment=bool(has_table_fragment),
                 prov_items=scoped_prov,
                 page_bbox=chunk_page_bbox,
@@ -1480,10 +1751,20 @@ def _build_macro_chunks(
     for seg in segments:
         seg_len = len(seg.text)
 
-        if seg.is_heading and buffer_chars >= max(400, target // 2):
+        # HARD structure boundary: close previous section window, open new root.
+        if seg.is_heading and buffer:
             flush(buffer)
             buffer = []
             buffer_chars = 0
+
+        if seg.is_heading:
+            current_root_id = _section_root_id(
+                base_metadata,
+                title=seg.section_title or seg.text[:120],
+                char_start=int(seg.char_start),
+            )
+            current_root_title = seg.section_title or ""
+            current_root_number = seg.section_number or ""
 
         if buffer_chars + seg_len > target and buffer_chars > 0:
             flush(buffer)
@@ -1568,12 +1849,82 @@ def _build_micro_chunks(
                     "page_start": macro.page_start,
                     "page_end": macro.page_end,
                     "macro_id": macro.macro_id,
+                    "section_root_id": macro.section_root_id,
                     "is_table_fragment": bool(getattr(macro, "has_table_fragment", False)),
                     "prov_items": micro_prov,
                     "page_bbox": macro.page_bbox,
                 }
             )
     return out
+
+
+def _micros_from_macros_passthrough(macros: Sequence[_MacroChunk]) -> List[Dict[str, Any]]:
+    """When splitter yields nothing, each macro becomes its own searchable leaf."""
+    out: List[Dict[str, Any]] = []
+    for macro in macros:
+        text = (macro.text or "").strip()
+        if not text:
+            continue
+        out.append(
+            {
+                "text": macro.text,
+                "char_start": macro.char_start,
+                "char_end": macro.char_end,
+                "section_title": macro.section_title,
+                "section_number": macro.section_number,
+                "parent_path": list(macro.parent_path),
+                "page_start": macro.page_start,
+                "page_end": macro.page_end,
+                "macro_id": macro.macro_id,
+                "section_root_id": macro.section_root_id,
+                "is_table_fragment": bool(getattr(macro, "has_table_fragment", False)),
+                "prov_items": list(macro.prov_items or []),
+                "page_bbox": macro.page_bbox,
+            }
+        )
+    return out
+
+
+def _assert_parent_child_invariant(documents: Sequence[Document], *, filename: str) -> None:
+    """Hard contract: every micro points at an existing macro and shares a section_root."""
+    macro_ids: set[str] = set()
+    section_roots: set[str] = set()
+    micros: List[Document] = []
+    for doc in documents:
+        md = getattr(doc, "metadata", None) or {}
+        level = str(md.get("chunk_level") or "").strip().lower()
+        if level == "macro":
+            mid = str(md.get("macro_id") or "").strip()
+            if mid:
+                macro_ids.add(mid)
+            sid = str(md.get("section_root_id") or "").strip()
+            if not sid:
+                raise ValueError(f"LegalChunkerV2: macro without section_root_id in {filename}")
+            section_roots.add(sid)
+        elif level == "micro":
+            micros.append(doc)
+
+    if macro_ids and not micros:
+        raise ValueError(
+            f"LegalChunkerV2: macros without searchable micro leaves in {filename}"
+        )
+
+    for doc in micros:
+        md = getattr(doc, "metadata", None) or {}
+        pid = str(md.get("parent_macro_id") or "").strip()
+        if not pid:
+            raise ValueError(f"LegalChunkerV2: orphan micro (empty parent) in {filename}")
+        if pid not in macro_ids:
+            raise ValueError(
+                f"LegalChunkerV2: micro parent_macro_id={pid!r} missing macro in {filename}"
+            )
+        sid = str(md.get("section_root_id") or "").strip()
+        if not sid:
+            raise ValueError(f"LegalChunkerV2: micro without section_root_id in {filename}")
+        if sid not in section_roots:
+            raise ValueError(
+                f"LegalChunkerV2: micro section_root_id={sid!r} missing in {filename}"
+            )
 
 
 # --- Metadata builders -----------------------------------------------------
@@ -1589,6 +1940,21 @@ def _macro_id(base_metadata: Dict[str, Any], macro_index: int, char_start: int) 
     digest = hashlib.md5(raw.encode("utf-8")).hexdigest()[:8]
     short = doc_id[:8] if len(doc_id) > 8 else doc_id
     return f"{short}_macro_{macro_index}_{digest}"
+
+
+def _section_root_id(base_metadata: Dict[str, Any], *, title: str, char_start: int) -> str:
+    """Stable id for a hard legal section (shared by all size-macros inside it)."""
+    doc_id = str(
+        base_metadata.get("doc_id")
+        or base_metadata.get("file_id")
+        or base_metadata.get("source_file")
+        or "doc"
+    )
+    norm_title = re.sub(r"\s+", " ", (title or "").strip())[:120]
+    raw = f"{doc_id}|section|{int(char_start)}|{norm_title}"
+    digest = hashlib.md5(raw.encode("utf-8")).hexdigest()[:10]
+    short = doc_id[:8] if len(doc_id) > 8 else doc_id
+    return f"{short}_sec_{digest}"
 
 
 def _extract_section_number(title: str) -> str:
@@ -1673,6 +2039,7 @@ def _build_chunk_metadata(
     is_table_fragment: bool = False,
     prov_items: Optional[List[Dict[str, Any]]] = None,
     page_bbox: Optional[Dict[str, float]] = None,
+    section_root_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     md: Dict[str, Any] = dict(base_metadata or {})
     md["source_file"] = filename
@@ -1692,6 +2059,7 @@ def _build_chunk_metadata(
     md["cross_references"] = _extract_cross_references(chunk_text)
     md["macro_id"] = macro_id or ""
     md["parent_macro_id"] = parent_macro_id or ""
+    md["section_root_id"] = (section_root_id or "").strip()
     md["is_table_fragment"] = bool(is_table_fragment)
     if page_start is not None:
         md["page_start"] = int(page_start)

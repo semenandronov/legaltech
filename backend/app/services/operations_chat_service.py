@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import queue as thread_queue
 from decimal import Decimal
 from typing import Any, AsyncIterator, Dict, List, Literal, Optional, TypedDict
 
@@ -12,25 +14,17 @@ from app.config import config
 from app.models.case import Case
 from app.schemas.operations import OperationsSessionUiState
 from app.services.case_file_transaction_service import CaseFileTransactionService
-from app.services.chat.case_transaction_graph import build_transaction_citations
 from app.services.chat.conversation_turn_state import (
     ConversationTurnState,
     operations_ui_scope_reset_needed,
 )
 from app.services.chat.history_service import ChatHistoryService
-from app.services.chat.statement_sql_executor import execute_statement_sql_plan_on_rows
-from app.services.chat.statement_sql_pipeline import run_statement_sql_pipeline
-from app.services.chat.statement_sql_planner import plan_statement_sql
-from app.services.chat.statement_sql_synthesizer import synthesize_statement_sql_answer
-from app.services.chat.statement_sql_value_grounding import refine_plan_with_rows
-from app.services.chat.statement_table_agent import (
-    run_statement_table_agent,
-    statement_table_agent_enabled,
-)
+from app.services.operations_chat_resolver import resolve_operations_chat
 from app.services.chat.turn_context_evidence import load_prior_turn_evidence_from_turns
 from app.services.chat.turn_execution_contract import resolve_turn_execution_contract
 from app.services.chat.session_context_types import SessionMessageTurn
 from app.services.operations_chat_scope import OperationsChatScope, filter_operations_scope
+from app.utils.database import SessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -42,12 +36,20 @@ def operations_chat_session_id(case_id: str, file_id: str) -> str:
 
 
 class OperationsChatStreamEvent(TypedDict, total=False):
-    type: Literal["text_delta", "done", "error"]
+    type: Literal["text_delta", "done", "error", "assistant_activity"]
     text: str
     answer: str
     citations: List[Dict[str, str]]
     table_stats: Dict[str, int]
     message: str
+    step_id: str
+    phase: str
+    step: int
+    totalSteps: int
+    label: str
+    detail: str
+    content: str
+    status: str
 
 
 class OperationsChatService:
@@ -308,108 +310,73 @@ class OperationsChatService:
         turn_state: Optional[Dict[str, Any]] = None
         returned_rows = 0
 
-        if not scope.has_active_scope_filters:
-            patch = run_statement_sql_pipeline(
-                self.db,
-                case_id=str(case.id),
-                question=effective_question,
-                scope_file_ids=[normalized_file_id],
-                attached_file_ids=[normalized_file_id],
-                sql_plan_hints=sql_hints,
-                prior_turn_state=prior_state.to_dict() if prior_state else None,
-                conversation_history=conversation_history,
-            )
-            if patch:
-                answer = str(patch.get("response") or "").strip()
-                citations = self._ui_citations(list(patch.get("citations") or []))
-                turn_state = (
-                    patch.get("outbound_turn_state")
-                    if isinstance(patch.get("outbound_turn_state"), dict)
-                    else None
-                )
-                returned_rows = len(citations)
+        progress_q: thread_queue.Queue = thread_queue.Queue()
 
-        if not answer:
-            if statement_table_agent_enabled():
-                agent_patch = run_statement_table_agent(
-                    self.db,
+        def _resolve_worker() -> tuple[Optional[Dict[str, Any]], str]:
+            worker_db = SessionLocal()
+            try:
+
+                def on_progress(payload: Dict[str, Any]) -> None:
+                    progress_q.put(payload)
+
+                patch, intent = resolve_operations_chat(
+                    worker_db,
                     case_id=str(case.id),
                     question=effective_question,
                     file_id=normalized_file_id,
                     file_label=scope.file_label,
                     rows=scope.filtered_rows,
                     scope_note=scope.scope_note(),
-                    sql_plan_hints=sql_hints,
+                    sql_hints=sql_hints,
+                    prior_state=prior_state,
                     conversation_history=conversation_history,
-                )
-                if agent_patch and str(agent_patch.get("response") or "").strip():
-                    answer = str(agent_patch.get("response") or "").strip()
-                    citations = self._ui_citations(list(agent_patch.get("citations") or []))
-                    turn_state = (
-                        agent_patch.get("outbound_turn_state")
-                        if isinstance(agent_patch.get("outbound_turn_state"), dict)
-                        else None
-                    )
-                    returned_rows = len(citations)
-                    meta = agent_patch.get("statement_sql_meta")
-                    if isinstance(meta, dict) and meta.get("row_count") is not None:
-                        returned_rows = int(meta.get("row_count") or returned_rows)
-
-        if not answer:
-            plan_result = plan_statement_sql(
-                self.db,
-                case_id=str(case.id),
-                question=effective_question,
-                scope_file_ids=[normalized_file_id],
-                attached_file_ids=[normalized_file_id],
-                sql_plan_hints=sql_hints,
-                prior_turn_state=prior_state.to_dict() if prior_state else None,
-                conversation_history=conversation_history,
-            )
-            if plan_result.plan is None:
-                answer = self._clarify_message(scope.has_active_scope_filters)
-            else:
-                plan = refine_plan_with_rows(
-                    plan_result.plan,
-                    question=effective_question,
-                    rows=scope.filtered_rows,
-                )
-                execution = execute_statement_sql_plan_on_rows(
-                    plan=plan,
-                    rows=scope.filtered_rows,
-                    file_id=normalized_file_id,
-                    file_label=scope.file_label,
-                    question=effective_question,
-                    scope_note=scope.scope_note(),
-                )
-                synthesis = synthesize_statement_sql_answer(
-                    question=effective_question,
-                    plan=plan,
-                    execution=execution,
-                    conversation_history=conversation_history,
-                )
-                answer = synthesis.text.strip()
-                citations = self._ui_citations(
-                    build_transaction_citations(self.db, str(case.id), execution.rows[:20])
-                )
-                returned_rows = len(execution.rows)
-                turn_state = ConversationTurnState(
-                    domain="statement_analytics",
-                    statement_file_id=normalized_file_id,
-                    operation=plan.operation,
-                    date_from=plan.date_from,
-                    date_to=plan.date_to,
-                    on_date=plan.on_date,
-                    time_hint=plan.time_hint,
-                    description_contains=plan.description_contains,
-                    structured_data_plane="sql",
-                    amount_semantics=plan.amount_semantics,
-                    amount_compare=plan.amount_compare,
-                    amount_min=plan.amount_min,
-                    amount_max=plan.amount_max,
                     ui_scope_had_filters=scope.has_active_scope_filters,
-                    topic_file_ids=(normalized_file_id,),
-                ).to_dict()
+                    progress=on_progress,
+                )
+                return patch, intent
+            finally:
+                worker_db.close()
+
+        resolve_task = asyncio.create_task(asyncio.to_thread(_resolve_worker))
+
+        while not resolve_task.done() or not progress_q.empty():
+            while True:
+                try:
+                    payload = progress_q.get_nowait()
+                except thread_queue.Empty:
+                    break
+                yield {"type": "assistant_activity", **payload}
+            if not resolve_task.done():
+                await asyncio.sleep(0.02)
+
+        chat_patch, resolved_intent = await resolve_task
+        if chat_patch and str(chat_patch.get("response") or "").strip():
+            answer = str(chat_patch.get("response") or "").strip()
+            citations = self._ui_citations(list(chat_patch.get("citations") or []))
+            turn_state = (
+                chat_patch.get("outbound_turn_state")
+                if isinstance(chat_patch.get("outbound_turn_state"), dict)
+                else None
+            )
+            returned_rows = len(citations)
+            meta = chat_patch.get("statement_sql_meta")
+            if isinstance(meta, dict) and meta.get("row_count") is not None:
+                returned_rows = int(meta.get("row_count") or returned_rows)
+            logger.info(
+                "[OperationsChat] resolved intent=%s case=%s file=%s resolver=%s",
+                resolved_intent,
+                case.id,
+                normalized_file_id,
+                (meta or {}).get("resolver") if isinstance(meta, dict) else None,
+            )
+        elif not answer:
+            answer = self._clarify_message(scope.has_active_scope_filters)
+            logger.info(
+                "[OperationsChat] clarify case=%s file=%s intent=%s",
+                case.id,
+                normalized_file_id,
+                resolved_intent,
+            )
 
         if turn_state is not None:
             turn_state = {

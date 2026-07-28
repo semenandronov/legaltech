@@ -82,6 +82,11 @@ const PHASE_LABELS: Record<string, string> = {
   tool_call: "Вызов инструмента",
   /** Текст из API (reasoning_content), если провайдер отдаёт */
   model_reasoning: "Рассуждение модели (ответ API)",
+  statement_plan: "План анализа выписки",
+  statement_tool: "Запрос к данным",
+  statement_critique: "Проверка результата",
+  statement_revise: "Уточнение плана",
+  statement_synthesize: "Формулировка ответа",
 };
 
 // ─── Build natural sentence from tool name + input ───────────────────────────

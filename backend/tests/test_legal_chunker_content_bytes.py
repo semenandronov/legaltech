@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.services.legal_chunker import LegalChunkerV2, _Segment
+from app.services.file_char_basis import peel_char_basis
 
 
 def _fake_docling_segment(content_bytes, filename, ext, *, do_ocr=True):
@@ -36,6 +37,7 @@ def test_chunk_skips_docling_when_content_bytes_missing(monkeypatch):
         fallback_text="Раздел 1\n\n" + ("Текст абзаца. " * 20),
         loader_native_text=True,
     )
+    docs, _basis, _name = peel_char_basis(docs)
     assert calls == []
     assert docs
     assert docs[0].metadata.get("preseg_strategy") == "text_recursive_legal"
@@ -60,6 +62,7 @@ def test_chunk_skips_docling_when_loader_did_ocr_even_with_content_bytes(monkeyp
         loader_native_text=False,
         loader_documents=None,
     )
+    docs, _basis, _name = peel_char_basis(docs)
     assert calls == []
     assert docs
     assert str(docs[0].metadata.get("preseg_strategy") or "").startswith("ocr_")
@@ -78,6 +81,7 @@ def test_chunk_uses_docling_when_content_bytes_present(monkeypatch):
         fallback_text="fallback",
         loader_native_text=True,
     )
+    docs, _basis, _name = peel_char_basis(docs)
     assert docs
     assert docs[0].metadata.get("preseg_strategy") == "docling_ast_native_text"
     assert any(d.metadata.get("dl_meta") for d in docs)

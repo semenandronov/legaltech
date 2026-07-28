@@ -603,6 +603,20 @@ async def operations_chat_stream(
                     text = event.get("text") or ""
                     if text:
                         yield SSESerializer.text_delta(text)
+                elif event_type == "assistant_activity":
+                    raw_status = str(event.get("status") or "running")
+                    if raw_status in ("active", "done"):
+                        raw_status = "running" if raw_status == "active" else "completed"
+                    yield SSESerializer.assistant_activity(
+                        step_id=str(event.get("step_id") or "react"),
+                        phase=str(event.get("phase") or "statement"),
+                        step=int(event.get("step") or 1),
+                        total_steps=int(event.get("totalSteps") or 6),
+                        label=str(event.get("label") or ""),
+                        content=str(event.get("content") or event.get("label") or ""),
+                        detail=event.get("detail"),
+                        status=raw_status,
+                    )
                 elif event_type == "done":
                     yield SSESerializer.tabular_chat_done(
                         answer=str(event.get("answer") or ""),

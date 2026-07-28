@@ -191,8 +191,9 @@ def probe_description(token: str) -> str:
     )
 
 
-@tool
-def query_statement(
+def run_statement_query(
+    *,
+    record_as: str,
     operation: StatementToolOperation,
     on_date: str = "",
     date_from: str = "",
@@ -207,36 +208,8 @@ def query_statement(
     group_order: GroupOrder = "abs_sum",
     group_min_count: str = "",
 ) -> str:
-    """
-    Выполни аналитический запрос к таблице операций текущей выписки.
-
-    operation:
-      - count: только количество
-      - sum: итоговая сумма
-      - list: список (+ «сколько и в какие даты»)
-      - find: поиск по дню/времени
-      - top: крупнейшие по |сумме| (result_limit, для «самая крупная» = 1)
-      - group: контрагенты / повторяющиеся (group_order=abs_sum|count; для повторяющихся group_min_count=2)
-
-    Даты только DD.MM.YYYY. amount_semantics: credit=поступления, debit=списания.
-    amount_compare фильтрует по |сумме|. Не выдумывай фильтры, которых нет в вопросе.
-
-    Args:
-        operation: тип аналитики
-        on_date: один день DD.MM.YYYY
-        date_from: начало периода
-        date_to: конец периода
-        time_hint: время HH:MM из вопроса
-        description_contains: токен контрагента/назначения (после probe_description)
-        amount_semantics: направление суммы
-        amount_compare: порог по |сумме|
-        amount_min: нижняя граница |суммы|
-        amount_max: верхняя граница |суммы|
-        result_limit: N для top/group
-        group_order: сортировка групп
-        group_min_count: минимум операций в группе
-    """
-    _record_tool("query_statement")
+    """Structured query executor shared by legacy and lawyer toolkit tools."""
+    _record_tool(record_as)
     session = get_statement_table_session()
     question = (session.question or "").strip() or (
         f"op={operation} on={on_date} from={date_from} to={date_to} "
@@ -322,6 +295,69 @@ def query_statement(
         session.tool_calls,
     )
     return evidence
+
+
+@tool
+def query_statement(
+    operation: StatementToolOperation,
+    on_date: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    time_hint: str = "",
+    description_contains: str = "",
+    amount_semantics: AmountSemantics = "any",
+    amount_compare: AmountCompare = "none",
+    amount_min: str = "",
+    amount_max: str = "",
+    result_limit: str = "",
+    group_order: GroupOrder = "abs_sum",
+    group_min_count: str = "",
+) -> str:
+    """
+    Выполни аналитический запрос к таблице операций текущей выписки.
+
+    operation:
+      - count: только количество
+      - sum: итоговая сумма
+      - list: список (+ «сколько и в какие даты»)
+      - find: поиск по дню/времени
+      - top: крупнейшие по |сумме| (result_limit, для «самая крупная» = 1)
+      - group: контрагенты / повторяющиеся (group_order=abs_sum|count; для повторяющихся group_min_count=2)
+
+    Даты только DD.MM.YYYY. amount_semantics: credit=поступления, debit=списания.
+    amount_compare фильтрует по |сумме|. Не выдумывай фильтры, которых нет в вопросе.
+
+    Args:
+        operation: тип аналитики
+        on_date: один день DD.MM.YYYY
+        date_from: начало периода
+        date_to: конец периода
+        time_hint: время HH:MM из вопроса
+        description_contains: токен контрагента/назначения (после probe_description)
+        amount_semantics: направление суммы
+        amount_compare: порог по |сумме|
+        amount_min: нижняя граница |суммы|
+        amount_max: верхняя граница |суммы|
+        result_limit: N для top/group
+        group_order: сортировка групп
+        group_min_count: минимум операций в группе
+    """
+    return run_statement_query(
+        record_as="query_statement",
+        operation=operation,
+        on_date=on_date,
+        date_from=date_from,
+        date_to=date_to,
+        time_hint=time_hint,
+        description_contains=description_contains,
+        amount_semantics=amount_semantics,
+        amount_compare=amount_compare,
+        amount_min=amount_min,
+        amount_max=amount_max,
+        result_limit=result_limit,
+        group_order=group_order,
+        group_min_count=group_min_count,
+    )
 
 
 def build_statement_table_tools() -> list:

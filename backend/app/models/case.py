@@ -145,6 +145,8 @@ class File(Base):
     doc_key_points = Column(JSON, nullable=True)
     summary_version = Column(String(32), nullable=True)
     summary_content_hash = Column(String(64), nullable=True)
+    # Grounded header/preamble facts (party roles, doc number, …) with char spans.
+    front_matter_facts = Column(JSON, nullable=True)
     # metadata удалено - не существует в БД, используем другие поля для хранения метаданных
     created_at = Column(DateTime, default=datetime.utcnow)
 

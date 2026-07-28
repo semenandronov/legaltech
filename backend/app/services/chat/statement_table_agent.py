@@ -7,6 +7,7 @@ not free-form agent prose for aggregates.
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
@@ -27,60 +28,63 @@ from app.services.chat.statement_sql_planner import (
     format_statement_sql_conversation_history,
 )
 from app.services.chat.statement_sql_synthesizer import synthesize_statement_sql_answer
-from app.services.chat.statement_insight_tools import (
-    INSIGHT_TOOL_NAMES,
-    build_statement_insight_tools,
+from app.services.chat.statement_lawyer_tool_registry import (
+    ANALYTICAL_LAWYER_TOOL_NAMES,
+    LAWYER_TOOL_WORKFLOWS,
+    QUERY_LAWYER_TOOL_NAMES,
 )
+from app.services.chat.statement_lawyer_toolkit import build_statement_lawyer_tools
+from app.services.chat.statement_reasoning_graph import (
+    reasoning_agent_enabled,
+    run_statement_reasoning_graph,
+)
+from app.services.chat.statement_reasoning_progress import (
+    ProgressCallback,
+    StatementReasoningProgress,
+)
+from app.services.chat.statement_insight_tools import INSIGHT_TOOL_NAMES
 from app.services.chat.statement_table_session import (
     StatementTableSession,
     bind_statement_table_session,
 )
-from app.services.chat.statement_table_tools import build_statement_table_tools
+from app.services.chat.statement_table_turn_contract import (
+    assess_statement_turn_outcome,
+    classify_statement_turn_intent,
+    repair_statement_turn,
+)
 from app.services.llm_factory import create_legal_llm
 
 logger = logging.getLogger(__name__)
 
 ConversationHistory = Sequence[Mapping[str, Any]]
 
-_SYSTEM_PROMPT = """Ты — финансовый аналитик, помогающий юристу разобрать одну банковскую выписку \
-(контекст — банкротство и оспаривание сделок). Твоя задача — не просто отвечать на \
-буквальный вопрос, а помогать: находить зацепки, объяснять, что они значат, и \
-предлагать следующий шаг проверки.
+_SYSTEM_PROMPT = """Ты — старший финансовый аналитик рядом с юристом по одной банковской \
+выписке (банкротство, оспаривание сделок, подготовка процессуальных документов). \
+Работай как опытный counsel: сначала пойми вопрос, затем выбери цепочку инструментов, \
+проверь, что ответ по существу (не оборот всей выписки, если спросили про одного человека).
 
-Инструменты (числа берутся ТОЛЬКО из их ответов):
-Точечные запросы:
-1) inspect_statement — краткий обзор (счётчик, даты, примеры описаний).
-2) probe_description — проверка токена контрагента/назначения перед фильтром.
-3) query_statement — count/sum/list/find/top/group по фильтрам.
-Аналитические:
-4) statement_overview — полный профиль: приток/отток/сальдо, крупнейшие контрагенты и
-   операции, объём наличных. Вызови первым на открытые вопросы («что в выписке»,
-   «на что обратить внимание»). Поддерживает date_from/date_to.
-5) monthly_breakdown — приток/отток/сальдо по месяцам (тренды, «куда уходят деньги»).
-6) detect_anomalies — подозрительные паттерны (дробление, транзит «пришло-ушло»,
-   снятия наличных, крупные и круглые переводы, систематические переводы, всплески
-   оттока). Вызови на «что подозрительного», «вывод активов». Поддерживает date_from/date_to.
-7) counterparty_profile — карточка одного контрагента (суммы, период, примеры).
-8) suspicion_period_analysis — разбор по периодам подозрительности банкротства
-   (1 мес / 6 мес / 1 год / 3 года) от даты принятия заявления (ст. 61.2/61.3).
-   Вызови, если указана дата принятия заявления или вопрос про «подозрительный период».
-9) category_breakdown — структура операций по категориям (наличные, займы, налоги,
-   ЖКХ, зарплата, переводы физлицам, покупки). Для «на что уходят деньги», «покажи
-   займы и переводы физлицам».
+Жёсткие правила:
+- Числа, даты, контрагенты — ТОЛЬКО из tools.
+- Без data-tool не отвечай по существу.
+- Не выноси судебных вердиктов; формулируй «стоит проверить».
+- Даты DD.MM.YYYY; debit=списания, credit=поступления.
 
-Как работать:
-- Открытый/оценочный вопрос → начни со statement_overview, при необходимости добавь
-  detect_anomalies / monthly_breakdown / category_breakdown, затем дай связный вывод.
-- Есть дата принятия заявления или речь о «подозрительном периоде» → suspicion_period_analysis;
-  чтобы углубиться в конкретное окно — передавай date_from/date_to в другие инструменты.
-- Конкретный вопрос («сколько», «в 19:28», «топ-5») → query_statement.
-- Перед description_contains/counterparty_profile с коротким токеном — probe_description.
-- Не выдумывай суммы, даты, количества и выводы. Всё — из ответов инструментов.
-- Не делай юридических заключений («притворная сделка», «преднамеренное банкротство»).
-  Формулируй как зону внимания: «стоит проверить», «требует объяснения».
-- Даты только DD.MM.YYYY. amount_semantics=debit для списаний, credit для поступлений.
-- Ответ структурируй: короткий вывод → факты с цифрами → что проверить дальше.
-- Язык ответа: русский, деловой и конкретный."""
+Восемь инструментов (воронка):
+1) statement_context — контекст выписки и области (фильтры UI).
+2) resolve_entity — как в банке пишется имя/контрагент (grounded token, подсказки).
+3) transactions_query — точные факты: count/sum/list/find/top/group.
+4) flow_profile — картина денег + динамика по месяцам.
+5) legal_calendar — окна 61.2/61.3 от даты заявления + контраст с периодом «до окна».
+6) risk_scan — паттерны риска + структура по типам операций.
+7) counterparty_dossier — досье контрагента (суммы, период, операции).
+8) evidence_bundle — пакет строк под процесс (дата, сумма, назначение, стр. PDF).
+
+""" + LAWYER_TOOL_WORKFLOWS + """
+
+Формат ответа:
+1) Короткий вывод для юриста.
+2) Факты из tools.
+3) Что проверить дальше (1–3 шага)."""
 
 
 def statement_table_agent_enabled() -> bool:
@@ -168,15 +172,10 @@ def _build_user_payload(
         parts.append(history)
     parts.append("Текущий вопрос юриста:")
     parts.append(question.strip())
+    parts.append(LAWYER_TOOL_WORKFLOWS.strip())
     parts.append(
-        "Выбери инструмент под задачу: конкретный вопрос («сколько», «топ-5», "
-        "«в дату/время») → query_statement (при необходимости сначала inspect/probe); "
-        "открытый/оценочный («что в выписке», «что подозрительного», «тренды», "
-        "профиль контрагента) → statement_overview / detect_anomalies / "
-        "monthly_breakdown / category_breakdown / counterparty_profile; про периоды "
-        "подозрительности или при известной дате принятия заявления → "
-        "suspicion_period_analysis (при углублении передавай date_from/date_to). "
-        "Все числа и выводы бери ТОЛЬКО из ответов инструментов."
+        "Обязательно вызови data-tool. Ответ: вывод → факты → что проверить. "
+        "Числа только из tool-ответов."
     )
     return "\n".join(parts)
 
@@ -325,6 +324,40 @@ def _patch_from_session(
     }
 
 
+def _answer_from_execution_log(reasoning_final: Dict[str, Any], scope_note: str) -> str:
+    """Tool summaries from the reasoning graph — no second LLM pass."""
+    parts: List[str] = []
+    for block in reasoning_final.get("execution_log") or []:
+        try:
+            data = json.loads(block)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        summary = str(data.get("summary") or "").strip()
+        if summary and summary not in parts:
+            parts.append(summary)
+    body = "\n\n".join(parts).strip()
+    if not body:
+        return ""
+    prefix = f"{scope_note.strip()} " if (scope_note or "").strip() else ""
+    return f"{prefix}{body}".strip()
+
+
+def _attach_reasoning_meta(patch: Dict[str, Any], reasoning_final: Dict[str, Any]) -> None:
+    if not reasoning_final:
+        return
+    meta = patch.get("statement_sql_meta")
+    if not isinstance(meta, dict):
+        return
+    meta["resolver"] = "table_agent_reasoning"
+    meta["reasoning_status"] = reasoning_final.get("status")
+    meta["reasoning_revisions"] = reasoning_final.get("revision_count")
+    meta["reasoning_trace"] = list(reasoning_final.get("reasoning_trace") or [])
+    if reasoning_final.get("critique_issues"):
+        meta["critique_issues"] = list(reasoning_final.get("critique_issues") or [])
+
+
 def run_statement_table_agent(
     db: Session,
     *,
@@ -336,6 +369,7 @@ def run_statement_table_agent(
     scope_note: str = "",
     sql_plan_hints: Optional[dict] = None,
     conversation_history: Optional[ConversationHistory] = None,
+    progress_callback: Optional[ProgressCallback] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Tool-calling agent over one statement file.
@@ -368,49 +402,75 @@ def run_statement_table_agent(
     ):
         return None
 
-    user_payload = _build_user_payload(
-        question=q,
-        file_id=fid,
-        file_label=label,
-        scope_note=scope_note,
-        sql_plan_hints=sql_plan_hints,
-        conversation_history=conversation_history,
+    intent = classify_statement_turn_intent(q)
+    if intent in ("counterparty_lookup", "factual_aggregate", "factual_list"):
+        logger.info(
+            "[StatementTableAgent] defer intent=%s to operations resolver case=%s",
+            intent,
+            case_id,
+        )
+        return None
+
+    use_reasoning = reasoning_agent_enabled() and intent == "open_analytics"
+
+    reasoning_final: Dict[str, Any] = {}
+    agent_invoke_result: Optional[Dict[str, Any]] = None
+    progress = (
+        StatementReasoningProgress(callback=progress_callback)
+        if progress_callback
+        else None
     )
 
     try:
-        llm = create_legal_llm(
-            temperature=0.0,
-            max_tokens=_max_tokens(),
-            use_rate_limiting=False,
-        )
-        middleware = _build_middleware()
-        agent_kwargs: Dict[str, Any] = {
-            "model": llm,
-            "tools": build_statement_table_tools() + build_statement_insight_tools(),
-            "system_prompt": _SYSTEM_PROMPT,
-        }
-        if middleware:
-            agent_kwargs["middleware"] = middleware
-        agent = create_agent(**agent_kwargs)
-
         with bind_statement_table_session(session):
-            result = agent.invoke(
-                {
-                    "messages": [
-                        HumanMessage(content=user_payload),
-                    ]
+            if use_reasoning:
+                reasoning_final = run_statement_reasoning_graph(
+                    session,
+                    question=q,
+                    progress=progress,
+                )
+            else:
+                llm = create_legal_llm(
+                    temperature=0.0,
+                    max_tokens=_max_tokens(),
+                    use_rate_limiting=False,
+                )
+                middleware = _build_middleware()
+                agent_kwargs: Dict[str, Any] = {
+                    "model": llm,
+                    "tools": build_statement_lawyer_tools(),
+                    "system_prompt": _SYSTEM_PROMPT,
                 }
-            )
+                if middleware:
+                    agent_kwargs["middleware"] = middleware
+                agent = create_agent(**agent_kwargs)
+                user_payload = _build_user_payload(
+                    question=q,
+                    file_id=fid,
+                    file_label=label,
+                    scope_note=scope_note,
+                    sql_plan_hints=sql_plan_hints,
+                    conversation_history=conversation_history,
+                )
+                agent_invoke_result = agent.invoke(
+                    {"messages": [HumanMessage(content=user_payload)]}
+                )
     except Exception as exc:
         logger.warning("[StatementTableAgent] invoke failed: %s", exc)
         return None
 
-    messages = result.get("messages") if isinstance(result, dict) else None
-    if not messages:
-        return None
+    if use_reasoning and reasoning_final:
+        final_text = _answer_from_execution_log(reasoning_final, session.scope_note)
+        if not (final_text or "").strip():
+            final_text = _compose_insight_fallback(session)
+    else:
+        messages = (
+            agent_invoke_result.get("messages") if isinstance(agent_invoke_result, dict) else None
+        )
+        final_text = _final_ai_text(messages) if messages else ""
 
-    query_used = "query_statement" in session.tool_calls
-    insight_used = any(name in session.tool_calls for name in INSIGHT_TOOL_NAMES)
+    query_used = bool(set(session.tool_calls) & (QUERY_LAWYER_TOOL_NAMES | frozenset({"query_statement"})))
+    insight_used = bool(set(session.tool_calls) & (ANALYTICAL_LAWYER_TOOL_NAMES | INSIGHT_TOOL_NAMES))
     if not (query_used or insight_used):
         logger.info(
             "[StatementTableAgent] no data tool used case=%s file=%s tools=%s",
@@ -420,11 +480,36 @@ def run_statement_table_agent(
         )
         return None
 
-    final_text = _final_ai_text(messages)
+    if not (final_text or "").strip() and use_reasoning:
+        logger.info(
+            "[StatementTableAgent] reasoning produced no answer text case=%s tools=%s",
+            case_id,
+            session.tool_calls,
+        )
+        return None
+
+    outcome = assess_statement_turn_outcome(question=q, session=session)
+    if outcome.needs_deterministic_repair:
+        repair = repair_statement_turn(
+            db=db,
+            case_id=case_id,
+            session=session,
+            question=q,
+            outcome=outcome,
+        )
+        if repair is not None:
+            _attach_reasoning_meta(repair, reasoning_final)
+            logger.info(
+                "[StatementTableAgent] repaired case=%s intent=%s tools=%s",
+                case_id,
+                outcome.intent,
+                session.tool_calls,
+            )
+            return repair
 
     # Analytical/advisory turn: numbers already computed by insight tools; the model
-    # only frames them. Prefer this whenever an insight tool ran.
-    if insight_used:
+    # only frames them. Prefer this whenever an insight tool ran and matches intent.
+    if insight_used and outcome.accept_insight_path:
         patch = _insight_patch(
             db=db,
             case_id=case_id,
@@ -432,6 +517,7 @@ def run_statement_table_agent(
             final_text=final_text,
         )
         if patch is not None:
+            _attach_reasoning_meta(patch, reasoning_final)
             logger.info(
                 "[StatementTableAgent] insight ok case=%s tools=%s",
                 case_id,
@@ -440,6 +526,15 @@ def run_statement_table_agent(
             return patch
 
     # Pure factual turn: deterministic fact-bound synthesis from query_statement.
+    if not query_used and insight_used and not outcome.accept_insight_path:
+        logger.info(
+            "[StatementTableAgent] insight rejected for intent=%s case=%s tools=%s",
+            outcome.intent,
+            case_id,
+            session.tool_calls,
+        )
+        return None
+
     patch = _patch_from_session(
         db=db,
         case_id=case_id,
@@ -448,13 +543,22 @@ def run_statement_table_agent(
         conversation_history=conversation_history,
     )
     if patch is None:
-        logger.info(
-            "[StatementTableAgent] no usable facts after tools case=%s final=%r",
-            case_id,
-            final_text[:120],
-        )
-        return None
+        if use_reasoning and (final_text or "").strip():
+            patch = _insight_patch(
+                db=db,
+                case_id=case_id,
+                session=session,
+                final_text=final_text,
+            )
+        if patch is None:
+            logger.info(
+                "[StatementTableAgent] no usable facts after tools case=%s final=%r",
+                case_id,
+                final_text[:120],
+            )
+            return None
 
+    _attach_reasoning_meta(patch, reasoning_final)
     logger.info(
         "[StatementTableAgent] ok case=%s op=%s tools=%s",
         case_id,

@@ -17,6 +17,10 @@ _PLAIN_JOIN_RE = re.compile(r"\n{3,}")
 # CITATION_CONTRACT for structured_table / statement rows:
 # original_text == STRUCTURED_ROW_SEPARATOR.join(normalized row bodies)
 # and each row's char_start/char_end are offsets into that string.
+#
+# Narrative / OCR / Docling paths use ``file_char_basis``:
+# after indexing, File.original_text is replaced with the LegalChunker (or
+# docling-direct) full text that char_start/char_end were computed against.
 STRUCTURED_ROW_SEPARATOR = "\n\n"
 
 

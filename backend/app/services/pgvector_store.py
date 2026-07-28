@@ -193,6 +193,30 @@ class CaseVectorStore:
                         logger.warning("Could not create document GIN index: %s", e, exc_info=True)
 
                     try:
+                        # Lexical index over retrieval text (embedding_text with section
+                        # labels when present), not bare page_content — otherwise
+                        # queries like «предмет договора» miss clause-only micros.
+                        conn.execute(
+                            text(
+                                f"""
+                                CREATE INDEX IF NOT EXISTS idx_{table}_fts_retrieval
+                                ON {table}
+                                USING GIN (
+                                  to_tsvector(
+                                    'russian',
+                                    COALESCE(
+                                      NULLIF(document->'metadata'->>'embedding_text', ''),
+                                      document->>'page_content',
+                                      ''
+                                    )
+                                  )
+                                )
+                                """
+                            )
+                        )
+                    except Exception as e:
+                        logger.warning("Could not create FTS retrieval index: %s", e, exc_info=True)
+                    try:
                         conn.execute(
                             text(
                                 f"""
@@ -667,14 +691,22 @@ class CaseVectorStore:
         filter: Optional[Dict[str, Any]] = None,
     ) -> List[Document]:
         """
-        PostgreSQL Full-Text Search (FTS) over stored page_content.
+        PostgreSQL Full-Text Search over retrieval text.
 
-        Uses websearch_to_tsquery for robust parsing of user queries and ranks
-        matches with ts_rank_cd.
+        Uses metadata.embedding_text when present (section labels + body), else
+        page_content — so lexical queries match clause micros by section name.
         """
         search_filter = {}
         if filter:
             search_filter.update(filter)
+        # Prefer contextualized embedding_text for FTS (section labels live there).
+        retrieval_sql = (
+            "COALESCE("
+            "NULLIF(document->'metadata'->>'embedding_text', ''), "
+            "document->>'page_content', "
+            "''"
+            ")"
+        )
         try:
             with self.engine.connect() as conn:
                 filter_conditions = ["collection_id = %s", "case_id = %s"]
@@ -700,12 +732,12 @@ class CaseVectorStore:
                     SELECT
                         document,
                         ts_rank_cd(
-                            to_tsvector('russian', COALESCE(document->>'page_content', '')),
+                            to_tsvector('russian', {retrieval_sql}),
                             websearch_to_tsquery('russian', %s)
                         ) AS fts_rank
                     FROM {table_name}
                     WHERE {where_sql}
-                      AND to_tsvector('russian', COALESCE(document->>'page_content', ''))
+                      AND to_tsvector('russian', {retrieval_sql})
                           @@ websearch_to_tsquery('russian', %s)
                     ORDER BY fts_rank DESC
                     LIMIT %s
@@ -744,35 +776,53 @@ class CaseVectorStore:
         case_id: str,
         k: int = 10,
         filter: Optional[Dict[str, Any]] = None,
+        exact_query: Optional[str] = None,
     ) -> List[Document]:
         """
-        Deterministic substring retrieval for "address/anchor" queries like "пункт 6.8", "6.8.1", etc.
+        Deterministic clause-boundary retrieval for address queries ("пункт 1.4", "6.8.1").
 
-        Motivation:
-        - Vector similarity is not reliable for purely-address queries.
-        - FTS (websearch_to_tsquery) can miss numeric dotted anchors depending on parsing.
-        - Substring match guarantees recall when the anchor exists in chunk text.
+        Matches clause headings at line/string start (``1.4. …``), not infix
+        false positives (``4.1.4`` for query ``1.4``). Prefer ``exact_query`` when
+        provided (tabular dual-query rewrite); otherwise extract numbers from ``query``.
         """
-        q = (query or "").strip()
-        if not q:
+        from app.services.clause_anchor import (
+            extract_clause_numbers,
+            normalize_clause_number,
+            postgres_clause_boundary_regex,
+            primary_exact_anchor,
+        )
+
+        source = (exact_query or query or "").strip()
+        if not source:
             return []
 
-        anchors = re.findall(r"\b\d+(?:[.,]\d+)+\b", q)
+        anchors: List[str] = []
+        if exact_query and str(exact_query).strip():
+            primary = primary_exact_anchor(exact_query) or normalize_clause_number(exact_query)
+            if primary:
+                anchors = [primary]
+        else:
+            anchors = extract_clause_numbers(source)[:5]
+
         if not anchors:
             return []
 
-        # Small set of tolerant variants (dot/comma differences).
-        patterns: List[str] = []
-        seen = set()
-        for a in anchors[:5]:
-            for v in (a, a.replace(",", "."), a.replace(".", ",")):
-                v = v.strip()
-                if not v or v in seen:
-                    continue
-                seen.add(v)
-                patterns.append(v)
+        # Boundary regex per unique normalized anchor (dot form).
+        regexes: List[str] = []
+        needles: List[str] = []
+        seen: set[str] = set()
+        for a in anchors:
+            n = normalize_clause_number(a)
+            if not n or n in seen:
+                continue
+            rx = postgres_clause_boundary_regex(n)
+            if not rx:
+                continue
+            seen.add(n)
+            regexes.append(rx)
+            needles.append(n)
 
-        if not patterns:
+        if not regexes:
             return []
 
         search_filter: Dict[str, Any] = {}
@@ -804,19 +854,32 @@ class CaseVectorStore:
 
                 or_clauses: List[str] = []
                 pos_exprs: List[str] = []
-                like_params: List[Any] = []
+                regex_params: List[Any] = []
                 pos_params: List[Any] = []
 
-                for p in patterns:
-                    or_clauses.append("COALESCE(document->>'page_content','') ILIKE %s")
-                    like_params.append(f"%{p}%")
+                retrieval_sql = (
+                    "COALESCE("
+                    "NULLIF(document->'metadata'->>'embedding_text', ''), "
+                    "document->>'page_content', "
+                    "''"
+                    ")"
+                )
+
+                for rx, needle in zip(regexes, needles):
+                    or_clauses.append(f"{retrieval_sql} ~* %s")
+                    regex_params.append(rx)
+                    # Order among true boundary hits by earliest bare-number position.
                     pos_exprs.append(
-                        "NULLIF(POSITION(lower(%s) IN lower(COALESCE(document->>'page_content',''))), 0)"
+                        f"NULLIF(POSITION(lower(%s) IN lower({retrieval_sql})), 0)"
                     )
-                    pos_params.append(p)
+                    pos_params.append(needle)
 
                 # Order by earliest anchor position in text (smaller is better).
-                min_pos_sql = "LEAST(" + ", ".join([f"COALESCE({e}, 2147483647)" for e in pos_exprs]) + ")"
+                min_pos_sql = (
+                    "LEAST("
+                    + ", ".join([f"COALESCE({e}, 2147483647)" for e in pos_exprs])
+                    + ")"
+                )
 
                 sql = f"""
                     SELECT
@@ -834,9 +897,9 @@ class CaseVectorStore:
                 # Order:
                 # - POSITION needles used in SELECT (min_pos_sql),
                 # - THEN WHERE params (collection_id, case_id, metadata_filter),
-                # - THEN ILIKE patterns used in WHERE,
+                # - THEN regex patterns used in WHERE,
                 # - THEN LIMIT.
-                sql_params = pos_params + params + like_params + [k]
+                sql_params = pos_params + params + regex_params + [k]
                 raw_conn = conn.connection
                 cursor = raw_conn.cursor()
                 try:
@@ -856,9 +919,12 @@ class CaseVectorStore:
                             metadata=doc_data.get("metadata", {}) or {},
                         )
                         try:
-                            doc.metadata["anchor_pos"] = int(anchor_pos) if anchor_pos is not None else None
+                            doc.metadata["anchor_pos"] = (
+                                int(anchor_pos) if anchor_pos is not None else None
+                            )
                         except Exception:
                             doc.metadata["anchor_pos"] = None
+                        doc.metadata["anchor_match"] = True
                         docs.append(doc)
                 finally:
                     cursor.close()
@@ -867,7 +933,7 @@ class CaseVectorStore:
         except Exception as e:
             logger.error("anchor_substring_search failed: %s", e, exc_info=True)
             return []
-    
+
     def list_case_chunks(
         self,
         case_id: str,
@@ -1035,6 +1101,78 @@ class CaseVectorStore:
         except Exception as e:
             logger.error(
                 "fetch_macro_chunks_by_macro_ids failed case=%s: %s", cid, e, exc_info=True
+            )
+            return {}
+
+    def fetch_macro_chunks_by_section_root_ids(
+        self,
+        case_id: str,
+        section_root_ids: Sequence[str],
+    ) -> Dict[str, List[Document]]:
+        """
+        Load all size-window macros belonging to hard section roots.
+
+        Returns mapping section_root_id -> macros sorted by char_start.
+        """
+        cid = str(case_id or "").strip()
+        ids = list(dict.fromkeys(str(x).strip() for x in section_root_ids if str(x).strip()))
+        if not cid or not ids:
+            return {}
+        try:
+            table_name = VectorEmbedding.__tablename__
+            sql = text(f"""
+                SELECT document
+                FROM {table_name}
+                WHERE collection_id = :collection_id
+                  AND case_id = :case_id
+                  AND document->'metadata'->>'chunk_level' = 'macro'
+                  AND document->'metadata'->>'section_root_id' = ANY(:section_root_ids)
+            """)
+            with self.engine.connect() as conn:
+                rows = conn.execute(
+                    sql,
+                    {
+                        "collection_id": self.collection_name,
+                        "case_id": cid,
+                        "section_root_ids": ids,
+                    },
+                ).fetchall()
+            out: Dict[str, List[Document]] = {sid: [] for sid in ids}
+            for row in rows:
+                doc_data = row[0]
+                if isinstance(doc_data, str):
+                    doc_data = json.loads(doc_data)
+                elif not isinstance(doc_data, dict):
+                    continue
+                doc = Document(
+                    page_content=doc_data.get("page_content", "") or "",
+                    metadata=dict(doc_data.get("metadata") or {}),
+                )
+                sid = str((doc.metadata or {}).get("section_root_id") or "").strip()
+                if sid in out:
+                    out[sid].append(doc)
+
+            def _char_start(d: Document) -> int:
+                try:
+                    return int((d.metadata or {}).get("char_start") or 0)
+                except (TypeError, ValueError):
+                    return 0
+
+            for sid in out:
+                out[sid].sort(key=_char_start)
+            logger.debug(
+                "fetch_macro_chunks_by_section_root_ids case=%s roots=%s macros=%s",
+                cid,
+                len(ids),
+                sum(len(v) for v in out.values()),
+            )
+            return out
+        except Exception as e:
+            logger.error(
+                "fetch_macro_chunks_by_section_root_ids failed case=%s: %s",
+                cid,
+                e,
+                exc_info=True,
             )
             return {}
 

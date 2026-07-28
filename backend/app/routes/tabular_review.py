@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Query, Response
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_
-from typing import Optional, List
+from typing import Optional, List, Any, Tuple
 from pydantic import BaseModel
 from app.utils.database import get_db
 from app.utils.auth import get_current_user
@@ -708,6 +708,63 @@ async def get_cell_details(
             highlight_mode = 'page'
         else:
             highlight_mode = 'none'
+
+        source_references = cell.source_references or []
+        # Geometry-first: fill missing bbox from indexed chunk provenance on read.
+        try:
+            from app.models.case import File as CaseFile
+            from app.models.tabular_review import TabularReview
+            from app.services.tabular_source_geometry import (
+                enrich_source_references_with_geometry,
+                load_file_chunk_docs,
+            )
+
+            review = db.query(TabularReview).filter(TabularReview.id == review_id).first()
+            case_file = db.query(CaseFile).filter(CaseFile.id == file_id).first()
+            if review and case_file and source_references:
+                # Always re-resolve from leaf chunks: micro may replace a wrong macro bbox.
+                docs = load_file_chunk_docs(case_id=review.case_id, file_id=file_id)
+                if docs:
+                    enriched = enrich_source_references_with_geometry(
+                        refs=source_references,
+                        docs=docs,
+                        original_text=case_file.original_text or "",
+                    )
+
+                    def _bbox_key(ref: Any) -> Optional[Tuple[float, float, float, float]]:
+                        if not isinstance(ref, dict):
+                            return None
+                        b = ref.get("bbox")
+                        if not isinstance(b, dict):
+                            return None
+                        try:
+                            return (
+                                float(b["x0"]),
+                                float(b["y0"]),
+                                float(b["x1"]),
+                                float(b["y1"]),
+                            )
+                        except (KeyError, TypeError, ValueError):
+                            return None
+
+                    changed = any(
+                        _bbox_key(before) != _bbox_key(after)
+                        for before, after in zip(source_references, enriched)
+                    ) or len(source_references) != len(enriched)
+                    if changed:
+                        source_references = enriched
+                        cell.source_references = enriched
+                        db.add(cell)
+                        db.commit()
+                    else:
+                        source_references = enriched
+        except Exception:
+            logger.debug(
+                "source_references geometry enrich skipped review=%s file=%s",
+                review_id,
+                file_id,
+                exc_info=True,
+            )
         
         return {
             "id": cell.id,
@@ -715,7 +772,7 @@ async def get_cell_details(
             "normalized_value": cell.normalized_value,
             "verbatim_extract": cell.verbatim_extract,
             "reasoning": cell.reasoning,
-            "source_references": cell.source_references or [],
+            "source_references": source_references,
             "confidence_score": float(cell.confidence_score) if cell.confidence_score else None,
             "source_page": cell.source_page,
             "source_section": cell.source_section,

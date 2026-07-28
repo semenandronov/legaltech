@@ -4,6 +4,8 @@ from langchain_core.documents import Document
 import logging
 import re
 
+from app.services.legal_chunker import build_document_retrieval_text
+
 logger = logging.getLogger(__name__)
 
 # Try to import rank_bm25
@@ -72,10 +74,11 @@ class BM25Retriever:
             valid_documents = []
             
             for doc in documents:
-                if not hasattr(doc, 'page_content') or not doc.page_content:
+                retrieval_text = build_document_retrieval_text(doc)
+                if not retrieval_text.strip():
                     continue
-                
-                tokens = self._tokenize(doc.page_content)
+
+                tokens = self._tokenize(retrieval_text)
                 if tokens:  # Пропускаем пустые документы
                     tokenized_docs.append(tokens)
                     valid_documents.append(doc)

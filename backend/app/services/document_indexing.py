@@ -11,6 +11,7 @@ from app.services.document_structure_classifier import classify_indexing_strateg
 from app.services.legal_chunker import (
     LegalChunkerV2,
     _collect_legal_segments,
+    _join_segments_text,
     _normalize_docling_segments,
 )
 from app.services.statement_geometry_indexer import (
@@ -154,9 +155,11 @@ def build_index_chunks(
         )
 
     normalized = _normalize_docling_segments(list(segments), profile)
+    # Offsets live on normalized segments — char basis must be their join.
+    normalized_full_text = _join_segments_text(normalized)
     return LegalChunkerV2().chunk_from_segments(
         segments=normalized,
-        full_text=full_text,
+        full_text=normalized_full_text,
         preseg_strategy=preseg_strategy,
         profile=profile,
         base_metadata=base_metadata,

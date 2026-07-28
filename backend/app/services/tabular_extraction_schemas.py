@@ -37,7 +37,10 @@ class _ExtractionProvenance(BaseModel):
 
 class TextCellExtraction(_ExtractionProvenance):
     cell_value: str = Field(
-        description="Краткий ответ своими словами по фрагментам документа, или ровно N/A",
+        description=(
+            "Краткий ответ (обычно фраза или предложение) строго по подтверждающей цитате, "
+            "или ровно N/A. Не пиши длинное эссе."
+        ),
     )
 
 

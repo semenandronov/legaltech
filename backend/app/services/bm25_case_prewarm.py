@@ -177,6 +177,8 @@ def finalize_case_bm25_after_ingestion(
     Один авторитетный rebuild после batch-обработки файлов (источник — PGVector).
 
     Отменяет debounced jobs и строит индекс синхронно в worker-потоке.
+    Always prefer this over ``prewarm_bm25_index(documents=batch)``: a partial
+    batch rebuild drops previously indexed files from the in-memory BM25 index.
     """
     cid = str(case_id or "").strip()
     if not cid or not _bm25_enabled():

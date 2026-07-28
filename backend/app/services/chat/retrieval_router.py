@@ -752,3 +752,16 @@ def build_metadata_filter(task: RetrievalTask) -> Optional[Dict[str, Any]]:
     if task.doc_type:
         return {"doc_type": str(task.doc_type).strip()}
     return None
+
+
+def merge_metadata_filters(
+    base: Optional[Dict[str, Any]],
+    extra: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Merge pgvector JSONB filters (AND semantics)."""
+    out: Dict[str, Any] = dict(base or {})
+    for key, value in dict(extra or {}).items():
+        if value is None:
+            continue
+        out[key] = value
+    return out or None

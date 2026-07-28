@@ -14,6 +14,7 @@ from app.services.tabular_review_models import TabularCellExtractionModel, coerc
 from app.services.tabular_cell_pipeline import (
     cell_result_to_api_payload,
     cell_result_to_websocket_payload,
+    docs_for_cell_geometry,
     run_tabular_cell_extraction,
     TabularColumnExtractionOutcome,
 )
@@ -1404,6 +1405,7 @@ class TabularReviewService:
         column: TabularColumn,
         result: TabularCellExtractionModel,
         included_docs: Optional[List[Document]] = None,
+        geometry_docs: Optional[List[Document]] = None,
         verification_outcome=None,
     ) -> Dict[str, Any]:
         """Map extraction model to DB payload (provenance + status gates)."""
@@ -1412,6 +1414,7 @@ class TabularReviewService:
             column=column,
             result=result,
             included_docs=included_docs,
+            geometry_docs=geometry_docs,
             db=self.db,
             verification_outcome=verification_outcome,
         )
@@ -1445,6 +1448,7 @@ class TabularReviewService:
         strategy: str = 'multi_query',
         rag_service=None,
         column_run=None,
+        file_context_packages: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Canonical tabular cell pipeline: assistant RAG → structured extract → verify → payload.
@@ -1472,6 +1476,7 @@ class TabularReviewService:
                 normalize_fn=self._normalize_extraction_result,
                 column_run=column_run,
                 db=self.db,
+                file_context_packages=file_context_packages,
             )
 
             logger.info(
@@ -1489,6 +1494,7 @@ class TabularReviewService:
                 column=column,
                 result=pipeline.extraction,
                 included_docs=pipeline.prepared.included_docs,
+                geometry_docs=docs_for_cell_geometry(pipeline.prepared),
                 verification_outcome=pipeline.verification,
             )
 
@@ -1537,6 +1543,7 @@ class TabularReviewService:
         column: TabularColumn,
         rag_service=None,
         column_run=None,
+        file_context_packages=None,
     ) -> Dict[str, Any]:
         """
         Smart extraction with automatic strategy selection
@@ -1551,6 +1558,7 @@ class TabularReviewService:
             strategy=strategy,
             rag_service=rag_service,
             column_run=column_run,
+            file_context_packages=file_context_packages,
         )
 
     def upsert_tabular_cell_from_extraction(
@@ -1668,6 +1676,7 @@ class TabularReviewService:
         column: TabularColumn,
         rag_service,
         column_run=None,
+        file_context_packages=None,
     ) -> TabularColumnExtractionOutcome:
         """Run one cell extraction; always returns file_id (never raises to caller)."""
         try:
@@ -1676,6 +1685,7 @@ class TabularReviewService:
                 column,
                 rag_service=rag_service,
                 column_run=column_run,
+                file_context_packages=file_context_packages,
             )
             return TabularColumnExtractionOutcome.from_result(file.id, result)
         except Exception as exc:
@@ -1983,6 +1993,7 @@ class TabularReviewService:
         column: TabularColumn,
         rag_service,
         column_run=None,
+        file_context_packages=None,
     ) -> TabularColumnExtractionOutcome:
         from app.services.tabular_extraction_runtime import tabular_cell_semaphore
 
@@ -1992,6 +2003,7 @@ class TabularReviewService:
                 column,
                 rag_service,
                 column_run=column_run,
+                file_context_packages=file_context_packages,
             )
 
     async def execute_column_extraction(
@@ -2064,6 +2076,22 @@ class TabularReviewService:
         except RuntimeError as exc:
             raise ValueError(f"Query embedding failed: {exc}") from exc
 
+        from app.services.tabular_document_context import (
+            prepare_file_context_packages,
+            tabular_dcp_enabled,
+        )
+
+        file_context_packages = None
+        if tabular_dcp_enabled():
+            vector_store = getattr(document_processor, "vector_store", None)
+            file_context_packages = await asyncio.to_thread(
+                prepare_file_context_packages,
+                self.db,
+                case_id=str(review.case_id),
+                file_ids=[str(f.id) for f in files],
+                vector_store=vector_store,
+            )
+
         logger.info(
             "Tabular column extraction: column=%s files=%s bm25_ready=%s rerank=%s parallel=%s embed_once=true",
             column_id,
@@ -2080,6 +2108,7 @@ class TabularReviewService:
                     column,
                     rag_service,
                     column_run,
+                    file_context_packages,
                 )
             )
             for file in files

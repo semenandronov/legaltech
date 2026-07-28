@@ -3,6 +3,8 @@
 import React, { useState, useCallback, useEffect, useRef } from "react"
 import { AssistantMessage } from "@/components/ai-elements/message"
 import { operationsApi, type OperationsSessionUiState } from "@/services/operationsApi"
+import { applyAssistantActivityEvent } from "@/lib/assistantActivity"
+import type { ThinkingStep } from "@/components/Chat/ThinkingBlock"
 import { toast } from "sonner"
 import { Loader } from "@/components/ai-elements/loader"
 import { ArrowRight, ChevronLeft, MessageSquare, Square } from "lucide-react"
@@ -20,6 +22,7 @@ interface Message {
   role: "user" | "assistant"
   content: string
   citations?: Array<{ file: string; file_id: string }>
+  reasoningSteps?: ThinkingStep[]
   isStreaming?: boolean
 }
 
@@ -127,11 +130,34 @@ export const OperationsContextChat: React.FC<OperationsContextChatProps> = ({
                 ),
               )
             },
+            onAssistantActivity: (payload) => {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId
+                    ? {
+                        ...m,
+                        reasoningSteps: applyAssistantActivityEvent(
+                          m.reasoningSteps || [],
+                          payload,
+                        ),
+                      }
+                    : m,
+                ),
+              )
+            },
             onDone: ({ answer, citations }) => {
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === assistantId
-                    ? { ...m, content: answer, citations, isStreaming: false }
+                    ? {
+                        ...m,
+                        content: answer,
+                        citations,
+                        isStreaming: false,
+                        reasoningSteps: (m.reasoningSteps || []).map((s) =>
+                          s.status === "running" ? { ...s, status: "completed" as const } : s,
+                        ),
+                      }
                     : m,
                 ),
               )
@@ -275,7 +301,7 @@ export const OperationsContextChat: React.FC<OperationsContextChatProps> = ({
                   </div>
                 )
               }
-              if (message.isStreaming && !message.content.trim()) {
+              if (message.isStreaming && !message.content.trim() && !(message.reasoningSteps?.length)) {
                 return (
                   <div
                     key={message.id}
@@ -293,6 +319,7 @@ export const OperationsContextChat: React.FC<OperationsContextChatProps> = ({
                     content={message.content}
                     preferLegacyCitations
                     isStreaming={Boolean(message.isStreaming)}
+                    reasoningSteps={message.reasoningSteps}
                     sources={message.citations?.map((c) => ({
                       title: c.file,
                       file: c.file,

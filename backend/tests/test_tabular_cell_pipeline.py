@@ -87,13 +87,18 @@ def test_tabular_cell_budget_uses_single_file_tabular_knobs(monkeypatch):
         8000,
         raising=False,
     )
+    monkeypatch.setattr(
+        "app.services.tabular_cell_pipeline.config.TABULAR_RERANK_ENABLED",
+        False,
+        raising=False,
+    )
     budget = _tabular_cell_budget_profile("date")
     assert budget["final_k"] == 4
     assert budget["recall_k"] == 25
     assert budget["max_context_chars"] == 8000
     assert budget["rerank_enabled"] is False
     assert budget["skip_micro_recall_cap"] is True
-    assert budget["parent_context_enabled"] is False
+    assert budget["parent_context_enabled"] is True
 
     monkeypatch.setattr(
         "app.services.tabular_cell_pipeline.config.TABULAR_RERANK_ENABLED",
@@ -111,7 +116,7 @@ def test_build_extraction_prompt_has_no_extra_template_variables():
         column_config=None,
     )
     prompt = build_extraction_prompt(col)
-    assert set(prompt.input_variables) == {"question", "context", "column_type"}
+    assert set(prompt.input_variables) == {"question", "context", "column_type", "navigation_block"}
 
 
 def test_cell_retrieval_params_snapshot_orm_fields():
@@ -131,6 +136,89 @@ def test_cell_retrieval_params_snapshot_orm_fields():
     assert params.file_id == "file-1"
     assert params.column_type == "text"
     assert "вопрос" in params.query
+    assert params.search_query
+    assert params.rewrite_method
+
+
+def test_cell_retrieval_params_reuse_column_run_search_query():
+    file = SimpleNamespace(
+        case_id="case-1",
+        id="file-1",
+        filename="doc.pdf",
+        original_text="текст",
+    )
+    col = SimpleNamespace(
+        prompt="найди предмет и пришли полностью",
+        column_label="Предмет",
+        column_type="text",
+    )
+    from app.services.tabular_column_run_context import TabularColumnRunContext
+
+    run = TabularColumnRunContext(
+        search_query="предмет договора",
+        query_embedding=tuple([0.0] * 256),
+        source_query=col.prompt,
+        rewrite_method="llm",
+        rewrite_rationale="ok",
+        exact_query=None,
+    )
+    params = cell_retrieval_params_from_models(file, col, column_run=run)
+    assert params.search_query == "предмет договора"
+    assert params.exact_query == ""
+    assert params.query == col.prompt
+    assert params.rewrite_method == "llm"
+    assert len(params.query_embedding) == 256
+
+
+def test_cell_retrieval_params_reuse_exact_query():
+    file = SimpleNamespace(
+        case_id="case-1",
+        id="file-1",
+        filename="doc.pdf",
+        original_text="текст",
+    )
+    col = SimpleNamespace(
+        prompt="пункт 1.4",
+        column_label="1.4",
+        column_type="verbatim",
+    )
+    from app.services.tabular_column_run_context import TabularColumnRunContext
+
+    run = TabularColumnRunContext(
+        search_query="пункт 1.4",
+        query_embedding=tuple([0.0] * 256),
+        source_query=col.prompt,
+        rewrite_method="heuristic",
+        exact_query="1.4",
+    )
+    params = cell_retrieval_params_from_models(file, col, column_run=run)
+    assert params.exact_query == "1.4"
+
+
+def test_cell_retrieval_params_reuse_lexical_terms():
+    file = SimpleNamespace(
+        case_id="case-1",
+        id="file-1",
+        filename="doc.pdf",
+        original_text="текст",
+    )
+    col = SimpleNamespace(
+        prompt="Предусмотрена ли неустойка?",
+        column_label="Неустойка",
+        column_type="yes_no",
+    )
+    from app.services.tabular_column_run_context import TabularColumnRunContext
+
+    run = TabularColumnRunContext(
+        search_query="неустойка штраф",
+        query_embedding=tuple([0.0] * 256),
+        source_query=col.prompt,
+        rewrite_method="llm",
+        lexical_terms=("неустойка", "штраф", "пеня"),
+    )
+    params = cell_retrieval_params_from_models(file, col, column_run=run)
+    assert params.lexical_terms == ("неустойка", "штраф", "пеня")
+    assert params.search_query == "неустойка штраф"
 
 
 def test_doc_belongs_to_file_scopes_by_metadata():
@@ -151,18 +239,41 @@ def test_tabular_final_k_simple_vs_text():
     assert tabular_final_k("date") <= tabular_final_k("text")
 
 
-def test_enrich_source_from_top_chunk():
+def test_enrich_source_from_top_chunk_does_not_invent_quote():
     result = TabularCellExtractionModel(
         cell_value="X",
         reasoning="r",
         column_type="text",
     )
     docs = [
-        Document(page_content="text", metadata={"source_page": 2, "source_section": "§1"}),
+        Document(page_content="secret chunk text", metadata={"source_page": 2, "source_section": "§1"}),
     ]
     enriched = enrich_source_from_documents(result, docs)
     assert enriched.source_page == 2
     assert enriched.source_section == "§1"
+    assert not enriched.verbatim_extract
+    assert not enriched.source_references
+
+
+def test_enrich_source_attaches_page_when_quote_matches_chunk():
+    quote = "Договор поставки между сторонами"
+    result = TabularCellExtractionModel(
+        cell_value="Договор поставки",
+        reasoning="r",
+        column_type="text",
+        verbatim_extract=quote,
+    )
+    docs = [
+        Document(
+            page_content=f"Преамбула. {quote}. Далее условия.",
+            metadata={"source_page": 3, "source_section": "Преамбула", "char_start": 10, "char_end": 40},
+        ),
+    ]
+    enriched = enrich_source_from_documents(result, docs)
+    assert enriched.source_page == 3
+    assert enriched.source_section == "Преамбула"
+    assert enriched.source_references
+    assert enriched.source_references[0]["text"] == quote
 
 
 def test_tabular_rerank_disabled_uses_hybrid_scores(monkeypatch):

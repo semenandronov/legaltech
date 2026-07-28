@@ -138,10 +138,12 @@ export const TemplatesModal: React.FC<TemplatesModalProps> = ({
             tags: t.tags,
           }
         })
-      const apiNames = new Set(data.map((t) => t.name.toLowerCase()))
+      // Банкротные пресеты — только встроенные три; старые API-шаблоны bankruptcy_rf скрываем
+      const nonBankruptcyApi = data.filter((t) => t.category !== 'bankruptcy_rf')
+      const builtinNames = new Set(builtinAsApi.map((t) => t.name.toLowerCase()))
       const merged = [
-        ...data,
-        ...builtinAsApi.filter((b) => !apiNames.has(b.name.toLowerCase())),
+        ...builtinAsApi,
+        ...nonBankruptcyApi.filter((t) => !builtinNames.has(t.name.toLowerCase())),
       ]
       setTemplates(merged)
     } catch (error: any) {

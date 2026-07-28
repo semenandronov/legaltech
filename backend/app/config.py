@@ -361,6 +361,11 @@ class Config:
     PDF_OCR_MIN_EXPECTED_CHARS_PER_PAGE: int = int(
         os.getenv("PDF_OCR_MIN_EXPECTED_CHARS_PER_PAGE", "5")
     )
+    # Mixed PDF: страницы без текстового слоя, но с картинками → OCR только их,
+    # страницы с нормальным native text сохраняем как есть.
+    PDF_MIXED_PAGE_OCR_ENABLED: bool = (
+        clean_env_str(os.getenv("PDF_MIXED_PAGE_OCR_ENABLED"), "true").lower() == "true"
+    )
     # Скан без текстового слоя: локальный fallback — только Tesseract (PyMuPDF+pytesseract).
     # Основной OCR для сканов — Yandex Vision; текст идёт в LegalChunkerV2 без повторного Docling.
     PDF_SCAN_OCR_ENGINE: str = clean_env_str(os.getenv("PDF_SCAN_OCR_ENGINE"), "tesseract").lower()
@@ -737,6 +742,29 @@ class Config:
     )
     STATEMENT_TABLE_AGENT_MAX_TOKENS: int = int(
         os.getenv("STATEMENT_TABLE_AGENT_MAX_TOKENS", "2048") or "2048"
+    )
+    STATEMENT_REASONING_AGENT_ENABLED: bool = (
+        os.getenv("STATEMENT_REASONING_AGENT_ENABLED", "true").strip().lower() == "true"
+    )
+    STATEMENT_REASONING_MAX_REVISIONS: int = int(
+        os.getenv("STATEMENT_REASONING_MAX_REVISIONS", "2") or "2"
+    )
+    # ReAct + Python sandbox for open-ended operations analytics.
+    STATEMENT_REACT_AGENT_ENABLED: bool = (
+        os.getenv("STATEMENT_REACT_AGENT_ENABLED", "true").strip().lower() == "true"
+    )
+    STATEMENT_REACT_MAX_STEPS: int = int(os.getenv("STATEMENT_REACT_MAX_STEPS", "14") or "14")
+    STATEMENT_REACT_MAX_TOKENS: int = int(
+        os.getenv("STATEMENT_REACT_MAX_TOKENS", "4096") or "4096"
+    )
+    STATEMENT_REACT_SANDBOX_TIMEOUT_SEC: int = int(
+        os.getenv("STATEMENT_REACT_SANDBOX_TIMEOUT_SEC", "45") or "45"
+    )
+    STATEMENT_REACT_MAX_CODE_CHARS: int = int(
+        os.getenv("STATEMENT_REACT_MAX_CODE_CHARS", "12000") or "12000"
+    )
+    STATEMENT_REACT_MAX_OUTPUT_CHARS: int = int(
+        os.getenv("STATEMENT_REACT_MAX_OUTPUT_CHARS", "24000") or "24000"
     )
     # Deterministic statement analytics thresholds (overview / anomaly detection).
     # All heuristics are explainable and configurable — no LLM-invented numbers.
@@ -1166,22 +1194,89 @@ class Config:
     CASE_BM25_DEBOUNCE_SEC: float = float(os.getenv("CASE_BM25_DEBOUNCE_SEC", "1.5") or "1.5")
     CASE_ASSISTANT_RECALL_K: int = int(os.getenv("CASE_ASSISTANT_RECALL_K", "100") or "100")
     CASE_ASSISTANT_FINAL_K: int = int(os.getenv("CASE_ASSISTANT_FINAL_K", "15") or "15")
+    # Verified clause-boundary hits kept in final context after rerank (1..5).
+    CLAUSE_ANCHOR_MAX_PINS: int = int(os.getenv("CLAUSE_ANCHOR_MAX_PINS", "3") or "3")
+    # Front-matter / preamble facts (party roles, header requisites) — ingest + query channel.
+    FRONT_MATTER_FACTS_ENABLED: bool = (
+        os.getenv("FRONT_MATTER_FACTS_ENABLED", "true").strip().lower() == "true"
+    )
+    FRONT_MATTER_LAZY_BACKFILL: bool = (
+        os.getenv("FRONT_MATTER_LAZY_BACKFILL", "true").strip().lower() == "true"
+    )
+    FRONT_MATTER_EXTRACT_MAX_CHARS: int = int(
+        os.getenv("FRONT_MATTER_EXTRACT_MAX_CHARS", "5000") or "5000"
+    )
+    FRONT_MATTER_ROUTE_MIN_CONFIDENCE: float = float(
+        os.getenv("FRONT_MATTER_ROUTE_MIN_CONFIDENCE", "0.62") or "0.62"
+    )
+    FRONT_MATTER_MATCH_MIN_CONFIDENCE: float = float(
+        os.getenv("FRONT_MATTER_MATCH_MIN_CONFIDENCE", "0.68") or "0.68"
+    )
+    FRONT_MATTER_FACTS_MODEL: str = os.getenv(
+        "FRONT_MATTER_FACTS_MODEL",
+        os.getenv("CASE_ASSISTANT_ROUTER_MODEL", "yandexgpt-lite/latest"),
+    )
     # Tabular review: per-cell RAG (smaller than case chat — one file, one question)
     TABULAR_RECALL_K: int = int(os.getenv("TABULAR_RECALL_K", "30") or "30")
-    TABULAR_FINAL_K: int = int(os.getenv("TABULAR_FINAL_K", "5") or "5")
-    TABULAR_FINAL_K_SIMPLE: int = int(os.getenv("TABULAR_FINAL_K_SIMPLE", "3") or "3")
+    TABULAR_FINAL_K: int = int(os.getenv("TABULAR_FINAL_K", "8") or "8")
+    TABULAR_FINAL_K_SIMPLE: int = int(os.getenv("TABULAR_FINAL_K_SIMPLE", "8") or "8")
     TABULAR_CONTEXT_MAX_CHARS: int = int(
-        os.getenv("TABULAR_CONTEXT_MAX_CHARS", "6000") or "6000"
+        os.getenv("TABULAR_CONTEXT_MAX_CHARS", "12000") or "12000"
     )
-    # Tabular: cross-encoder rerank per cell (off by default — 17 parallel cells + rerank is very slow locally).
+    # Tabular: cross-encoder rerank per cell (on by default — same quality bar as case chat).
     TABULAR_RERANK_ENABLED: bool = (
-        os.getenv("TABULAR_RERANK_ENABLED", "false").strip().lower() == "true"
+        os.getenv("TABULAR_RERANK_ENABLED", "true").strip().lower() == "true"
+    )
+    # Tabular: rewrite lawyer column prompt → semantic (+ optional exact) queries (once per column).
+    TABULAR_SEARCH_QUERY_REWRITE_ENABLED: bool = (
+        os.getenv("TABULAR_SEARCH_QUERY_REWRITE_ENABLED", "true").strip().lower() == "true"
+    )
+    TABULAR_SEARCH_QUERY_REWRITE_MODEL: str = os.getenv(
+        "TABULAR_SEARCH_QUERY_REWRITE_MODEL",
+        os.getenv("CASE_ASSISTANT_ROUTER_MODEL", "yandexgpt-lite/latest"),
+    )
+    TABULAR_SEARCH_QUERY_REWRITE_MAX_TOKENS: int = int(
+        os.getenv("TABULAR_SEARCH_QUERY_REWRITE_MAX_TOKENS", "360") or "360"
     )
     TABULAR_MAX_PARALLEL_CELLS: int = int(
         os.getenv("TABULAR_MAX_PARALLEL_CELLS", "5") or "5"
     )
     TABULAR_EVIDENCE_REQUIRED: bool = (
         os.getenv("TABULAR_EVIDENCE_REQUIRED", "true").strip().lower() == "true"
+    )
+    # Deprecated: second LLM pass (quote→answer). Kept for env override only; pipeline ignores it.
+    TABULAR_QUOTE_THEN_ANSWER: bool = (
+        os.getenv("TABULAR_QUOTE_THEN_ANSWER", "false").strip().lower() == "true"
+    )
+    TABULAR_CONTEXT_COMPILER_ENABLED: bool = (
+        os.getenv("TABULAR_CONTEXT_COMPILER_ENABLED", "true").strip().lower() == "true"
+    )
+    TABULAR_DCP_ENABLED: bool = (
+        os.getenv("TABULAR_DCP_ENABLED", "false").strip().lower() == "true"
+    )
+    TABULAR_SECTION_ROUTER_ENABLED: bool = (
+        os.getenv("TABULAR_SECTION_ROUTER_ENABLED", "false").strip().lower() == "true"
+    )
+    TABULAR_SECTION_ROUTER_MAX_ROOTS: int = int(
+        os.getenv("TABULAR_SECTION_ROUTER_MAX_ROOTS", "5") or "5"
+    )
+    TABULAR_RETRIEVAL_ESCALATION_ENABLED: bool = (
+        os.getenv("TABULAR_RETRIEVAL_ESCALATION_ENABLED", "false").strip().lower() == "true"
+    )
+    TABULAR_MAX_RETRIEVAL_ROUNDS: int = int(
+        os.getenv("TABULAR_MAX_RETRIEVAL_ROUNDS", "2") or "2"
+    )
+    TABULAR_CROSS_REF_FOLLOW_ENABLED: bool = (
+        os.getenv("TABULAR_CROSS_REF_FOLLOW_ENABLED", "false").strip().lower() == "true"
+    )
+    TABULAR_CROSS_REF_MAX_CHARS: int = int(
+        os.getenv("TABULAR_CROSS_REF_MAX_CHARS", "2500") or "2500"
+    )
+    TABULAR_SECOND_EXTRACT_ON_WEAK: bool = (
+        os.getenv("TABULAR_SECOND_EXTRACT_ON_WEAK", "false").strip().lower() == "true"
+    )
+    TABULAR_DCP_LLM_ENRICH: bool = (
+        os.getenv("TABULAR_DCP_LLM_ENRICH", "false").strip().lower() == "true"
     )
     TABULAR_CONFIDENCE_REVIEW_THRESHOLD: float = float(
         os.getenv("TABULAR_CONFIDENCE_REVIEW_THRESHOLD", "0.7") or "0.7"
@@ -1204,6 +1299,10 @@ class Config:
     )
     CASE_ASSISTANT_PARENT_CONTEXT_ENABLED: bool = (
         os.getenv("CASE_ASSISTANT_PARENT_CONTEXT_ENABLED", "true").strip().lower() == "true"
+    )
+    # Max chars of a hard section assembled for LLM after micro→section expand.
+    CASE_ASSISTANT_SECTION_CONTEXT_MAX_CHARS: int = int(
+        os.getenv("CASE_ASSISTANT_SECTION_CONTEXT_MAX_CHARS", "8000") or "8000"
     )
     CASE_ASSISTANT_RERANK_BATCH_SIZE: int = int(
         os.getenv("CASE_ASSISTANT_RERANK_BATCH_SIZE", "32") or "32"
@@ -1516,19 +1615,20 @@ class Config:
     YANDEX_EMBEDDING_SEGMENT_OVERLAP_CHARS: int = int(
         os.getenv("YANDEX_EMBEDDING_SEGMENT_OVERLAP_CHARS", "150") or "150"
     )
-    # OpenAI-compat: один текст на запрос; time-window micro-batching (см. yandex_embedding_http).
+    # OpenAI-compat: один текст на запрос; continuous pipeline + RPS token-bucket
+    # (см. yandex_embedding_http). Cap concurrent in-flight HTTP posts separately
+    # from the per-second start budget.
     YANDEX_EMBEDDING_RPS_LIMIT: int = int(os.getenv("YANDEX_EMBEDDING_RPS_LIMIT", "10") or "10")
-    # gRPC-only: параллель одиночных вызовов SDK (HTTP path uses RPS_LIMIT above).
     YANDEX_EMBEDDING_MAX_PARALLEL_REQUESTS: int = int(
         os.getenv("YANDEX_EMBEDDING_MAX_PARALLEL_REQUESTS")
-        or os.getenv("YANDEX_EMBEDDING_BATCH_SIZE", "8")
-        or "8"
+        or os.getenv("YANDEX_EMBEDDING_BATCH_SIZE", "32")
+        or "32"
     )
     YANDEX_EMBEDDING_MIN_REQUEST_INTERVAL_SEC: float = float(
         os.getenv("YANDEX_EMBEDDING_MIN_REQUEST_INTERVAL_SEC", "0.11") or "0.11"
     )
-    # Deprecated alias — не batch API; для gRPC parallel fallback.
-    YANDEX_EMBEDDING_BATCH_SIZE: int = int(os.getenv("YANDEX_EMBEDDING_BATCH_SIZE", "8") or "8")
+    # Deprecated alias — не batch API; gRPC parallel + HTTP in-flight fallback.
+    YANDEX_EMBEDDING_BATCH_SIZE: int = int(os.getenv("YANDEX_EMBEDDING_BATCH_SIZE", "32") or "32")
 
     # GigaChat (Сбер) - с поддержкой function calling
     GIGACHAT_CREDENTIALS: str = clean_env_str(os.getenv("GIGACHAT_CREDENTIALS", ""))  # Authorization Key (base64 ClientID:ClientSecret)

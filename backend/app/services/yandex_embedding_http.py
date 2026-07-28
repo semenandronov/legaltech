@@ -1,12 +1,15 @@
-"""Async OpenAI-compat Yandex embeddings with time-window RPS control.
+"""Async OpenAI-compat Yandex embeddings with continuous pipeline admission.
 
 Yandex accepts exactly one text per /embeddings request. This module runs a
 process-wide background asyncio worker that:
 
 - reuses one httpx.AsyncClient (keep-alive / TLS session reuse);
-- fires micro-batches of (RPS_LIMIT - 1) requests in parallel each second;
-- sleeps only the remainder of the 1s window (adaptive pacing);
-- retries transient errors including HTTP 429 with exponential backoff.
+- admits work through a continuous pipeline (not batch-then-wait);
+- caps starts with a token-bucket RPS limiter;
+- caps concurrency with an in-flight semaphore so one slow request never
+  blocks siblings that already have a free slot;
+- retries transient errors including HTTP 429 with exponential backoff
+  (each retry re-acquires an RPS token).
 
 All sync callers (LangChain embed_documents, file ingest threads) share one
 global queue so concurrent files do not oversubscribe the API quota.
@@ -20,7 +23,7 @@ import threading
 import time
 from concurrent.futures import Future
 from dataclasses import dataclass
-from typing import Any, List, Optional
+from typing import Any, Awaitable, Callable, List, Optional, Set
 
 from app.config import config
 
@@ -29,6 +32,7 @@ logger = logging.getLogger(__name__)
 _EMBEDDING_DIM = 256
 _MAX_429_RETRIES = 6
 _REQUEST_TIMEOUT_SEC = 60.0
+_DEFAULT_MAX_IN_FLIGHT = 32
 
 
 def embedding_vector_dim() -> int:
@@ -40,20 +44,32 @@ def _embedding_rps_limit() -> int:
     return max(1, min(raw, 500))
 
 
-def _micro_batch_size() -> int:
-    """Stay one request below the quota to avoid sliding-window 429s."""
-    return max(1, _embedding_rps_limit() - 1)
+def _rps_budget() -> float:
+    """Effective start rate. Leave one token of headroom against sliding-window 429s."""
+    return float(max(1, _embedding_rps_limit() - 1))
 
 
-def _max_parallel_burst() -> int:
-    """Max in-flight HTTP requests per 1s window (steady rate, not one giant burst)."""
-    raw = int(getattr(config, "YANDEX_EMBEDDING_MAX_PARALLEL_REQUESTS", 8) or 8)
+def _max_in_flight() -> int:
+    """Max concurrent HTTP embedding requests (independent of RPS window wait)."""
+    raw = int(
+        getattr(config, "YANDEX_EMBEDDING_MAX_PARALLEL_REQUESTS", 0)
+        or getattr(config, "YANDEX_EMBEDDING_BATCH_SIZE", 0)
+        or _DEFAULT_MAX_IN_FLIGHT
+    )
     return max(1, min(raw, _embedding_rps_limit()))
 
 
+# Backward-compatible aliases used by older tests / callers.
+def _max_parallel_burst() -> int:
+    return _max_in_flight()
+
+
+def _micro_batch_size() -> int:
+    return max(1, _embedding_rps_limit() - 1)
+
+
 def _batch_cap() -> int:
-    """Parallel requests fired together each second."""
-    return min(_micro_batch_size(), _max_parallel_burst())
+    return min(_micro_batch_size(), _max_in_flight())
 
 
 def _window_seconds() -> float:
@@ -135,6 +151,40 @@ class _EmbedJob:
     future: Future[List[float]]
 
 
+class _AdmissionControl:
+    """Token-bucket RPS + in-flight semaphore.
+
+    Runs on a single asyncio event loop — no locking required beyond the
+    cooperative await points.
+    """
+
+    def __init__(self, *, rps: float, max_in_flight: int) -> None:
+        self._rps = max(1.0, float(rps))
+        self._tokens = self._rps
+        self._updated = time.monotonic()
+        self._sem = asyncio.Semaphore(max(1, int(max_in_flight)))
+        self.max_in_flight = max(1, int(max_in_flight))
+
+    async def acquire_inflight(self) -> None:
+        await self._sem.acquire()
+
+    def release_inflight(self) -> None:
+        self._sem.release()
+
+    async def acquire_rps(self) -> None:
+        while True:
+            now = time.monotonic()
+            elapsed = now - self._updated
+            if elapsed > 0:
+                self._tokens = min(self._rps, self._tokens + elapsed * self._rps)
+                self._updated = now
+            if self._tokens >= 1.0:
+                self._tokens -= 1.0
+                return
+            wait = (1.0 - self._tokens) / self._rps
+            await asyncio.sleep(wait)
+
+
 class YandexEmbeddingHttpEngine:
     """Process-wide async HTTP embedding worker (singleton)."""
 
@@ -145,6 +195,7 @@ class YandexEmbeddingHttpEngine:
         self._thread: Optional[threading.Thread] = None
         self._ready = threading.Event()
         self._start_lock = threading.Lock()
+        self._inflight_tasks: Set[asyncio.Task[None]] = set()
 
     def _ensure_started(self) -> asyncio.AbstractEventLoop:
         if self._loop is not None and self._thread is not None and self._thread.is_alive():
@@ -181,54 +232,58 @@ class YandexEmbeddingHttpEngine:
         import httpx
 
         assert self._queue is not None
-        burst = _batch_cap()
+        max_flight = _max_in_flight()
+        rps = _rps_budget()
+        admission = _AdmissionControl(rps=rps, max_in_flight=max_flight)
         limits = httpx.Limits(
-            max_keepalive_connections=max(20, burst * 2),
-            max_connections=max(50, burst * 4),
+            max_keepalive_connections=max(20, max_flight * 2),
+            max_connections=max(50, max_flight * 4),
         )
         url = f"{_yandex_openai_compat_base_url().rstrip('/')}/embeddings"
+        logger.info(
+            "Yandex embedding HTTP pipeline started (rps=%.0f max_in_flight=%s)",
+            rps,
+            max_flight,
+        )
 
         async with httpx.AsyncClient(limits=limits, timeout=_REQUEST_TIMEOUT_SEC) as client:
-            sent_in_window = 0
-            window_start = time.monotonic()
-
             while True:
-                now = time.monotonic()
-                if now - window_start >= _window_seconds():
-                    window_start = now
-                    sent_in_window = 0
-
-                quota_left = _embedding_rps_limit() - sent_in_window
-                if quota_left <= 0:
-                    await asyncio.sleep(max(0.0, _window_seconds() - (now - window_start)))
-                    window_start = time.monotonic()
-                    sent_in_window = 0
-                    quota_left = _embedding_rps_limit()
-
-                take = min(_batch_cap(), quota_left)
-                first = await self._dequeue_job()
-                batch: List[_EmbedJob] = [first]
-                while len(batch) < take:
-                    try:
-                        batch.append(self._dequeue_job_nowait())
-                    except asyncio.QueueEmpty:
-                        break
-
-                await asyncio.gather(
-                    *[self._execute_job(client, url, job) for job in batch],
-                    return_exceptions=False,
+                job = await self._dequeue_job()
+                # Hold an in-flight slot before spawning so the dispatcher
+                # back-pressures on concurrency, not on RPS alone.
+                await admission.acquire_inflight()
+                task = asyncio.create_task(
+                    self._process_job(client, url, job, admission),
+                    name="yandex-emb-job",
                 )
-                sent_in_window += len(batch)
+                self._inflight_tasks.add(task)
+                task.add_done_callback(self._inflight_tasks.discard)
 
-                assert self._priority_queue is not None and self._queue is not None
-                has_backlog = not self._priority_queue.empty() or not self._queue.empty()
-                if sent_in_window >= _embedding_rps_limit() and has_backlog:
-                    elapsed = time.monotonic() - window_start
-                    sleep_needed = _window_seconds() - elapsed
-                    if sleep_needed > 0:
-                        await asyncio.sleep(sleep_needed)
-                    window_start = time.monotonic()
-                    sent_in_window = 0
+    async def _process_job(
+        self,
+        client: Any,
+        url: str,
+        job: _EmbedJob,
+        admission: _AdmissionControl,
+    ) -> None:
+        try:
+            if job.future.cancelled():
+                return
+            try:
+                vector = await self._fetch_embedding(
+                    client,
+                    url,
+                    model=job.model,
+                    text=job.text,
+                    acquire_rps=admission.acquire_rps,
+                )
+                if not job.future.cancelled():
+                    job.future.set_result(vector)
+            except Exception as exc:
+                if not job.future.cancelled():
+                    job.future.set_exception(exc)
+        finally:
+            admission.release_inflight()
 
     def _queues_empty(self) -> bool:
         assert self._queue is not None and self._priority_queue is not None
@@ -269,6 +324,7 @@ class YandexEmbeddingHttpEngine:
             return self._queue.get_nowait()
 
     async def _execute_job(self, client: Any, url: str, job: _EmbedJob) -> None:
+        """Legacy helper kept for tests that patch ``_fetch_embedding``."""
         if job.future.cancelled():
             return
         try:
@@ -287,7 +343,11 @@ class YandexEmbeddingHttpEngine:
         model: str,
         text: str,
         attempt: int = 0,
+        acquire_rps: Optional[Callable[[], Awaitable[None]]] = None,
     ) -> List[float]:
+        if acquire_rps is not None:
+            await acquire_rps()
+
         headers = _yandex_openai_compat_http_headers()
         body = {
             "model": model,
@@ -309,7 +369,12 @@ class YandexEmbeddingHttpEngine:
             )
             await asyncio.sleep(delay)
             return await self._fetch_embedding(
-                client, url, model=model, text=text, attempt=attempt + 1
+                client,
+                url,
+                model=model,
+                text=text,
+                attempt=attempt + 1,
+                acquire_rps=acquire_rps,
             )
 
         if response.status_code >= 400:
@@ -324,7 +389,12 @@ class YandexEmbeddingHttpEngine:
                 raise
             await asyncio.sleep(0.35 * (2**attempt))
             return await self._fetch_embedding(
-                client, url, model=model, text=text, attempt=attempt + 1
+                client,
+                url,
+                model=model,
+                text=text,
+                attempt=attempt + 1,
+                acquire_rps=acquire_rps,
             )
 
     def _submit(self, *, model: str, text: str, priority: bool = False) -> Future[List[float]]:

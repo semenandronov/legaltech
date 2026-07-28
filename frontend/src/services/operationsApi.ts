@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { extractErrorMessage } from './api'
+import type { AssistantActivityPayload } from '@/lib/assistantActivity'
 import type { ColumnValueFilterCondition } from '@/utils/tabularColumnFilters'
 import type { BankruptcyPeriodId, OperationsViewMode } from '@/utils/operationsBankruptcyPeriods'
 import { assertDownloadBlob, extractBlobErrorMessage } from '@/utils/fileDownload'
@@ -358,6 +359,7 @@ export const operationsApi = {
     uiState: OperationsSessionUiState,
     callbacks: {
       onTextDelta?: (delta: string) => void
+      onAssistantActivity?: (payload: AssistantActivityPayload) => void
       onDone?: (payload: {
         answer: string
         citations: Array<{ file: string; file_id: string }>
@@ -421,6 +423,11 @@ export const operationsApi = {
           if (eventType === 'text_delta' || payload.type === 'text_delta') {
             const delta = payload.text || payload.delta || ''
             if (delta) callbacks.onTextDelta?.(delta)
+          } else if (
+            eventType === 'assistant_activity' ||
+            payload.type === 'assistant_activity'
+          ) {
+            callbacks.onAssistantActivity?.(payload as AssistantActivityPayload)
           } else if (eventType === 'tabular_chat_done' || payload.type === 'tabular_chat_done') {
             callbacks.onDone?.({
               answer: payload.answer || '',

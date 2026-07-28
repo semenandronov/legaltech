@@ -66,6 +66,14 @@ class CellRetrievalParams:
     column_type: str
     search_query: str = ""
     query_embedding: Tuple[float, ...] = ()
+    rewrite_method: str = ""
+    rewrite_rationale: str = ""
+    exact_query: str = ""
+    column_label: str = ""
+    lexical_terms: Tuple[str, ...] = ()
+    exact_literals: Tuple[str, ...] = ()
+    search_queries: Tuple[str, ...] = ()
+    file_context: Optional[Any] = None  # TabularFileContextPackage when DCP enabled
 
 
 @dataclass
@@ -76,6 +84,8 @@ class PreparedCellContext:
     context_text: str
     included_docs: List[Document]
     error: Optional[str] = None
+    navigation_context: str = ""
+    retrieval_meta: Optional[Dict[str, Any]] = None
 
 
 @dataclass(frozen=True)
@@ -141,8 +151,8 @@ def tabular_context_max_chars() -> int:
 
 
 def tabular_rerank_enabled() -> bool:
-    """Cross-encoder rerank per cell (off by default; single-file scope uses hybrid top-k)."""
-    return bool(getattr(config, "TABULAR_RERANK_ENABLED", False))
+    """Cross-encoder rerank per cell (on by default; align with case-assistant RAG)."""
+    return bool(getattr(config, "TABULAR_RERANK_ENABLED", True))
 
 
 def truncate_recall_to_final_k(docs: List[Document], final_k: int) -> List[Document]:
@@ -207,7 +217,11 @@ def augment_context_for_column(
 
 
 def _tabular_cell_budget_profile(column_type: str) -> Dict[str, Any]:
-    """Single-file tabular retrieval budget (not whole-case corpus scale)."""
+    """Single-file tabular retrieval budget (not whole-case corpus scale).
+
+    Small-to-big: recall/rerank on micro leaves, expand to macro parents for LLM.
+    Geometry/highlight always uses the micro recall pool (see docs_for_cell_geometry).
+    """
     final_k = tabular_final_k(column_type)
     recall_k = tabular_recall_k()
     max_chars = tabular_context_max_chars()
@@ -218,8 +232,23 @@ def _tabular_cell_budget_profile(column_type: str) -> Dict[str, Any]:
         "max_sources": final_k,
         "rerank_enabled": tabular_rerank_enabled(),
         "skip_micro_recall_cap": True,
-        "parent_context_enabled": False,
+        "parent_context_enabled": True,
     }
+
+
+def docs_for_cell_geometry(prepared: PreparedCellContext) -> List[Document]:
+    """
+    Leaf chunks for PDF highlight / bbox.
+
+    Prefer the micro recall pool (file_chunks). Never use macro parents for pixels —
+    better no highlight than a wrong parent box.
+    """
+    from app.services.tabular_source_geometry import filter_docs_for_geometry
+
+    primary = filter_docs_for_geometry(prepared.file_chunks or [])
+    if primary:
+        return primary
+    return filter_docs_for_geometry(prepared.included_docs or [])
 
 
 def cell_retrieval_params_from_models(
@@ -227,22 +256,60 @@ def cell_retrieval_params_from_models(
     column: TabularColumn,
     *,
     column_run: Optional["TabularColumnRunContext"] = None,
+    file_context: Optional[Any] = None,
 ) -> CellRetrievalParams:
     """Snapshot ORM fields on the request thread before asyncio.to_thread workers."""
     from app.services.tabular_column_run_context import TabularColumnRunContext
+    from app.services.tabular_search_query_rewrite import (
+        column_source_query,
+        rewrite_tabular_search_query,
+    )
 
     run_ctx: Optional[TabularColumnRunContext] = column_run
-    search_query = run_ctx.search_query if run_ctx else build_retrieval_query(column)
-    query_embedding = run_ctx.query_embedding if run_ctx else ()
+    source_query = column_source_query(column)
+    lexical_terms: Tuple[str, ...] = ()
+    exact_literals: Tuple[str, ...] = ()
+    search_queries: Tuple[str, ...] = ()
+    if run_ctx:
+        search_query = run_ctx.search_query
+        query_embedding = run_ctx.query_embedding
+        rewrite_method = run_ctx.rewrite_method
+        rewrite_rationale = run_ctx.rewrite_rationale
+        exact_query = (run_ctx.exact_query or "") or ""
+        lexical_terms = tuple(run_ctx.lexical_terms or ())
+        exact_literals = tuple(run_ctx.exact_literals or ())
+        search_queries = tuple(run_ctx.search_queries or ()) or (search_query,)
+        if run_ctx.source_query:
+            source_query = run_ctx.source_query
+    else:
+        # No column prewarm: heuristic only (avoid per-cell LLM).
+        rewritten = rewrite_tabular_search_query(column, allow_llm=False)
+        search_query = rewritten.search_query or build_retrieval_query(column)
+        query_embedding = ()
+        rewrite_method = rewritten.method
+        rewrite_rationale = rewritten.rationale
+        source_query = rewritten.source_query or source_query
+        exact_query = (rewritten.exact_query or "") or ""
+        lexical_terms = tuple(rewritten.lexical_terms or ())
+        exact_literals = tuple(rewritten.exact_literals or ())
+        search_queries = tuple(rewritten.search_queries or ()) or (search_query,)
     return CellRetrievalParams(
         case_id=str(file.case_id),
         file_id=str(file.id),
         filename=str(file.filename or ""),
         original_text=str(file.original_text or ""),
-        query=build_retrieval_query(column),
+        query=source_query,
         column_type=str(column.column_type or "text"),
         search_query=search_query,
         query_embedding=query_embedding,
+        rewrite_method=rewrite_method,
+        rewrite_rationale=rewrite_rationale,
+        exact_query=exact_query,
+        column_label=str(getattr(column, "column_label", None) or ""),
+        lexical_terms=lexical_terms,
+        exact_literals=exact_literals,
+        search_queries=search_queries,
+        file_context=file_context,
     )
 
 
@@ -269,24 +336,110 @@ def retrieve_case_assistant_context_for_cell(
 
     Returns (context_text, included_docs, recall_pool_docs, meta).
     """
-    query = (params.search_query or params.query).strip()
-    if not query:
+    from app.services.tabular_context_compiler import (
+        compile_tabular_cell_context,
+        tabular_context_compiler_enabled,
+    )
+
+    budget = _tabular_cell_budget_profile(params.column_type)
+    if tabular_context_compiler_enabled():
+        from app.services.observability.case_assistant_langfuse_tracing import case_assistant_span
+
+        with case_assistant_span(
+            "tabular.compile_context",
+            input_payload={
+                "file_id": params.file_id,
+                "column_type": params.column_type,
+            },
+            metadata={"case_id": params.case_id},
+        ):
+            return compile_tabular_cell_context(
+                rag_service,
+                params=params,
+                db=db,
+                budget=budget,
+                doc_belongs_to_file=doc_belongs_to_file,
+            )
+
+    # Legacy path (compiler disabled)
+    search_query = (params.search_query or params.query).strip()
+    if not search_query:
         return "", [], [], {"status": "empty_query"}
 
+    exact_query = (params.exact_query or "").strip() or None
+    lexical_terms = tuple(
+        dict.fromkeys(
+            [
+                *(str(t).strip() for t in (params.lexical_terms or ()) if str(t).strip()),
+                *(str(t).strip() for t in (params.exact_literals or ()) if str(t).strip()),
+            ]
+        )
+    )
+    # Cross-encoder: include anchors / lexical terms so related sections lose to proof.
+    rerank_bits = [exact_query or "", " ".join(lexical_terms), search_query]
+    rerank_question = " ".join(b for b in rerank_bits if b).strip() or search_query
+
     attached_file_ids = [params.file_id]
-    budget = _tabular_cell_budget_profile(params.column_type)
     final_k = final_k_for_budget(budget)
-    meta: Dict[str, Any] = {"pipeline": True, "file_id": params.file_id, "corpus_size": 1}
+    meta: Dict[str, Any] = {
+        "pipeline": True,
+        "file_id": params.file_id,
+        "corpus_size": 1,
+        "source_query": (params.query or "")[:500],
+        "search_query": search_query[:500],
+        "exact_query": (exact_query or "")[:64],
+        "lexical_terms": list(lexical_terms)[:12],
+        "rewrite_method": params.rewrite_method or "",
+        "rewrite_rationale": (params.rewrite_rationale or "")[:200],
+    }
+
+    # Front-matter / identity channel (party roles, header requisites).
+    # Prefer lawyer prompt for intent; fall back to rewritten search query.
+    # Clause-exact / lexical keyword questions stay on the hybrid + pin path.
+    if not exact_query and not lexical_terms:
+        try:
+            from app.services.front_matter_facts import resolve_front_matter_evidence
+
+            fm_question = (params.query or search_query).strip()
+            fm = resolve_front_matter_evidence(
+                db,
+                file_id=params.file_id,
+                question=fm_question,
+                column_label=params.column_label or "",
+                filename=params.filename or "",
+                original_text=params.original_text or "",
+                allow_llm=True,
+            )
+            meta["front_matter"] = fm.meta
+            if fm.used and fm.context_text.strip() and fm.documents:
+                meta["status"] = "front_matter_hit"
+                meta["docs"] = len(fm.documents)
+                return fm.context_text, list(fm.documents), list(fm.documents), meta
+        except Exception as fm_exc:
+            logger.warning(
+                "Front-matter channel failed file=%s: %s",
+                params.file_id,
+                fm_exc,
+                exc_info=True,
+            )
+            meta["front_matter_error"] = str(fm_exc)[:200]
+    else:
+        meta["front_matter"] = {
+            "skipped": "exact_or_lexical_query",
+            "exact_query": bool(exact_query),
+            "lexical_terms": len(lexical_terms),
+        }
 
     query_embedding = list(params.query_embedding) if params.query_embedding else None
-    search_query = query
 
     retrieval_task = None
     if pipeline_enabled() and query_embedding is None:
         try:
             router = create_case_retrieval_router()
+            # Scope only: keep column-level rewritten search_query (router would
+            # otherwise pass the attached-file path through unchanged anyway).
             retrieval_task = router.route(
-                question=query,
+                question=search_query,
                 case_id=params.case_id,
                 db=db,
                 attached_file_ids=attached_file_ids,
@@ -294,7 +447,6 @@ def retrieve_case_assistant_context_for_cell(
             )
             meta["scope_mode"] = retrieval_task.scope_mode
             meta["router_confidence"] = retrieval_task.confidence
-            search_query = (retrieval_task.search_query if retrieval_task else None) or query
         except Exception as exc:
             logger.warning(
                 "Tabular cell retrieval router failed file=%s: %s",
@@ -314,6 +466,7 @@ def retrieve_case_assistant_context_for_cell(
         attached_file_ids=attached_file_ids,
         budget_profile=budget,
         query_embedding=query_embedding,
+        exact_query=exact_query,
     )
     meta.update(recall_meta or {})
     recall_docs = [
@@ -323,19 +476,71 @@ def retrieve_case_assistant_context_for_cell(
         and getattr(d, "page_content", None)
         and doc_belongs_to_file(d, params.file_id, params.filename)
     ]
+
+    # Independent lexical channel: literal term hits cannot sink under dense noise.
+    if lexical_terms:
+        try:
+            from app.services.retrieval_channels import (
+                merge_retrieval_channels,
+                recall_lexical_term_docs,
+            )
+
+            vector_store = getattr(
+                getattr(rag_service, "document_processor", None),
+                "vector_store",
+                None,
+            )
+            lexical_docs = recall_lexical_term_docs(
+                case_id=params.case_id,
+                file_ids=attached_file_ids,
+                terms=lexical_terms,
+                vector_store=vector_store,
+                k=max(8, final_k),
+            )
+            lexical_docs = [
+                d
+                for d in lexical_docs
+                if d is not None and doc_belongs_to_file(d, params.file_id, params.filename)
+            ]
+            meta["lexical_recall_docs"] = len(lexical_docs)
+            if lexical_docs:
+                recall_docs = merge_retrieval_channels(
+                    lexical_docs=lexical_docs,
+                    hybrid_docs=recall_docs,
+                )
+        except Exception as lex_exc:
+            logger.warning(
+                "Lexical recall failed file=%s: %s",
+                params.file_id,
+                lex_exc,
+                exc_info=True,
+            )
+            meta["lexical_recall_error"] = str(lex_exc)[:200]
+
     if not recall_docs:
         meta["status"] = "no_recall_docs"
         return "", [], [], meta
 
     ranked_docs, resolve_meta = rerank_and_resolve_documents(
-        question=search_query,
+        question=rerank_question,
         docs=recall_docs,
         final_k=final_k,
         case_id=params.case_id,
         rag_service=rag_service,
         budget_profile=budget,
+        exact_query=exact_query,
+        pin_clause_anchors=True,
+        lexical_terms=lexical_terms,
     )
     meta.update(resolve_meta or {})
+
+    try:
+        from app.services.retrieval_channels import prefer_short_docs_for_prompt
+
+        ranked_docs = prefer_short_docs_for_prompt(ranked_docs)
+    except Exception:
+        pass
+
     assembled = assemble_rag_output(
         rag_service=rag_service,
         docs=ranked_docs,
@@ -366,17 +571,20 @@ def prepare_cell_retrieval_sync(
 
     db = SessionLocal()
     try:
-        context_text, included_docs, recall_pool, _meta = retrieve_case_assistant_context_for_cell(
+        context_text, included_docs, recall_pool, retrieval_meta = retrieve_case_assistant_context_for_cell(
             rag_service,
             params=params,
             db=db,
         )
+        navigation = str((retrieval_meta or {}).get("navigation_context") or "")
 
         if context_text.strip() and included_docs:
             return PreparedCellContext(
                 file_chunks=recall_pool,
                 context_text=context_text,
                 included_docs=included_docs,
+                navigation_context=navigation,
+                retrieval_meta=retrieval_meta,
             )
 
         if not params.original_text.strip():
@@ -477,12 +685,14 @@ def _build_system_prompt_content(column: TabularColumn) -> str:
         "ВАЖНО:\n"
         "- Указывай source_page только как целое число страницы; если неизвестно — не указывай поле\n"
         '- Указывай source_section при наличии (например, "Раздел 3.1")\n'
-        "- source_references — массив цитат с полями text, page и при необходимости section\n"
-        "- verbatim_extract — дословная цитата-поддержка ответа (если применимо)\n"
-        "- Указывай reasoning — откуда взято значение\n"
+        "- Для любого ответа кроме N/A обязательны: verbatim_extract (дословная цитата) "
+        "и source_references с полем text — цитата должна буквально встречаться во фрагментах\n"
+        "- Сначала найди цитату-основание, затем выведи cell_value только из этой цитаты\n"
+        "- Указывай source_references — массив цитат с полями text, page и при необходимости section\n"
+        "- Указывай reasoning — как cell_value следует из цитаты\n"
         "- Указывай confidence (0.0–1.0)\n"
         '- Если информации нет в фрагментах — cell_value = "N/A" (не выдумывай)\n'
-        "- Не отвечай без опоры на приведённые фрагменты\n"
+        "- Не отвечай без дословной опоры на приведённые фрагменты\n"
         "- Для tag используй только опции из списка выше"
     )
 
@@ -499,27 +709,43 @@ def build_extraction_prompt(column: TabularColumn) -> ChatPromptTemplate:
                 "human",
                 """Вопрос: {question}
 
+{navigation_block}
 Фрагменты документа (уже отобраны по релевантности):
 {context}
 
-Извлеки значение для ячейки таблицы согласно типу {column_type}.
-Если тип verbatim — приведи точную цитату в verbatim_extract.""",
+Сначала выбери дословную цитату-основание из фрагментов, затем извлеки значение
+для ячейки согласно типу {column_type}. Без цитаты во фрагментах — N/A.
+Если тип verbatim — cell_value и verbatim_extract совпадают.""",
             ),
         ]
     )
 
 
-async def invoke_structured_cell_extraction(
+async def _invoke_single_pass_cell_extraction(
     llm,
     *,
     column: TabularColumn,
     context_text: str,
     normalize_fn: Callable[[Dict[str, Any], TabularColumn, File], Dict[str, Any]],
     file: File,
+    navigation_context: str = "",
 ) -> TabularCellExtractionModel:
-    """Single LLM call with merged retrieval context and type-specific structured output."""
+    """Single structured LLM call over the full retrieval bag (evidence gate applies later)."""
     prompt = build_extraction_prompt(column)
     schema = extraction_schema_for_column(column)
+    nav_block = ""
+    if (navigation_context or "").strip():
+        nav_block = (
+            "Контекст навигации (куда смотрели в документе; не цитата):\n"
+            f"{navigation_context.strip()}\n"
+        )
+
+    invoke_payload = {
+        "question": column.prompt,
+        "navigation_block": nav_block,
+        "context": context_text,
+        "column_type": column.column_type,
+    }
 
     async def _finalize(raw_result: Any) -> TabularCellExtractionModel:
         if hasattr(raw_result, "model_dump"):
@@ -529,30 +755,19 @@ async def invoke_structured_cell_extraction(
         else:
             result_dict = raw_result.__dict__ if hasattr(raw_result, "__dict__") else {}
         result_dict = normalize_fn(result_dict, column, file)
+        result_dict.setdefault("extraction_method", "llm_rag")
         return typed_extraction_to_cell_model(result_dict, column=column)
 
     try:
         structured_llm = llm.with_structured_output(schema, method="json_mode")
         chain = prompt | structured_llm
-        raw = await chain.ainvoke(
-            {
-                "question": column.prompt,
-                "context": context_text,
-                "column_type": column.column_type,
-            }
-        )
+        raw = await chain.ainvoke(invoke_payload)
         return await _finalize(raw)
     except Exception as structured_err:
         logger.warning("Tabular structured output failed, fallback chain: %s", structured_err)
 
     chain = prompt | llm
-    response = await chain.ainvoke(
-        {
-            "question": column.prompt,
-            "context": context_text,
-            "column_type": column.column_type,
-        }
-    )
+    response = await chain.ainvoke(invoke_payload)
     response_text = response.content if hasattr(response, "content") else str(response)
 
     try:
@@ -584,37 +799,111 @@ async def invoke_structured_cell_extraction(
     )
 
 
+async def invoke_structured_cell_extraction(
+    llm,
+    *,
+    column: TabularColumn,
+    context_text: str,
+    normalize_fn: Callable[[Dict[str, Any], TabularColumn, File], Dict[str, Any]],
+    file: File,
+    navigation_context: str = "",
+) -> TabularCellExtractionModel:
+    """Single-pass structured extraction; evidence-first gate validates quotes."""
+    return await _invoke_single_pass_cell_extraction(
+        llm,
+        column=column,
+        context_text=context_text,
+        normalize_fn=normalize_fn,
+        file=file,
+        navigation_context=navigation_context,
+    )
+
+
 def enrich_source_from_documents(
     result: TabularCellExtractionModel,
     included_docs: List[Document],
 ) -> TabularCellExtractionModel:
-    """Fill provenance fields from top retrieved chunk when the model omitted them."""
+    """
+    Attach page/section/geometry from chunks that contain the model's quote.
+
+    Never invent verbatim_extract or source_references from the top chunk —
+    that would fake evidence and defeat the evidence-first gate.
+    """
     if not included_docs:
         return result
-    top = included_docs[0]
-    meta = top.metadata or {}
-    page = meta.get("source_page")
-    if not result.source_page and page is not None:
-        result.source_page = page
-    if not result.source_section and meta.get("source_section"):
-        result.source_section = meta.get("source_section")
-    chunk_text = (top.page_content or "").strip()
-    if not result.verbatim_extract and chunk_text:
-        if result.column_type == "verbatim":
-            result.verbatim_extract = chunk_text[:500]
-        elif not result.source_references:
-            result.verbatim_extract = chunk_text[:400]
-    if not result.source_references and chunk_text:
-        result.source_references = [
-            {
-                "text": chunk_text[:500],
-                "page": page,
-                "section": meta.get("source_section"),
-                "char_start": meta.get("char_start"),
-                "char_end": meta.get("char_end"),
-            }
-        ]
+
+    from app.services.tabular_quote_then_answer import normalize_for_grounding
+
+    anchor = (result.verbatim_extract or "").strip()
+    if not anchor and isinstance(result.source_references, list):
+        for ref in result.source_references:
+            if isinstance(ref, dict):
+                candidate = str(ref.get("text") or "").strip()
+                if candidate:
+                    anchor = candidate
+                    break
+
+    if not anchor:
+        # Only page/section from top hit when the model gave no quote at all.
+        top = included_docs[0]
+        meta = top.metadata or {}
+        page = meta.get("source_page")
+        if not result.source_page and page is not None:
+            result.source_page = page
+        if not result.source_section and meta.get("source_section"):
+            result.source_section = meta.get("source_section")
+        return result
+
+    anchor_norm = normalize_for_grounding(anchor)
+    for doc in included_docs:
+        content_norm = normalize_for_grounding(doc.page_content or "")
+        if not content_norm or anchor_norm not in content_norm:
+            continue
+        meta = doc.metadata or {}
+        page = meta.get("source_page")
+        if not result.source_page and page is not None:
+            result.source_page = page
+        if not result.source_section and meta.get("source_section"):
+            result.source_section = meta.get("source_section")
+        if not result.source_references:
+            result.source_references = [
+                {
+                    "text": anchor[:500],
+                    "page": page,
+                    "section": meta.get("source_section"),
+                    "char_start": meta.get("char_start"),
+                    "char_end": meta.get("char_end"),
+                }
+            ]
+        if not result.verbatim_extract:
+            result.verbatim_extract = anchor[:500]
+        break
     return result
+
+
+def try_extraction_from_front_matter(
+    included_docs: List[Document],
+    *,
+    column: TabularColumn,
+) -> Optional[TabularCellExtractionModel]:
+    """
+    When retrieval is a front-matter hit, write the matched fact ``value`` into the
+    cell without a second extract-LLM call (avoids N/A on structured fact cards).
+    """
+    from app.services.front_matter_facts import extraction_dict_from_front_matter_docs
+
+    payload = extraction_dict_from_front_matter_docs(included_docs)
+    if not payload:
+        return None
+    try:
+        return typed_extraction_to_cell_model(payload, column=column)
+    except Exception:
+        logger.warning(
+            "Front-matter direct extraction failed column=%s",
+            getattr(column, "id", None),
+            exc_info=True,
+        )
+        return None
 
 
 @dataclass
@@ -802,21 +1091,25 @@ async def _run_routed_sql_flag_cell_extraction(
     if not context_text.strip():
         return None
 
-    extraction = await invoke_structured_cell_extraction(
-        llm,
-        column=column,
-        context_text=context_text,
-        normalize_fn=normalize_fn,
-        file=file,
-    )
-    transaction_rows = list(sql_ctx.rows) if sql_ctx and sql_ctx.ok else []
-    extraction = enrich_extraction_from_routed_context(
-        extraction,
-        data_plane=plane,
-        file=file,
-        included_docs=included_docs,
-        transaction_rows=transaction_rows,
-    )
+    extraction = try_extraction_from_front_matter(included_docs, column=column)
+    if extraction is None:
+        extraction = await invoke_structured_cell_extraction(
+            llm,
+            column=column,
+            context_text=context_text,
+            normalize_fn=normalize_fn,
+            file=file,
+        )
+        transaction_rows = list(sql_ctx.rows) if sql_ctx and sql_ctx.ok else []
+        extraction = enrich_extraction_from_routed_context(
+            extraction,
+            data_plane=plane,
+            file=file,
+            included_docs=included_docs,
+            transaction_rows=transaction_rows,
+        )
+    else:
+        extraction = enrich_source_from_documents(extraction, included_docs)
 
     prepared = PreparedCellContext(
         file_chunks=recall_pool or included_docs,
@@ -858,6 +1151,7 @@ async def run_tabular_cell_extraction(
     normalize_fn: Callable[[Dict[str, Any], TabularColumn, File], Dict[str, Any]],
     column_run=None,
     db=None,
+    file_context_packages: Optional[Dict[str, Any]] = None,
 ) -> TabularCellPipelineResult:
     """
     One cell = routed SQL/RAG/hybrid (SQL-flagged files) or case-assistant RAG + typed extract.
@@ -877,7 +1171,15 @@ async def run_tabular_cell_extraction(
 
     import asyncio
 
-    retrieval_params = cell_retrieval_params_from_models(file, column, column_run=column_run)
+    file_ctx = None
+    if file_context_packages:
+        file_ctx = file_context_packages.get(str(file.id))
+    retrieval_params = cell_retrieval_params_from_models(
+        file,
+        column,
+        column_run=column_run,
+        file_context=file_ctx,
+    )
     prepared = await asyncio.to_thread(
         prepare_cell_retrieval_sync,
         rag_service,
@@ -896,14 +1198,17 @@ async def run_tabular_cell_extraction(
         original_text=str(file.original_text or ""),
     )
 
-    extraction = await invoke_structured_cell_extraction(
-        llm,
-        column=column,
-        context_text=context_text,
-        normalize_fn=normalize_fn,
-        file=file,
-    )
-    extraction = enrich_source_from_documents(extraction, prepared.included_docs)
+    extraction = try_extraction_from_front_matter(prepared.included_docs, column=column)
+    if extraction is None:
+        extraction = await invoke_structured_cell_extraction(
+            llm,
+            column=column,
+            context_text=context_text,
+            normalize_fn=normalize_fn,
+            file=file,
+            navigation_context=prepared.navigation_context,
+        )
+        extraction = enrich_source_from_documents(extraction, prepared.included_docs)
     verification = apply_evidence_first_policy(
         extraction,
         column=column,

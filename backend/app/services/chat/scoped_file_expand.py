@@ -9,6 +9,16 @@ inventory of each scoped file and rank with BM25-lite (IDF over that file).
 Production contract:
   hybrid recall (scoped) → within-file BM25 channel → assemble/rerank
 
+Exact-channel invariant:
+  Docs flagged from clause-boundary recall (``anchor_match`` / ``exact_channel``)
+  always lead the merged pool and win identity collisions. Lexical expand is
+  complementary recall for fact queries — it must not bury or strip the
+  deterministic address channel.
+
+Literal-channel invariant:
+  Docs flagged from independent keyword recall (``lexical_match``) lead after
+  exact hits and likewise win identity collisions against unflagged expand copies.
+
 No document-specific rules: same scoring for every case/file.
 """
 from __future__ import annotations
@@ -25,12 +35,19 @@ from app.config import config
 from app.services.chat.document_ref_scope import extract_document_refs, normalize_doc_ref
 from app.services.chat.retrieval_escalation import extract_question_anchors
 from app.services.chat.tabular_citation_policy import inventory_is_structured_table_rows
+from app.services.clause_anchor import is_exact_channel_doc
+from app.services.retrieval_channels import is_lexical_channel_doc
 
 logger = logging.getLogger(__name__)
 
-# Words + product codes (МК088) + numbers (incl. №51, 98/2024) + long digit runs.
+# Words + product codes (МК088) + clause numbers (4.1, 6.8.1 BEFORE bare digits)
+# + document nums (№51, 98/2024) + long digit runs.
 _TOKEN_RE = re.compile(
-    r"[a-zа-яё]+(?:\d+[a-zа-яё]*)?|\d+[a-zа-яё]+|№?\d+(?:/\d+)?|[\d][\d\s]{4,}[\d]",
+    r"[a-zа-яё]+(?:\d+[a-zа-яё]*)?"
+    r"|\d+[a-zа-яё]+"
+    r"|\d+(?:\.\d+)+"
+    r"|№?\d+(?:/\d+)?"
+    r"|[\d][\d\s]{4,}[\d]",
     re.IGNORECASE,
 )
 
@@ -550,8 +567,14 @@ def expand_docs_within_scoped_files(
     """
     Merge hybrid hits with BM25-ranked in-file passages for compact scopes.
 
-    Inventory = vector chunks ∪ original_text windows (when provided). Lexical
-    channel is primary under narrow scope; hybrid fills gaps.
+    Inventory = vector chunks ∪ original_text windows (when provided).
+
+    Merge order (production):
+      1. Exact-channel docs from hybrid (clause-boundary hits) — always first.
+      2. Lexical BM25 hits for complementary fact recall.
+      3. Remaining hybrid docs.
+
+    On identity collision the exact-channel copy wins (keeps ``anchor_match``).
     """
     meta: Dict[str, Any] = {"within_file_expand": False}
     if not force and not scoped_file_expand_enabled():
@@ -644,27 +667,22 @@ def expand_docs_within_scoped_files(
                     break
 
     picked: List[Document] = []
-    seen = set()
-    for sc, doc in ordered:
+    lexical_seen: set = set()
+    for _sc, doc in ordered:
         key = _doc_identity(doc)
-        if key in seen:
+        if key in lexical_seen:
             continue
-        seen.add(key)
+        lexical_seen.add(key)
         picked.append(doc)
         if len(picked) >= pool_limit:
             break
 
-    # Lexical is primary under narrow scope; hybrid only fills missing chunks.
-    # Avoid mixing incomparable hybrid similarity with BM25 scores.
-    hybrid_fill = [d for d in hybrid_docs if _doc_identity(d) not in seen]
-    for d in hybrid_fill:
-        seen.add(_doc_identity(d))
-    merged = list(picked) + hybrid_fill
-    if len(fids) > 1:
-        # Fairness across multi-file scopes (e.g. contract + pleading).
-        merged = _round_robin_by_file(merged, limit=max(pool_limit, len(picked)))
-    else:
-        merged = merged[: max(pool_limit, len(hybrid_docs) + 8)]
+    merged, exact_kept = _merge_exact_channel_with_lexical(
+        hybrid_docs=list(hybrid_docs or []),
+        lexical_docs=picked,
+        file_count=len(fids),
+        pool_limit=pool_limit,
+    )
 
     meta.update(
         {
@@ -673,21 +691,80 @@ def expand_docs_within_scoped_files(
             "files_skipped_large": files_skipped_large,
             "lexical_hits": len(picked),
             "merged_docs": len(merged),
+            "exact_channel_kept": exact_kept,
             "suppressed_doc_refs": list(suppressed_refs),
             "channel": "bm25_in_file",
             "files_with_original": files_with_original,
         }
     )
     logger.info(
-        "[WithinFileExpand] case=%s files=%s expanded=%s lexical=%s merged=%s original=%s channel=bm25",
+        "[WithinFileExpand] case=%s files=%s expanded=%s lexical=%s merged=%s "
+        "exact_kept=%s original=%s channel=bm25",
         case_id,
         len(fids),
         files_expanded,
         len(picked),
         len(merged),
+        exact_kept,
         files_with_original,
     )
     return merged, meta
+
+
+def _merge_exact_channel_with_lexical(
+    *,
+    hybrid_docs: Sequence[Document],
+    lexical_docs: Sequence[Document],
+    file_count: int,
+    pool_limit: int,
+) -> Tuple[List[Document], int]:
+    """
+    Exact → independent lexical flags → expand/hybrid fill.
+
+    Identity collisions keep the higher-priority flagged copy.
+
+    Returns (merged_docs, exact_channel_count).
+    """
+    exact_lead: List[Document] = []
+    lexical_lead: List[Document] = []
+    seen: set = set()
+
+    def _take_lead(seq: Sequence[Document], *, predicate, bucket: List[Document]) -> None:
+        for doc in seq:
+            if doc is None or not predicate(doc):
+                continue
+            key = _doc_identity(doc)
+            if key in seen:
+                continue
+            seen.add(key)
+            bucket.append(doc)
+
+    # Exact first (from hybrid pool — clause channel lives there).
+    _take_lead(hybrid_docs, predicate=is_exact_channel_doc, bucket=exact_lead)
+    # Then independent keyword channel (may appear in either list).
+    _take_lead(
+        list(hybrid_docs) + list(lexical_docs),
+        predicate=is_lexical_channel_doc,
+        bucket=lexical_lead,
+    )
+
+    rest: List[Document] = []
+    for doc in list(lexical_docs) + list(hybrid_docs):
+        if doc is None:
+            continue
+        key = _doc_identity(doc)
+        if key in seen:
+            continue
+        seen.add(key)
+        rest.append(doc)
+
+    rest_budget = max(pool_limit, len(hybrid_docs) + 8)
+    if file_count > 1:
+        rest = _round_robin_by_file(rest, limit=rest_budget)
+    else:
+        rest = rest[:rest_budget]
+
+    return exact_lead + lexical_lead + rest, len(exact_lead)
 
 
 def _round_robin_by_file(docs: Sequence[Document], *, limit: int) -> List[Document]:

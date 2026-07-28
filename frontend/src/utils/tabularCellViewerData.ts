@@ -68,6 +68,9 @@ function sameBBox(a: unknown, b: unknown): boolean {
  * Legacy tabular cells often stamp the same char span / bbox from the top RAG chunk
  * onto every source_reference. Those geometries open the wrong place for secondary quotes.
  * Prefer text-layer search when provenance is clearly shared across different quotes.
+ *
+ * Geometry-first contract otherwise: trusted unique bbox on the active ref wins;
+ * text search is only a fallback when this returns false.
  */
 export function isTrustedSourceReferenceHighlight(
   active: SourceReference | undefined,

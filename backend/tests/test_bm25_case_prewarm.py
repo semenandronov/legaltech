@@ -104,3 +104,42 @@ def test_cancel_pending_bm25_prewarm_cancels_timer():
     timer.cancel.assert_called_once()
     assert "case-x" not in mod._debounce_timers
     assert "case-x" not in mod._pending_force
+
+
+def test_finalize_rebuilds_full_case_corpus_not_last_batch():
+    """
+    Incremental ingest regression: store has file A + file B, but the last batch
+    only produced B. Finalize must index A+B from PGVector, not B alone.
+    """
+    from app.services.bm25_retriever import BM25Retriever
+    from app.services.document_processor import DocumentProcessor
+
+    case_id = "case-incremental"
+    docs_a = [
+        Document(page_content="пункт 4.1 штраф неустойка", metadata={"file_id": "file-a"}),
+    ]
+    docs_b = [
+        Document(page_content="пункт 1.4 предмет договора", metadata={"file_id": "file-b"}),
+    ]
+    store_docs = docs_a + docs_b
+
+    dp = DocumentProcessor.__new__(DocumentProcessor)
+    dp.bm25_retriever = BM25Retriever()
+    if not dp.bm25_retriever.available:
+        import pytest
+
+        pytest.skip("rank_bm25 not installed")
+    dp.vector_store = MagicMock()
+    dp.vector_store.list_case_chunks.return_value = store_docs
+
+    # Simulate the old bug: last batch rebuilt BM25 from B only.
+    assert dp.bm25_retriever.build_index(case_id, docs_b) is True
+    assert dp.bm25_retriever.get_index_size(case_id) == 1
+
+    ok = finalize_case_bm25_after_ingestion(case_id, dp)
+
+    assert ok is True
+    assert dp.bm25_retriever.get_index_size(case_id) == 2
+    hits = dp.bm25_retriever.retrieve(case_id, "4.1", k=5)
+    assert any("4.1" in (d.page_content or "") for d in hits)
+    dp.vector_store.list_case_chunks.assert_called()

@@ -17,6 +17,124 @@ def test_pdf_text_quality_ok_threshold():
     assert DocumentLoaderService._pdf_text_quality_ok(docs_bad) is False
 
 
+def test_pages_needing_ocr_detects_scan_pages_keeps_blank_and_strong():
+    docs = [
+        Document(page_content="x" * 80, metadata={}),  # strong native
+        Document(page_content="", metadata={}),  # scan
+        Document(page_content="", metadata={}),  # blank (no visuals)
+        Document(page_content="y" * 80, metadata={}),  # strong
+    ]
+    signals = [
+        {"text_chars": 80, "has_visual": True, "image_count": 1, "drawing_count": 0},
+        {"text_chars": 0, "has_visual": True, "image_count": 2, "drawing_count": 0},
+        {"text_chars": 0, "has_visual": False, "image_count": 0, "drawing_count": 0},
+        {"text_chars": 80, "has_visual": False, "image_count": 0, "drawing_count": 0},
+    ]
+    weak = DocumentLoaderService._pages_needing_ocr(docs, signals, min_chars=20)
+    assert weak == [1]
+
+
+def test_pages_needing_ocr_promotes_fitz_text_over_empty_pypdf():
+    docs = [Document(page_content="", metadata={})]
+    signals = [
+        {
+            "text_chars": 120,
+            "text": "x" * 120,
+            "has_visual": True,
+            "image_count": 1,
+            "drawing_count": 0,
+        }
+    ]
+    DocumentLoaderService._enrich_native_docs_from_fitz(
+        docs, signals, filename="demo.pdf"
+    )
+    weak = DocumentLoaderService._pages_needing_ocr(docs, signals, min_chars=20)
+    assert weak == []
+    assert len(docs[0].page_content) == 120
+
+
+def test_merge_native_with_page_ocr_replaces_only_weak_pages():
+    native = [
+        Document(
+            page_content="native-0",
+            metadata={"extraction_source": "native_text", "ocr": False},
+        ),
+        Document(page_content="", metadata={"extraction_source": "native_text", "ocr": False}),
+        Document(
+            page_content="native-2",
+            metadata={"extraction_source": "native_text", "ocr": False},
+        ),
+    ]
+    ocr_by_page = {
+        1: Document(
+            page_content="ocr-page-1 with clause 4.1",
+            metadata={"ocr": True, "ocr_engine": "yandex", "yandex_markdown": "ocr-page-1"},
+        )
+    }
+    merged = DocumentLoaderService._merge_native_with_page_ocr(
+        native, ocr_by_page, filename="mixed.pdf"
+    )
+    assert len(merged) == 3
+    assert merged[0].page_content == "native-0"
+    assert merged[0].metadata.get("ocr") is False
+    assert merged[1].page_content.startswith("ocr-page-1")
+    assert merged[1].metadata.get("ocr") is True
+    assert merged[1].metadata.get("source_page") == 1
+    assert merged[2].page_content == "native-2"
+    assert all(d.metadata.get("pdf_extraction") == "hybrid_native_ocr" for d in merged)
+
+
+def test_load_pdf_mixed_uses_hybrid_ocr_not_silent_native(monkeypatch):
+    """Mixed PDF must not return native-only when middle pages are scans."""
+    monkeypatch.setattr("app.services.langchain_loaders.config.PDF_MIXED_PAGE_OCR_ENABLED", True)
+    monkeypatch.setattr("app.services.langchain_loaders.config.PDF_OCR_PREFER_YANDEX", True)
+    monkeypatch.setattr(
+        "app.services.langchain_loaders.config.PDF_OCR_MIN_EXPECTED_CHARS_PER_PAGE", 20
+    )
+
+    native_docs = [
+        Document(page_content="A" * 100, metadata={"page": 0}),
+        Document(page_content="", metadata={"page": 1}),
+        Document(page_content="", metadata={"page": 2}),
+        Document(page_content="B" * 100, metadata={"page": 3}),
+    ]
+    signals = [
+        {"page_index": 0, "text_chars": 100, "text": "A" * 100, "image_count": 1, "drawing_count": 0, "has_visual": True},
+        {"page_index": 1, "text_chars": 0, "text": "", "image_count": 2, "drawing_count": 0, "has_visual": True},
+        {"page_index": 2, "text_chars": 0, "text": "", "image_count": 2, "drawing_count": 0, "has_visual": True},
+        {"page_index": 3, "text_chars": 100, "text": "B" * 100, "image_count": 0, "drawing_count": 0, "has_visual": False},
+    ]
+
+    with patch.object(DocumentLoaderService, "_inspect_pdf_page_signals", return_value=signals):
+        with patch.object(
+            DocumentLoaderService,
+            "_ocr_selected_pages_with_fallback",
+            return_value={
+                1: Document(
+                    page_content="OCR page 2 with пункт 4.1",
+                    metadata={"ocr": True, "ocr_engine": "yandex"},
+                ),
+                2: Document(
+                    page_content="OCR page 3 rights section",
+                    metadata={"ocr": True, "ocr_engine": "yandex"},
+                ),
+            },
+        ) as mock_ocr:
+            with patch("app.services.langchain_loaders.PyPDFLoader") as mock_pdf_loader:
+                mock_pdf_loader.return_value.load.return_value = native_docs
+                docs = DocumentLoaderService.load_pdf(b"%PDF-fake-mixed", "mixed.pdf")
+
+    assert len(docs) == 4
+    assert "пункт 4.1" in docs[1].page_content
+    assert docs[0].metadata.get("ocr") is False
+    assert docs[1].metadata.get("ocr") is True
+    assert docs[2].metadata.get("ocr") is True
+    assert docs[3].page_content.startswith("B")
+    mock_ocr.assert_called_once()
+    called_pages = list(mock_ocr.call_args.args[2])
+    assert called_pages == [1, 2]
+
+
 def test_build_pdf_pipeline_options_do_ocr_false():
     from app.services.document_converter_service import DocumentConverterService
 

@@ -1,0 +1,153 @@
+{
+  "title": "RU SS↔KOB tabular mini-eval",
+  "case_title": "RU tabular SS-KOB May 2024",
+  "source": "Downloads/01. Май 2024/16.05.2024_СС",
+  "documents": [
+    {
+      "id": "ds1_arenda",
+      "filename": "ds1_arenda.txt",
+      "pdf": "ds1_arenda.pdf",
+      "label": "ДС №1 к договору аренды 03/03-2022/1"
+    },
+    {
+      "id": "pismo_arenda_03-03-22",
+      "filename": "pismo_arenda_03-03-22.txt",
+      "pdf": "pismo_arenda_03-03-22.pdf",
+      "label": "Письмо о выкупе по аренде 03/03-2022/1"
+    },
+    {
+      "id": "pretenzija",
+      "filename": "pretenzija.txt",
+      "pdf": "pretenzija.pdf",
+      "label": "Претензия Смарт Сити"
+    },
+    {
+      "id": "vstrechnyj_isk",
+      "filename": "vstrechnyj_isk.txt",
+      "pdf": "vstrechnyj_isk.pdf",
+      "label": "Встречный иск"
+    },
+    {
+      "id": "tablica_raschetov",
+      "filename": "tablica_raschetov.txt",
+      "pdf": "tablica_raschetov.pdf",
+      "label": "Таблица расчётов выкупа"
+    }
+  ],
+  "questions": [
+    {
+      "id": "doc_type",
+      "label": "Вид документа",
+      "difficulty": "easy",
+      "column_type": "text",
+      "prompt": "Определи вид (тип) этого документа одним коротким названием (например: дополнительное соглашение, претензия, исковое заявление, письмо-уведомление, таблица расчётов)."
+    },
+    {
+      "id": "inn_smart_city",
+      "label": "ИНН ООО Смарт Сити",
+      "difficulty": "easy",
+      "column_type": "text",
+      "prompt": "Укажи ИНН ООО «Смарт Сити» / «СМАРТ СИТИ», если он явно указан в документе. Если ИНН не указан — N/A."
+    },
+    {
+      "id": "doc_date",
+      "label": "Дата документа",
+      "difficulty": "easy",
+      "column_type": "date",
+      "prompt": "Извлеки дату подписания или составления ЭТОГО документа (не даты договоров, на которые есть ссылки, если дата самого документа другая). Формат YYYY-MM-DD или N/A."
+    },
+    {
+      "id": "contract_number",
+      "label": "Номер договора",
+      "difficulty": "medium",
+      "column_type": "text",
+      "prompt": "Укажи основной номер договора аренды или поставки, к которому относится документ (например 03/03-2022/1 или 20/01-2022). Если несколько равнозначных — главный по смыслу документа. Если номера нет — N/A."
+    },
+    {
+      "id": "buyout_right",
+      "label": "Право выкупа",
+      "difficulty": "medium",
+      "column_type": "yes_no",
+      "prompt": "Предусмотрен ли в документе (или в договоре, о котором идёт речь) выкуп движимого имущества / электросамокатов арендатором? Ответь Да, Нет или N/A если документ не про аренду/выкуп."
+    },
+    {
+      "id": "rent_or_buyout_amount",
+      "label": "Сумма аренды/выкупа",
+      "difficulty": "medium",
+      "column_type": "currency",
+      "prompt": "Если в документе явно указана одна ключевая сумма арендной платы за весь период или полная выкупная стоимость имущества — извлеки её (число и валюта). Не суммируй несколько разных требований. Если однозначной суммы нет — N/A."
+    },
+    {
+      "id": "penalty_01",
+      "label": "Неустойка 0.1%",
+      "difficulty": "hard",
+      "column_type": "yes_no",
+      "prompt": "Указана ли в документе неустойка (пеня) в размере 0.1% (0,1%) за просрочку оплаты? Да / Нет / N/A."
+    },
+    {
+      "id": "case_number",
+      "label": "Номер арбитражного дела",
+      "difficulty": "hard",
+      "column_type": "text",
+      "prompt": "Если это судебный документ по арбитражному делу — укажи номер дела (например А40-4022/2024). Если дело не указано — N/A."
+    }
+  ],
+  "gold": {
+    "ds1_arenda": {
+      "doc_type": "Дополнительное соглашение",
+      "inn_smart_city": "9701032688",
+      "doc_date": "2022-07-25",
+      "contract_number": "03/03-2022/1",
+      "buyout_right": "Да",
+      "rent_or_buyout_amount": "959335",
+      "penalty_01": "Нет",
+      "case_number": "N/A"
+    },
+    "pismo_arenda_03-03-22": {
+      "doc_type": "Письмо-уведомление",
+      "inn_smart_city": "N/A",
+      "doc_date": "2022-09-26",
+      "contract_number": "03/03-2022/1",
+      "buyout_right": "Да",
+      "rent_or_buyout_amount": "N/A",
+      "penalty_01": "Нет",
+      "case_number": "N/A"
+    },
+    "pretenzija": {
+      "doc_type": "Претензия",
+      "inn_smart_city": "9701032688",
+      "doc_date": "N/A",
+      "contract_number": "20/01-2022",
+      "buyout_right": "Да",
+      "rent_or_buyout_amount": "N/A",
+      "penalty_01": "Да",
+      "case_number": "N/A"
+    },
+    "vstrechnyj_isk": {
+      "doc_type": "Встречное исковое заявление",
+      "inn_smart_city": "9701032688",
+      "doc_date": "N/A",
+      "contract_number": "20/01-2022",
+      "buyout_right": "Да",
+      "rent_or_buyout_amount": "N/A",
+      "penalty_01": "Да",
+      "case_number": "А40-4022/2024"
+    },
+    "tablica_raschetov": {
+      "doc_type": "Таблица расчётов",
+      "inn_smart_city": "N/A",
+      "doc_date": "N/A",
+      "contract_number": "03/03-2022",
+      "buyout_right": "Да",
+      "rent_or_buyout_amount": "959335",
+      "penalty_01": "Нет",
+      "case_number": "N/A"
+    }
+  },
+  "notes": {
+    "vstrechnyj_isk.rent_or_buyout_amount": "N/A: цена иска ≠ арендная/выкупная сумма по контракту вопроса.",
+    "pretenzija.contract_number": "В претензии несколько договоров; gold — договор поставки №20/01-2022 как первое требование.",
+    "tablica_raschetov.contract_number": "В таблице несколько договоров; для ДС/выкупа ключевой 03/03-2022 (+ ДС1 сумма 959335).",
+    "penalty Нет vs N/A": "Если тема неустойки в документе не поднимается — gold «Нет»; matcher принимает и N/A."
+  }
+}

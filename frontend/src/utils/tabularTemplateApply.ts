@@ -8,6 +8,9 @@ export type TabularTemplateCatalogItem = {
   description?: string
   category?: string
   tags?: string[]
+  legalBasis?: string
+  documentHint?: string
+  columnLabels?: string[]
   featured?: boolean
   source: 'builtin' | 'api'
   columnsCount: number
@@ -17,39 +20,25 @@ export function listBuiltinBankruptcyTemplates(): BuiltinTabularTemplate[] {
   return BANKRUPTCY_RF_TABULAR_TEMPLATES
 }
 
-export async function fetchBankruptcyTemplateCatalog(): Promise<TabularTemplateCatalogItem[]> {
-  const builtin: TabularTemplateCatalogItem[] = BANKRUPTCY_RF_TABULAR_TEMPLATES.map((t) => ({
+function mapBuiltinToCatalogItem(t: BuiltinTabularTemplate): TabularTemplateCatalogItem {
+  return {
     id: t.id,
     name: t.name,
     description: t.description,
     category: t.category,
     tags: t.tags,
+    legalBasis: t.legalBasis,
+    documentHint: t.documentHint,
+    columnLabels: t.columns.map((c) => c.column_label),
     featured: t.featured,
-    source: 'builtin' as const,
+    source: 'builtin',
     columnsCount: t.columns.length,
-  }))
-
-  try {
-    const apiTemplates = await tabularReviewApi.getTemplates({ category: 'bankruptcy_rf' })
-    const fromApi: TabularTemplateCatalogItem[] = (apiTemplates || []).map((t) => ({
-      id: t.id,
-      name: t.name,
-      description: t.description,
-      category: t.category,
-      tags: t.tags,
-      featured: t.is_featured,
-      source: 'api' as const,
-      columnsCount: Array.isArray(t.columns) ? t.columns.length : 0,
-    }))
-    const apiNames = new Set(fromApi.map((t) => t.name.toLowerCase()))
-    const merged = [
-      ...fromApi,
-      ...builtin.filter((b) => !apiNames.has(b.name.toLowerCase())),
-    ]
-    return merged.sort((a, b) => Number(Boolean(b.featured)) - Number(Boolean(a.featured)))
-  } catch {
-    return builtin
   }
+}
+
+/** Каталог для хаба дела: только три встроенных пресета банкротства. */
+export async function fetchBankruptcyTemplateCatalog(): Promise<TabularTemplateCatalogItem[]> {
+  return BANKRUPTCY_RF_TABULAR_TEMPLATES.map(mapBuiltinToCatalogItem)
 }
 
 export async function applyTabularTemplateToReview(

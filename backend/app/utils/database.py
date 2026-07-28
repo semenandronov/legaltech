@@ -247,6 +247,11 @@ def ensure_schema():
                         "ALTER TABLE files ADD COLUMN IF NOT EXISTS structured_text_format VARCHAR(32)"
                     )
                 )
+            if "front_matter_facts" not in file_columns:
+                conn.execute(
+                    text("ALTER TABLE files ADD COLUMN IF NOT EXISTS front_matter_facts JSON")
+                )
+                logger.info("✅ Added front_matter_facts column to files table")
     
     # Create pgvector indexes for optimization
     try:

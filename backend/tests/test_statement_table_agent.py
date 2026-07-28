@@ -117,9 +117,10 @@ def test_query_statement_group_by_description():
     assert "Yandex" in text
 
 
+@patch("app.services.chat.statement_table_agent.reasoning_agent_enabled", return_value=False)
 @patch("app.services.chat.statement_table_agent.create_agent")
 @patch("app.services.chat.statement_table_agent.create_legal_llm")
-def test_run_statement_table_agent_fact_binds_answer(mock_llm, mock_create_agent):
+def test_run_statement_table_agent_fact_binds_answer(mock_llm, mock_create_agent, mock_reasoning_off):
     rows = [
         _row(row_id="r1", amount="-100", desc="A", idx=0),
         _row(row_id="r2", amount="-45000", desc="Проект", idx=1),
@@ -160,9 +161,10 @@ def test_run_statement_table_agent_fact_binds_answer(mock_llm, mock_create_agent
     assert "query_statement" in result["statement_sql_meta"]["tool_calls"]
 
 
+@patch("app.services.chat.statement_table_agent.reasoning_agent_enabled", return_value=False)
 @patch("app.services.chat.statement_table_agent.create_agent")
 @patch("app.services.chat.statement_table_agent.create_legal_llm")
-def test_run_statement_table_agent_insight_answer(mock_llm, mock_create_agent):
+def test_run_statement_table_agent_insight_answer(mock_llm, mock_create_agent, mock_reasoning_off):
     day = date(2026, 3, 1)
     rows = [
         _row(row_id="r1", amount="-10000", desc="Иванов", op_date=day, idx=0),
@@ -205,10 +207,11 @@ def test_run_statement_table_agent_insight_answer(mock_llm, mock_create_agent):
     assert "detect_anomalies" in result["statement_sql_meta"]["tool_calls"]
 
 
+@patch("app.services.chat.statement_table_agent.reasoning_agent_enabled", return_value=False)
 @patch("app.services.chat.statement_table_agent.create_agent")
 @patch("app.services.chat.statement_table_agent.create_legal_llm")
 def test_run_statement_table_agent_insight_fallback_when_no_final_text(
-    mock_llm, mock_create_agent
+    mock_llm, mock_create_agent, mock_reasoning_off
 ):
     rows = [
         _row(row_id="r1", amount="100000", desc="Зарплата", idx=0),
