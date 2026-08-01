@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { Document, Page, pdfjs } from 'react-pdf'
-import 'react-pdf/dist/esm/Page/AnnotationLayer.css'
-import 'react-pdf/dist/esm/Page/TextLayer.css'
+import 'react-pdf/dist/Page/AnnotationLayer.css'
+import 'react-pdf/dist/Page/TextLayer.css'
 import {
   Box,
   IconButton,
@@ -36,8 +36,11 @@ const PDF_CITATION_HIGHLIGHT = {
   textMark: 'rgba(250, 204, 21, 0.5)',
 } as const
 
-// Set up PDF.js worker
-pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`
+// Bundle the PDF.js worker from the same package version (no CDN).
+pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url,
+).toString()
 
 /** Должен совпадать с тем, как ниже склеиваются строки при полнодокументном поиске цитаты. */
 function normPdfPlain(s: string) {
