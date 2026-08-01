@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
+from typing import Literal
 import logging
 from app.utils.database import get_db
 from app.utils.auth import (
@@ -10,9 +11,11 @@ from app.utils.auth import (
     verify_password,
     create_access_token,
     create_refresh_token,
+    create_websocket_ticket,
     decode_token,
     get_current_user
 )
+from app.utils.authorization import require_owned_case, require_owned_review
 from app.models.user import User, UserSession
 from app.config import config
 
@@ -97,6 +100,44 @@ class UserResponse(BaseModel):
     company: str | None
     role: str
     created_at: str
+
+
+class WebSocketTicketRequest(BaseModel):
+    resource_type: Literal["case", "tabular_review"]
+    resource_id: str = Field(..., min_length=1, max_length=128)
+
+
+class WebSocketTicketResponse(BaseModel):
+    ticket: str
+    expires_in: int
+
+
+@router.post("/ws-ticket", response_model=WebSocketTicketResponse)
+async def issue_websocket_ticket(
+    request: WebSocketTicketRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Issue a short-lived ticket after checking object-level authorization."""
+    if request.resource_type == "case":
+        if config.TABULAR_ONLY_MODE:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resource not found")
+        require_owned_case(db, request.resource_id, current_user.id)
+    elif request.resource_type == "tabular_review":
+        require_owned_review(db, request.resource_id, current_user.id)
+    else:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported resource type")
+
+    expires_in = 60
+    return WebSocketTicketResponse(
+        ticket=create_websocket_ticket(
+            user_id=current_user.id,
+            resource_type=request.resource_type,
+            resource_id=request.resource_id,
+            expires_seconds=expires_in,
+        ),
+        expires_in=expires_in,
+    )
 
 
 @router.post("/register", status_code=status.HTTP_201_CREATED, response_model=TokenResponse)

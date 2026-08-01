@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { tabularReviewApi } from '../services/tabularReviewApi'
 import type { TabularCellRealtimeUpdate } from '../utils/tabularTableState'
 
 interface TabularReviewWebSocketMessage {
@@ -187,7 +188,7 @@ export const useTabularReviewWebSocket = ({
     }
   }, [])
 
-  const connect = useCallback(() => {
+  const connect = useCallback(async () => {
     if (!enabled || !reviewId) return
 
     clearReconnectTimer()
@@ -198,11 +199,11 @@ export const useTabularReviewWebSocket = ({
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const host = resolveWebSocketHost()
-    const token = localStorage.getItem('access_token')
-    const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : ''
-    const wsUrl = `${protocol}//${host}/ws/tabular-review/${reviewId}${tokenQuery}`
 
     try {
+      const { ticket } = await tabularReviewApi.createWebSocketTicket(reviewId)
+      if (generation !== connectGenerationRef.current || intentionalCloseRef.current) return
+      const wsUrl = `${protocol}//${host}/ws/tabular-review/${reviewId}?ticket=${encodeURIComponent(ticket)}`
       const ws = new WebSocket(wsUrl)
 
       ws.onopen = () => {
@@ -317,7 +318,7 @@ export const useTabularReviewWebSocket = ({
           reconnectAttempts.current++
           const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 10000)
           reconnectTimeoutRef.current = setTimeout(() => {
-            connect()
+            void connect()
           }, delay)
           return
         }
@@ -344,7 +345,7 @@ export const useTabularReviewWebSocket = ({
 
   useEffect(() => {
     if (enabled && reviewId) {
-      connect()
+      void connect()
     } else {
       disconnect()
     }

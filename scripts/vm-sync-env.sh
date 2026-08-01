@@ -30,6 +30,11 @@ VM_DB_URL="$(vm_internal_database_url "${LOCAL_ENV}")"
 grep -v '^UPLOAD_DIR=' "${LOCAL_ENV}" \
   | grep -v '^FILE_STORE_BYTES_IN_DB=' \
   | grep -v '^CORS_ORIGINS=' \
+  | grep -v '^ENVIRONMENT=' \
+  | grep -v '^TABULAR_ONLY_MODE=' \
+  | grep -v '^ENABLE_INTERNAL_DIAGNOSTICS=' \
+  | grep -v '^GIGACHAT_VERIFY_SSL=' \
+  | grep -v '^ACCESS_TOKEN_EXPIRE_MINUTES=' \
   | grep -v '^DATABASE_URL=' \
   > "${TMP}" || true
 VM_PUBLIC_URL="${VM_PUBLIC_URL:-https://158.160.148.240}"
@@ -44,8 +49,13 @@ VM_PUBLIC_URL="${VM_PUBLIC_URL:-https://158.160.148.240}"
   echo "# Case file storage (single container + VM volume)"
   echo "UPLOAD_DIR=/app/backend/uploads"
   echo "FILE_STORE_BYTES_IN_DB=false"
+  echo "ENVIRONMENT=production"
+  echo "TABULAR_ONLY_MODE=true"
+  echo "ENABLE_INTERNAL_DIAGNOSTICS=false"
+  echo "GIGACHAT_VERIFY_SSL=true"
+  echo "ACCESS_TOKEN_EXPIRE_MINUTES=60"
   echo "# CORS for browser (SPA on same host :80 and :8000)"
-  echo "CORS_ORIGINS=${VM_PUBLIC_URL},${VM_PUBLIC_URL}:8000,https://xsdwcefrvtgby.ru,http://xsdwcefrvtgby.ru,http://localhost:5173,http://127.0.0.1:5173"
+  echo "CORS_ORIGINS=${VM_PUBLIC_URL},https://xsdwcefrvtgby.ru"
 } > "${LOCAL_ENV}.vm.tmp"
 mv "${LOCAL_ENV}.vm.tmp" "${TMP}"
 

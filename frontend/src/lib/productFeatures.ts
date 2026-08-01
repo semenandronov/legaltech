@@ -34,6 +34,8 @@ export const productFeatures = {
    * По умолчанию включён — agent-first разбор выписки.
    */
   operationsAssistant: parseEnvBool(import.meta.env.VITE_FEATURE_OPERATIONS_ASSISTANT, true),
+  /** Страница /cases/:id/operations и входы в неё из интерфейса. */
+  operationsPage: parseEnvBool(import.meta.env.VITE_FEATURE_OPERATIONS_PAGE, false),
   /** Тумблер «Справочник» в чате (НПА / legal corpus retrieval). */
   legalCorpus: parseEnvBool(import.meta.env.VITE_FEATURE_LEGAL_CORPUS, true),
   /** Страница /legal-corpus и пункт в сайдбаре (отдельно от тумблера в чате). */

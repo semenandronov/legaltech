@@ -118,6 +118,8 @@ async def chunk_preview(
     Preview how a single uploaded file is split into chunks by current ingestion pipeline.
     Intended for testing/tuning only.
     """
+    if config.TABULAR_ONLY_MODE or not config.ENABLE_INTERNAL_DIAGNOSTICS:
+        raise HTTPException(status_code=404, detail="Resource not found")
     if not file.filename:
         raise HTTPException(status_code=400, detail="Пустое имя файла недопустимо")
 
@@ -195,6 +197,8 @@ async def docling_structure_preview(
     Сырая структура DoclingDocument (iterate_items), без legal chunking.
     Только для отладки Docling / OCR.
     """
+    if config.TABULAR_ONLY_MODE or not config.ENABLE_INTERNAL_DIAGNOSTICS:
+        raise HTTPException(status_code=404, detail="Resource not found")
     if not file.filename:
         raise HTTPException(status_code=400, detail="Пустое имя файла недопустимо")
 

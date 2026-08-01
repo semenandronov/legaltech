@@ -121,7 +121,10 @@ const PRESETS = [
 ] as const
 
 function visiblePresets() {
-  return PRESETS.filter((preset) => preset.id !== 'chat' || productFeatures.caseAssistant)
+  return PRESETS.filter((preset) => {
+    if (preset.id === 'operations') return productFeatures.operationsPage
+    return preset.id !== 'chat' || productFeatures.caseAssistant
+  })
 }
 
 function isCaseAssistantChatSession(sessionId: string): boolean {
@@ -606,6 +609,7 @@ const CaseOverviewPage = () => {
 
   const assistantSessions = sessions.filter((s) => isCaseAssistantChatSession(s.session_id))
   const visibleAssistantSessions = productFeatures.caseAssistant ? assistantSessions : []
+  const visibleOperationsSessions = productFeatures.operationsPage ? operationsSessions : []
 
   return (
     <div className="ws-shell ws-tabular-shell flex h-screen overflow-hidden">
@@ -649,10 +653,6 @@ const CaseOverviewPage = () => {
                         setShowTabularHub(true)
                         return
                       }
-                      if (preset.id === 'operations') {
-                        setShowOperationsHub(true)
-                        return
-                      }
                       navigate(preset.path(caseId!))
                     }}
                     className="flex min-h-[88px] flex-col items-start gap-2 rounded-lg border border-gray-200 bg-white p-4 text-left transition-colors hover:border-gray-300 hover:bg-[#fafbfc]"
@@ -671,12 +671,12 @@ const CaseOverviewPage = () => {
             <section className="mb-8">
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-xs font-medium text-gray-500">Последние действия</h2>
-                {(visibleAssistantSessions.length + reviews.length + operationsSessions.length) > 5 && (
+                {(visibleAssistantSessions.length + reviews.length + visibleOperationsSessions.length) > 5 && (
                   <button
                     onClick={() => setShowAllActions(true)}
                     className="text-xs text-gray-400 transition-colors hover:text-gray-600"
                   >
-                    Все действия ({visibleAssistantSessions.length + reviews.length + operationsSessions.length})
+                    Все действия ({visibleAssistantSessions.length + reviews.length + visibleOperationsSessions.length})
                   </button>
                 )}
               </div>
@@ -702,7 +702,7 @@ const CaseOverviewPage = () => {
                   ...r,
                   date: r.updated_at ? new Date(r.updated_at).getTime() : (r.created_at ? new Date(r.created_at).getTime() : 0),
                 }))
-                const operationsItems: ActionItem[] = operationsSessions.map((s) => ({
+                const operationsItems: ActionItem[] = visibleOperationsSessions.map((s) => ({
                   kind: 'operations' as const,
                   file_id: s.file_id,
                   name: s.filename || 'Выписка',
@@ -1805,7 +1805,7 @@ const CaseOverviewPage = () => {
                 kind: 'review' as const, ...r,
                 date: r.updated_at ? new Date(r.updated_at).getTime() : (r.created_at ? new Date(r.created_at).getTime() : 0),
               }))
-              const operationsItems: ActionItem[] = operationsSessions.map((s) => ({
+              const operationsItems: ActionItem[] = visibleOperationsSessions.map((s) => ({
                 kind: 'operations' as const,
                 file_id: s.file_id,
                 name: s.filename || 'Выписка',
@@ -1884,7 +1884,7 @@ const CaseOverviewPage = () => {
         </div>
       </Drawer>
 
-      {caseId && (
+      {caseId && productFeatures.operationsPage && (
         <CaseOperationsHubModal
           open={showOperationsHub}
           onClose={() => setShowOperationsHub(false)}

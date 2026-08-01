@@ -95,23 +95,43 @@ class CellCommentService:
             })
         return results
 
+    def _require_owned_comment(
+        self,
+        *,
+        review_id: str,
+        comment_id: str,
+        user_id: str,
+    ) -> tuple[CellComment, TabularReview]:
+        """Return a comment only when it belongs to an owned review."""
+        review = self.db.query(TabularReview).filter(
+            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
+        ).first()
+        if not review:
+            raise ValueError(f"Tabular review {review_id} not found or access denied")
+
+        comment = self.db.query(CellComment).filter(
+            and_(
+                CellComment.id == comment_id,
+                CellComment.tabular_review_id == review_id,
+            )
+        ).first()
+        if not comment:
+            raise ValueError(f"Comment {comment_id} not found")
+        return comment, review
+
     def update_comment(
         self,
         comment_id: str,
         comment_text: str,
-        user_id: str
+        user_id: str,
+        review_id: str,
     ) -> CellComment:
         """Update an existing comment"""
-        comment = self.db.query(CellComment).filter(CellComment.id == comment_id).first()
-        if not comment:
-            raise ValueError(f"Comment {comment_id} not found")
-
-        # Verify review belongs to user
-        review = self.db.query(TabularReview).filter(
-            and_(TabularReview.id == comment.tabular_review_id, TabularReview.user_id == user_id)
-        ).first()
-        if not review:
-            raise ValueError(f"Tabular review {comment.tabular_review_id} not found or access denied")
+        comment, _review = self._require_owned_comment(
+            review_id=review_id,
+            comment_id=comment_id,
+            user_id=user_id,
+        )
 
         # Only the author can update their comment
         if comment.created_by != user_id:
@@ -127,19 +147,15 @@ class CellCommentService:
     def delete_comment(
         self,
         comment_id: str,
-        user_id: str
+        user_id: str,
+        review_id: str,
     ) -> None:
         """Delete a comment"""
-        comment = self.db.query(CellComment).filter(CellComment.id == comment_id).first()
-        if not comment:
-            raise ValueError(f"Comment {comment_id} not found")
-
-        # Verify review belongs to user
-        review = self.db.query(TabularReview).filter(
-            and_(TabularReview.id == comment.tabular_review_id, TabularReview.user_id == user_id)
-        ).first()
-        if not review:
-            raise ValueError(f"Tabular review {comment.tabular_review_id} not found or access denied")
+        comment, review = self._require_owned_comment(
+            review_id=review_id,
+            comment_id=comment_id,
+            user_id=user_id,
+        )
 
         # Only the author or review owner can delete
         if comment.created_by != user_id and review.user_id != user_id:
@@ -152,19 +168,15 @@ class CellCommentService:
     def resolve_comment(
         self,
         comment_id: str,
-        user_id: str
+        user_id: str,
+        review_id: str,
     ) -> CellComment:
         """Mark a comment as resolved"""
-        comment = self.db.query(CellComment).filter(CellComment.id == comment_id).first()
-        if not comment:
-            raise ValueError(f"Comment {comment_id} not found")
-
-        # Verify review belongs to user
-        review = self.db.query(TabularReview).filter(
-            and_(TabularReview.id == comment.tabular_review_id, TabularReview.user_id == user_id)
-        ).first()
-        if not review:
-            raise ValueError(f"Tabular review {comment.tabular_review_id} not found or access denied")
+        comment, _review = self._require_owned_comment(
+            review_id=review_id,
+            comment_id=comment_id,
+            user_id=user_id,
+        )
 
         comment.is_resolved = True
         comment.resolved_at = datetime.utcnow()
@@ -177,19 +189,15 @@ class CellCommentService:
     def unresolve_comment(
         self,
         comment_id: str,
-        user_id: str
+        user_id: str,
+        review_id: str,
     ) -> CellComment:
         """Mark a comment as unresolved"""
-        comment = self.db.query(CellComment).filter(CellComment.id == comment_id).first()
-        if not comment:
-            raise ValueError(f"Comment {comment_id} not found")
-
-        # Verify review belongs to user
-        review = self.db.query(TabularReview).filter(
-            and_(TabularReview.id == comment.tabular_review_id, TabularReview.user_id == user_id)
-        ).first()
-        if not review:
-            raise ValueError(f"Tabular review {comment.tabular_review_id} not found or access denied")
+        comment, _review = self._require_owned_comment(
+            review_id=review_id,
+            comment_id=comment_id,
+            user_id=user_id,
+        )
 
         comment.is_resolved = False
         comment.resolved_at = None

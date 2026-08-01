@@ -267,21 +267,21 @@ except: pass
 
 @app.on_event("startup")
 async def _redact_uvicorn_access_tokens():
-    """Не писать JWT из ?token= в access-log (EventSource не шлёт Authorization)."""
+    """Do not write access tokens or WebSocket tickets to access logs."""
     import re
 
     class _RedactAccessTokenFilter(logging.Filter):
-        _pat = re.compile(r"([?&])token=[^&\s\"]+", re.I)
+        _pat = re.compile(r"([?&])(token|ticket)=[^&\s\"]+", re.I)
 
         def filter(self, record: logging.LogRecord) -> bool:
             try:
                 if isinstance(record.args, tuple) and record.args:
                     record.args = tuple(
-                        self._pat.sub(r"\1token=<redacted>", a) if isinstance(a, str) else a
+                        self._pat.sub(r"\1\2=<redacted>", a) if isinstance(a, str) else a
                         for a in record.args
                     )
                 if isinstance(record.msg, str):
-                    record.msg = self._pat.sub(r"\1token=<redacted>", record.msg)
+                    record.msg = self._pat.sub(r"\1\2=<redacted>", record.msg)
             except Exception:
                 pass
             return True
@@ -292,7 +292,7 @@ async def _redact_uvicorn_access_tokens():
 @app.on_event("startup")
 async def _start_agent_run_worker():
     """Distributed worker: claims runs and publishes events to Postgres bus."""
-    if not getattr(config, "AGENT_RUNS_ENABLED", True):
+    if config.TABULAR_ONLY_MODE or not getattr(config, "AGENT_RUNS_ENABLED", True):
         return
     try:
         from app.services.agent_runs.worker import get_agent_run_worker
@@ -304,6 +304,8 @@ async def _start_agent_run_worker():
 
 @app.on_event("shutdown")
 async def _stop_agent_run_worker():
+    if config.TABULAR_ONLY_MODE:
+        return
     try:
         from app.services.agent_runs.worker import get_agent_run_worker
 
@@ -315,7 +317,7 @@ async def _stop_agent_run_worker():
 @app.on_event("startup")
 async def _warm_agent_runs_checkpointer():
     """Pre-warm AsyncPostgresSaver before first agent run stream."""
-    if not config.AGENT_RUNS_CHECKPOINTER_ENABLED:
+    if config.TABULAR_ONLY_MODE or not config.AGENT_RUNS_CHECKPOINTER_ENABLED:
         return
     try:
         from app.utils.checkpointer_setup import get_async_postgres_checkpointer
@@ -343,6 +345,8 @@ async def _init_langfuse_observability():
 @app.on_event("startup")
 async def _check_statement_extract_deps():
     """Fail loud if Camelot is missing — borderless statements need it."""
+    if config.TABULAR_ONLY_MODE:
+        return
     if not bool(getattr(config, "STATEMENT_CAMELOT_ENABLED", True)):
         return
     if not bool(getattr(config, "STATEMENT_NATIVE_TABLE_EXTRACT_ENABLED", True)):
@@ -368,6 +372,8 @@ async def _prewarm_case_assistant_runtime():
     """
     Prewarm heavy case-assistant dependencies to avoid first-request cold-start.
     """
+    if config.TABULAR_ONLY_MODE:
+        return
     try:
         from app.services.chat.orchestrator import prewarm_chat_runtime
 
@@ -486,77 +492,103 @@ app.add_middleware(MetricsMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Access-Token"],
 )
 
-# CSP middleware to allow unsafe-eval for docx-preview (runs after all other middleware)
-@app.middleware("http")
-async def add_csp_header(request: Request, call_next):
-    """Add Content-Security-Policy header to allow unsafe-eval for docx-preview library"""
-    response = await call_next(request)
-    # Force set CSP header (overwrite if exists) to ensure docx-preview works
-    # More permissive CSP to allow docx-preview and other libraries to work
-    csp_policy = (
+
+def _content_security_policy() -> str:
+    if config.TABULAR_ONLY_MODE:
+        return (
+            "default-src 'self'; "
+            "script-src 'self'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: blob:; "
+            "font-src 'self' data:; "
+            "connect-src 'self' ws: wss:; "
+            "worker-src 'self' blob:; "
+            "frame-src 'self' blob:; "
+            "object-src 'none'; "
+            "base-uri 'self'; "
+            "frame-ancestors 'none'; "
+            "form-action 'self';"
+        )
+    return (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-eval' 'unsafe-inline' https: http:; "
         "style-src 'self' 'unsafe-inline' https: http: data:; "
         "img-src 'self' data: blob: https: http:; "
         "font-src 'self' data: blob: https: http:; "
-        "connect-src 'self' blob: https: http:; "
+        "connect-src 'self' blob: https: http: ws: wss:; "
         "worker-src 'self' blob:; "
         "frame-src 'self' https: http:; "
         "object-src 'self' blob:;"
     )
-    response.headers["Content-Security-Policy"] = csp_policy
+
+
+# CSP middleware to allow unsafe-eval for docx-preview (runs after all other middleware)
+@app.middleware("http")
+async def add_csp_header(request: Request, call_next):
+    """Apply a product-surface-specific Content Security Policy."""
+    response = await call_next(request)
+    response.headers["Content-Security-Policy"] = _content_security_policy()
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if is_production:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
 
 # API routes - MUST be registered BEFORE any catch-all routes
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
 app.include_router(cases.router, prefix="/api/cases", tags=["cases"])
-app.include_router(operations.router, prefix="/api/cases", tags=["operations"])
-app.include_router(analysis.router, prefix="/api/analysis", tags=["analysis"])
-app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
 app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 app.include_router(upload.router, prefix="/api/upload", tags=["upload"])
-app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
-app.include_router(assistant_chat_v2.router, tags=["assistant-chat-v2"])
-app.include_router(legal_corpus.router, tags=["legal-corpus"])
-app.include_router(draft_admin_templates.router, tags=["admin-draft-templates"])
-app.include_router(websocket.router, tags=["websocket"])
+app.include_router(websocket.tabular_router, tags=["websocket"])
 app.include_router(tabular_review.router, prefix="/api/tabular-review", tags=["tabular-review"])
-app.include_router(review_table.router, prefix="/api/review-table", tags=["review-table"])
-app.include_router(prompts.router, prefix="/api", tags=["prompts"])
 app.include_router(folders.router, prefix="/api", tags=["folders"])
-app.include_router(plan_execution.router, prefix="/api/plan", tags=["plan-execution"])
-app.include_router(metrics.router, prefix="/api/metrics", tags=["metrics"])
-app.include_router(document_editor.router, prefix="/api/documents-editor", tags=["document-editor"])
-# Playbooks router (all endpoints unified in one router with correct ordering)
-app.include_router(playbooks.router, prefix="/api", tags=["playbooks"])
-app.include_router(agent_runs.router, prefix="/api", tags=["agent-runs"])
-app.include_router(case_workflows.router, prefix="/api", tags=["case-workflows"])
+
+if not config.TABULAR_ONLY_MODE:
+    app.include_router(websocket.router, tags=["websocket"])
+    app.include_router(operations.router, prefix="/api/cases", tags=["operations"])
+    app.include_router(analysis.router, prefix="/api/analysis", tags=["analysis"])
+    app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
+    app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
+    app.include_router(assistant_chat_v2.router, tags=["assistant-chat-v2"])
+    app.include_router(legal_corpus.router, tags=["legal-corpus"])
+    app.include_router(draft_admin_templates.router, tags=["admin-draft-templates"])
+    app.include_router(review_table.router, prefix="/api/review-table", tags=["review-table"])
+    app.include_router(prompts.router, prefix="/api", tags=["prompts"])
+    app.include_router(plan_execution.router, prefix="/api/plan", tags=["plan-execution"])
+    app.include_router(metrics.router, prefix="/api/metrics", tags=["metrics"])
+    app.include_router(document_editor.router, prefix="/api/documents-editor", tags=["document-editor"])
+    app.include_router(playbooks.router, prefix="/api", tags=["playbooks"])
+    app.include_router(agent_runs.router, prefix="/api", tags=["agent-runs"])
+    app.include_router(case_workflows.router, prefix="/api", tags=["case-workflows"])
 # Health endpoints (includes detailed health checks and metrics)
 app.include_router(health.router, tags=["health"])
+if config.ENABLE_INTERNAL_DIAGNOSTICS:
+    app.include_router(health.diagnostics_router, tags=["diagnostics"])
 
 # Register custom exception handlers
 register_exception_handlers(app)
 
 
-# Debug endpoint to check routes
-@app.api_route("/api/debug/routes", methods=["GET"])
-async def debug_routes():
-    """Debug endpoint to list all routes"""
-    routes = []
-    for route in app.routes:
-        if hasattr(route, "methods") and hasattr(route, "path"):
-            routes.append({
-                "path": route.path,
-                "methods": list(route.methods),
-                "name": getattr(route, "name", "unknown")
-            })
-    return {"routes": routes}
+if config.ENABLE_INTERNAL_DIAGNOSTICS:
+    @app.api_route("/api/debug/routes", methods=["GET"])
+    async def debug_routes():
+        """Debug endpoint to list all routes."""
+        routes = []
+        for route in app.routes:
+            if hasattr(route, "methods") and hasattr(route, "path"):
+                routes.append({
+                    "path": route.path,
+                    "methods": list(route.methods),
+                    "name": getattr(route, "name", "unknown")
+                })
+        return {"routes": routes}
 
 
 # Serve static files from frontend/dist
@@ -569,18 +601,7 @@ if frontend_dist.exists():
         Return SPA index with no-cache headers to avoid stale hashed assets after deploys.
         """
         response = FileResponse(str(index_path))
-        csp_policy = (
-            "default-src 'self'; "
-            "script-src 'self' 'unsafe-eval' 'unsafe-inline' https: http:; "
-            "style-src 'self' 'unsafe-inline' https: http: data:; "
-            "img-src 'self' data: blob: https: http:; "
-            "font-src 'self' data: blob: https: http:; "
-            "connect-src 'self' blob: https: http:; "
-            "worker-src 'self' blob:; "
-            "frame-src 'self' https: http:; "
-            "object-src 'self' blob:;"
-        )
-        response.headers["Content-Security-Policy"] = csp_policy
+        response.headers["Content-Security-Policy"] = _content_security_policy()
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"

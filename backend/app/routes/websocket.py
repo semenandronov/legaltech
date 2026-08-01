@@ -1,5 +1,5 @@
 """WebSocket routes for streaming analysis"""
-from fastapi import WebSocket, WebSocketDisconnect, APIRouter, Depends, Query
+from fastapi import WebSocket, WebSocketDisconnect, APIRouter, Depends, HTTPException, Query
 from app.services.langchain_agents.legacy_stubs import AgentCoordinator
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
@@ -7,9 +7,11 @@ from app.services.tabular_review_service import TabularReviewService
 from app.services.presence_service import get_presence_service
 from app.services.websocket_manager import websocket_manager
 from app.utils.database import get_db
-from app.utils.auth import get_current_user, decode_token
+from app.utils.auth import decode_websocket_ticket
+from app.utils.authorization import require_owned_case, require_owned_review
 from app.models.user import User
 from app.config import config as app_config
+from sqlalchemy.orm import Session
 from typing import Optional
 import json
 import logging
@@ -18,26 +20,67 @@ import asyncio
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+tabular_router = APIRouter()
+
+
+async def _reject_websocket(websocket: WebSocket, code: int = 4401) -> None:
+    """Reject before application data is sent."""
+    try:
+        await websocket.close(code=code)
+    except Exception:
+        pass
+
+
+def _ticket_user_id(ticket: str, *, resource_type: str, resource_id: str) -> Optional[str]:
+    payload = decode_websocket_ticket(
+        ticket,
+        resource_type=resource_type,
+        resource_id=resource_id,
+    )
+    if not payload:
+        return None
+    return str(payload["sub"])
+
+
+def _active_user(db: Session, user_id: str) -> Optional[User]:
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None:
+        return None
+    if hasattr(user, "is_active") and not user.is_active:
+        return None
+    return user
 
 
 @router.websocket("/ws/analysis/{case_id}")
 async def stream_analysis(
     websocket: WebSocket,
-    case_id: str
+    case_id: str,
+    ticket: str = Query(...),
 ):
     """
     WebSocket endpoint for streaming LangGraph analysis progress
     
     Streams progress updates as analysis agents complete their tasks.
     """
-    await websocket.accept()
-    logger.info(f"WebSocket connection opened for case {case_id}")
-    
     # Get database session
     from app.utils.database import SessionLocal
     db = SessionLocal()
     
     try:
+        if app_config.TABULAR_ONLY_MODE:
+            await _reject_websocket(websocket, code=4404)
+            return
+        user_id = _ticket_user_id(ticket, resource_type="case", resource_id=case_id)
+        if not user_id or not _active_user(db, user_id):
+            await _reject_websocket(websocket)
+            return
+        try:
+            require_owned_case(db, case_id, user_id)
+        except HTTPException:
+            await _reject_websocket(websocket, code=4403)
+            return
+        await websocket.accept()
+        logger.info("WebSocket analysis connection opened for case %s, user %s", case_id, user_id)
         # Initialize services
         document_processor = DocumentProcessor()
         rag_service = RAGService(document_processor=document_processor)
@@ -185,7 +228,8 @@ async def stream_analysis(
 @router.websocket("/ws/chat/{case_id}")
 async def stream_chat(
     websocket: WebSocket,
-    case_id: str
+    case_id: str,
+    ticket: str = Query(...),
 ):
     """
     WebSocket endpoint for streaming chat responses
@@ -193,14 +237,25 @@ async def stream_chat(
     Streams RAG responses token by token (future enhancement).
     Currently sends complete response.
     """
-    await websocket.accept()
-    logger.info(f"WebSocket chat connection opened for case {case_id}")
-    
     # Get database session
     from app.utils.database import SessionLocal
     db = SessionLocal()
     
     try:
+        if app_config.TABULAR_ONLY_MODE:
+            await _reject_websocket(websocket, code=4404)
+            return
+        user_id = _ticket_user_id(ticket, resource_type="case", resource_id=case_id)
+        if not user_id or not _active_user(db, user_id):
+            await _reject_websocket(websocket)
+            return
+        try:
+            require_owned_case(db, case_id, user_id)
+        except HTTPException:
+            await _reject_websocket(websocket, code=4403)
+            return
+        await websocket.accept()
+        logger.info("WebSocket chat connection opened for case %s, user %s", case_id, user_id)
         document_processor = DocumentProcessor()
         rag_service = RAGService(document_processor=document_processor)
         
@@ -307,11 +362,11 @@ async def stream_chat(
             pass
 
 
-@router.websocket("/ws/tabular-review/{review_id}")
+@tabular_router.websocket("/ws/tabular-review/{review_id}")
 async def stream_tabular_review_updates(
     websocket: WebSocket,
     review_id: str,
-    token: Optional[str] = Query(None)
+    ticket: str = Query(...),
 ):
     """
     WebSocket endpoint for streaming tabular review updates in real-time
@@ -334,43 +389,22 @@ async def stream_tabular_review_updates(
     message_task: Optional[asyncio.Task] = None
     
     try:
-        # Authenticate user if token is provided
-        if token:
-            payload = decode_token(token)
-            if payload and "sub" in payload:
-                user_id = payload["sub"]
-            else:
-                await websocket.accept()
-                await websocket.send_json({
-                    "type": "error",
-                    "message": "Authentication failed"
-                })
-                await websocket.close()
-                return
-        
-        # Verify review exists
-        from app.models.tabular_review import TabularReview
-        review = db.query(TabularReview).filter(TabularReview.id == review_id).first()
-        if not review:
-            await websocket.accept()
-            await websocket.send_json({
-                "type": "error",
-                "message": "Review not found"
-            })
-            await websocket.close()
+        user_id = _ticket_user_id(ticket, resource_type="tabular_review", resource_id=review_id)
+        user = _active_user(db, user_id) if user_id else None
+        if not user_id or not user:
+            await _reject_websocket(websocket)
             return
-        
-        # Connect to WebSocketManager (this will accept the websocket)
-        if user_id:
-            connection_id = await websocket_manager.connect(websocket, review_id, user_id)
-            logger.info(f"WebSocket tabular review connection opened for review {review_id}, user {user_id}")
-            # Update presence
-            user = db.query(User).filter(User.id == user_id).first()
-            user_name = user.full_name if user else None
-            presence_service.update_presence(review_id, user_id, user_name)
-        else:
-            await websocket.accept()
-            logger.info(f"WebSocket tabular review connection opened for review {review_id} (anonymous)")
+        try:
+            require_owned_review(db, review_id, user_id)
+        except HTTPException:
+            await _reject_websocket(websocket, code=4403)
+            return
+
+        # WebSocketManager accepts the connection only after auth and ownership checks.
+        connection_id = await websocket_manager.connect(websocket, review_id, user_id)
+        logger.info("WebSocket tabular review connection opened for review %s, user %s", review_id, user_id)
+        user_name = user.full_name if user else None
+        presence_service.update_presence(review_id, user_id, user_name)
         
         # Send initial connection confirmation
         await websocket.send_json({

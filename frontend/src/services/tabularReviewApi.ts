@@ -1,5 +1,5 @@
-// Import the existing extractErrorMessage from api.ts
-import { extractErrorMessage } from './api'
+// Import the existing API helpers from api.ts
+import { createWebSocketTicket, extractErrorMessage } from './api'
 import axios from 'axios'
 import { assertDownloadBlob, extractBlobErrorMessage } from '../utils/fileDownload'
 
@@ -209,6 +209,10 @@ export interface CreateFromDescriptionResponse {
 
 // API functions
 export const tabularReviewApi = {
+  async createWebSocketTicket(reviewId: string): Promise<{ ticket: string; expires_in: number }> {
+    return createWebSocketTicket('tabular_review', reviewId)
+  },
+
   // List tabular reviews
   async listReviews(caseId?: string, skip: number = 0, limit: number = 20): Promise<{
     reviews: Array<{

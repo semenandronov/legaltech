@@ -1,0 +1,18 @@
+# Reduce noise from vendored / backup trees during secret scanning.
+legaltech/**
+court-case-monitor/**
+docling-upstream/**
+docling-langchain/**
+agent-skills/**
+.restore-backup-*/**
+.vm-db-sync/**
+tmp_presentation_assets/**
+docs/user-guide/**
+**/node_modules/**
+**/.venv/**
+**/venv/**
+frontend/dist/**
+*.mov
+*.mp4
+*.pptx
+*.pdf

@@ -1,0 +1,196 @@
+# Deterministic security gates: SCA + SAST + secrets.
+# Brownfield pattern (2026): block NEW dependency risk on PRs;
+# full inventory scans remain visible via artifacts without freezing delivery.
+name: Security
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "18 4 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Industry lifehack: fail only on newly introduced vulnerable packages in a PR.
+  dependency-review:
+    name: SCA (dependency review)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: always
+
+  sca-python:
+    name: SCA inventory (pip-audit)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pip-audit
+        run: pip install "pip-audit==2.9.0"
+
+      - name: Audit backend core requirements
+        id: audit_core
+        continue-on-error: true
+        run: |
+          pip-audit \
+            --requirement backend/requirements-core.txt \
+            --progress-spinner off \
+            --format json \
+            --output pip-audit-core.json \
+            --desc on
+
+      - name: Audit backend production requirements
+        id: audit_prod
+        continue-on-error: true
+        run: |
+          if [ -f backend/requirements-production.txt ]; then
+            pip-audit \
+              --requirement backend/requirements-production.txt \
+              --progress-spinner off \
+              --format json \
+              --output pip-audit-production.json \
+              --desc on
+          fi
+
+      - name: Upload pip-audit reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-reports
+          path: pip-audit-*.json
+          if-no-files-found: ignore
+
+      - name: Surface inventory status
+        run: |
+          if [ "${{ steps.audit_core.outcome }}" != "success" ] || [ "${{ steps.audit_prod.outcome }}" = "failure" ]; then
+            echo "::warning::pip-audit found known vulnerabilities. Reports are uploaded as artifacts; Dependabot will open fix PRs."
+          fi
+
+  sca-npm:
+    name: SCA inventory (npm audit)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: npm audit (high+)
+        id: npm_audit
+        continue-on-error: true
+        run: npm audit --audit-level=high --omit=dev
+
+      - name: Write npm audit report
+        if: always()
+        run: npm audit --omit=dev --json > npm-audit.json || true
+
+      - name: Upload npm audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-report
+          path: frontend/npm-audit.json
+          if-no-files-found: ignore
+
+      - name: Surface inventory status
+        run: |
+          if [ "${{ steps.npm_audit.outcome }}" != "success" ]; then
+            echo "::warning::npm audit found high/critical issues. Report uploaded; Dependabot will open fix PRs."
+          fi
+
+  sast-semgrep:
+    name: SAST (Semgrep)
+    runs-on: ubuntu-latest
+    if: github.actor != 'dependabot[bot]'
+    permissions:
+      contents: read
+      security-events: write
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Semgrep scan (ERROR severity gate)
+        # Start with ERROR-only failures to keep signal high (p/default lifehack).
+        run: |
+          semgrep scan \
+            --config p/default \
+            --config p/python \
+            --config p/javascript \
+            --config p/typescript \
+            --severity ERROR \
+            --metrics=off \
+            --error \
+            --sarif \
+            --output=semgrep.sarif \
+            backend/app \
+            frontend/src
+
+      - name: Upload Semgrep SARIF
+        if: always() && github.event_name != 'pull_request'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+        continue-on-error: true
+
+      - name: Upload Semgrep SARIF artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-sarif
+          path: semgrep.sarif
+          if-no-files-found: ignore
+
+  secrets-gitleaks:
+    name: Secrets (Gitleaks)
+    runs-on: ubuntu-latest
+    if: github.actor != 'dependabot[bot]'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Prefer the OSS binary over gitleaks-action (action needs a paid license on private repos).
+      - name: Install Gitleaks
+        env:
+          GITLEAKS_VERSION: "8.24.0"
+        run: |
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+          sudo mv gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Scan for secrets
+        run: gitleaks detect --source . --verbose --redact --no-banner

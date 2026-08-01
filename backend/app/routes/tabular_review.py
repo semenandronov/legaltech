@@ -6,6 +6,7 @@ from typing import Optional, List, Any, Tuple
 from pydantic import BaseModel
 from app.utils.database import get_db
 from app.utils.auth import get_current_user
+from app.utils.authorization import require_owned_review
 from app.utils.content_disposition import content_disposition_attachment
 from app.models.user import User
 from app.services.tabular_review_service import TabularReviewService
@@ -186,6 +187,7 @@ async def delete_review(
     current_user: User = Depends(get_current_user)
 ):
     """Delete a tabular review"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         service.delete_review(
@@ -213,6 +215,7 @@ async def update_review(
     current_user: User = Depends(get_current_user)
 ):
     """Update tabular review name or description"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         review = service.update_review(
@@ -316,6 +319,7 @@ async def get_review(
     current_user: User = Depends(get_current_user)
 ):
     """Get tabular review details"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         data = service.get_table_data(review_id, current_user.id)
@@ -335,6 +339,7 @@ async def add_column(
     current_user: User = Depends(get_current_user)
 ):
     """Add a column to tabular review"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         # Check columns count before adding
         from app.models.tabular_review import TabularColumn
@@ -398,6 +403,7 @@ async def add_columns_bulk(
     current_user: User = Depends(get_current_user)
 ):
     """Add multiple columns in one request."""
+    require_owned_review(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         added = []
@@ -435,6 +441,7 @@ async def update_column(
     current_user: User = Depends(get_current_user)
 ):
     """Update a column (rename, update prompt, config)"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         column = service.update_column(
@@ -472,6 +479,7 @@ async def delete_column(
     current_user: User = Depends(get_current_user)
 ):
     """Delete a column (cascade deletes all cells)"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         result = await service.delete_column_and_notify(
@@ -495,6 +503,7 @@ async def reorder_columns(
     current_user: User = Depends(get_current_user)
 ):
     """Reorder columns by providing ordered list of column IDs"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         columns = service.reorder_columns(
@@ -527,6 +536,7 @@ async def run_extraction(
     current_user: User = Depends(get_current_user)
 ):
     """Run extraction for all documents and columns"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         result = await service.run_extraction(review_id, current_user.id)
@@ -546,6 +556,7 @@ async def run_column_extraction(
     current_user: User = Depends(get_current_user)
 ):
     """Start background extraction for a column across all documents."""
+    require_owned_review(db, review_id, current_user.id)
     import asyncio
 
     from app.services.tabular_extraction_runtime import (
@@ -604,6 +615,7 @@ async def get_table_data(
     current_user: User = Depends(get_current_user)
 ):
     """Get table data for tabular review"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         # #region agent log
         logger.debug(f"[DEBUG HYPOTHESIS N] [API get_table_data] Called: review_id={review_id}, user_id={current_user.id}")
@@ -645,6 +657,7 @@ async def update_table_mode(
     current_user: User = Depends(get_current_user)
 ):
     """Update table mode and entity configuration for a review"""
+    require_owned_review(db, review_id, current_user.id)
     from app.models.tabular_review import TabularReview
     try:
         # Verify review belongs to user
@@ -684,6 +697,7 @@ async def get_cell_details(
     current_user: User = Depends(get_current_user)
 ):
     """Get cell details with verbatim extract and reasoning"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         from app.models.tabular_review import TabularCell, TabularColumn
         
@@ -805,6 +819,7 @@ async def update_cell(
     current_user: User = Depends(get_current_user)
 ):
     """Update a cell value (manual edit) by file_id and column_id"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         cell = service.update_cell(
@@ -836,6 +851,7 @@ async def update_document_status(
     current_user: User = Depends(get_current_user)
 ):
     """Update document review status"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         status = service.mark_as_reviewed(
@@ -865,6 +881,7 @@ async def bulk_update_status(
     current_user: User = Depends(get_current_user)
 ):
     """Bulk update document status for multiple files"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         updated_count = service.bulk_update_status(
@@ -892,6 +909,7 @@ async def bulk_run_extraction(
     current_user: User = Depends(get_current_user)
 ):
     """Bulk run extraction for specific files and columns"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         result = await service.bulk_run_extraction(
@@ -916,6 +934,7 @@ async def bulk_delete_rows(
     current_user: User = Depends(get_current_user)
 ):
     """Bulk delete rows (remove files from review)"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         deleted_count = service.bulk_delete_rows(
@@ -944,6 +963,7 @@ async def get_cell_history(
     current_user: User = Depends(get_current_user)
 ):
     """Get history for a specific cell"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         from app.services.cell_history_service import CellHistoryService
         history_service = CellHistoryService(db)
@@ -989,6 +1009,7 @@ async def revert_cell(
     current_user: User = Depends(get_current_user)
 ):
     """Revert a cell to a previous version"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         from app.services.cell_history_service import CellHistoryService
         from app.services.tabular_review_service import TabularReviewService
@@ -1046,12 +1067,16 @@ async def get_cell_diff(
     current_user: User = Depends(get_current_user)
 ):
     """Get diff between two cell history versions"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         from app.services.cell_history_service import CellHistoryService
         history_service = CellHistoryService(db)
         diff = history_service.get_diff(
             history_id_1=history_id_1,
-            history_id_2=history_id_2
+            history_id_2=history_id_2,
+            review_id=review_id,
+            file_id=file_id,
+            column_id=column_id,
         )
         return diff
     except ValueError as e:
@@ -1071,6 +1096,7 @@ async def lock_cell(
     current_user: User = Depends(get_current_user)
 ):
     """Lock a cell for editing"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         lock_duration = request.get("lock_duration_seconds", 300) if request else 300
@@ -1103,6 +1129,7 @@ async def unlock_cell(
     current_user: User = Depends(get_current_user)
 ):
     """Unlock a cell"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         cell = service.unlock_cell(
@@ -1134,6 +1161,7 @@ async def create_comment(
     current_user: User = Depends(get_current_user)
 ):
     """Create a comment on a cell"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         from app.services.cell_comment_service import CellCommentService
         comment_service = CellCommentService(db)
@@ -1186,6 +1214,7 @@ async def get_comments(
     current_user: User = Depends(get_current_user)
 ):
     """Get all comments for a cell"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         from app.services.cell_comment_service import CellCommentService
         comment_service = CellCommentService(db)
@@ -1213,13 +1242,15 @@ async def update_comment(
     current_user: User = Depends(get_current_user)
 ):
     """Update a comment"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         from app.services.cell_comment_service import CellCommentService
         comment_service = CellCommentService(db)
         comment = comment_service.update_comment(
             comment_id=comment_id,
             comment_text=request.comment_text,
-            user_id=current_user.id
+            user_id=current_user.id,
+            review_id=review_id,
         )
         # Broadcast update via WebSocket
         from app.services.websocket_manager import websocket_manager
@@ -1255,12 +1286,14 @@ async def delete_comment(
     current_user: User = Depends(get_current_user)
 ):
     """Delete a comment"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         from app.services.cell_comment_service import CellCommentService
         comment_service = CellCommentService(db)
         comment_service.delete_comment(
             comment_id=comment_id,
-            user_id=current_user.id
+            user_id=current_user.id,
+            review_id=review_id,
         )
         # Broadcast deletion via WebSocket
         from app.services.websocket_manager import websocket_manager
@@ -1287,12 +1320,14 @@ async def resolve_comment(
     current_user: User = Depends(get_current_user)
 ):
     """Mark a comment as resolved"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         from app.services.cell_comment_service import CellCommentService
         comment_service = CellCommentService(db)
         comment = comment_service.resolve_comment(
             comment_id=comment_id,
-            user_id=current_user.id
+            user_id=current_user.id,
+            review_id=review_id,
         )
         # Broadcast resolution via WebSocket
         from app.services.websocket_manager import websocket_manager
@@ -1325,12 +1360,14 @@ async def unresolve_comment(
     current_user: User = Depends(get_current_user)
 ):
     """Mark a comment as unresolved"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         from app.services.cell_comment_service import CellCommentService
         comment_service = CellCommentService(db)
         comment = comment_service.unresolve_comment(
             comment_id=comment_id,
-            user_id=current_user.id
+            user_id=current_user.id,
+            review_id=review_id,
         )
         # Broadcast unresolution via WebSocket
         from app.services.websocket_manager import websocket_manager
@@ -1361,6 +1398,7 @@ async def get_review_queue(
     current_user: User = Depends(get_current_user)
 ):
     """Get review queue items for a tabular review"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         from app.services.review_queue_service import ReviewQueueService
         from app.models.tabular_review import ReviewQueueItem, TabularReview
@@ -1422,6 +1460,7 @@ async def rebuild_review_queue(
     current_user: User = Depends(get_current_user)
 ):
     """Rebuild review queue for a tabular review"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         from app.services.review_queue_service import ReviewQueueService
         from app.models.tabular_review import ReviewQueueItem, TabularReview
@@ -1481,6 +1520,7 @@ async def mark_queue_item_reviewed(
     current_user: User = Depends(get_current_user)
 ):
     """Mark a review queue item as reviewed"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         from app.models.tabular_review import ReviewQueueItem, TabularReview
         from datetime import datetime
@@ -1550,6 +1590,7 @@ async def resolve_conflict(
     current_user: User = Depends(get_current_user)
 ):
     """Resolve a conflict by selecting a candidate or marking as N/A"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         from app.models.tabular_review import TabularCell
         from datetime import datetime
@@ -1610,14 +1651,11 @@ async def resolve_conflict(
         # Save history
         from app.services.cell_history_service import CellHistoryService
         history_service = CellHistoryService(db)
-        history_service.create_history_record(
-            tabular_review_id=review_id,
-            file_id=file_id,
-            column_id=column_id,
+        history_service.log_cell_change(
             cell=cell,
-            changed_by=current_user.id,
             change_type="updated",
-            change_reason=f"Conflict resolved: {request.resolution_method}"
+            changed_by=current_user.id,
+            change_reason=f"Conflict resolved: {request.resolution_method}",
         )
         
         cell.updated_at = datetime.utcnow()
@@ -1661,6 +1699,7 @@ async def export_csv(
     current_user: User = Depends(get_current_user)
 ):
     """Export tabular review to CSV (UTF-8 BOM)."""
+    require_owned_review(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         csv_content = service.export_to_csv(
@@ -1694,6 +1733,7 @@ async def export_excel(
     current_user: User = Depends(get_current_user)
 ):
     """Export tabular review to Excel (.xlsx)."""
+    require_owned_review(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         excel_content = service.export_to_excel(
@@ -1732,6 +1772,7 @@ async def export_word(
     current_user: User = Depends(get_current_user)
 ):
     """Export tabular review to Word (.docx)."""
+    require_owned_review(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         word_content = service.export_to_word(
@@ -1825,6 +1866,7 @@ async def apply_template(
     current_user: User = Depends(get_current_user)
 ):
     """Apply a template to a tabular review - adds all columns from template"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         # #region agent log
         logger.debug(f"[DEBUG HYPOTHESIS H] [API apply_template] Template application called: review_id={review_id}, template_id={template_id}, user_id={current_user.id}")
@@ -1833,19 +1875,14 @@ async def apply_template(
         from app.models.tabular_review import TabularColumnTemplate
         from app.services.tabular_review_service import TabularReviewService
         
-        # Get template
+        # Only own, public, or system templates are usable.
         template = db.query(TabularColumnTemplate).filter(
+            TabularColumnTemplate.id == template_id,
             or_(
-                TabularColumnTemplate.id == template_id,
-                and_(
-                    TabularColumnTemplate.is_public == True,
-                    TabularColumnTemplate.id == template_id
-                ),
-                and_(
-                    TabularColumnTemplate.is_system == True,
-                    TabularColumnTemplate.id == template_id
-                )
-            )
+                TabularColumnTemplate.user_id == current_user.id,
+                TabularColumnTemplate.is_public == True,
+                TabularColumnTemplate.is_system == True,
+            ),
         ).first()
         
         if not template:
@@ -1985,6 +2022,7 @@ async def update_selected_files(
     current_user: User = Depends(get_current_user)
 ):
     """Update selected files for a tabular review"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         review = service.update_selected_files(
@@ -2011,6 +2049,7 @@ async def get_available_files(
     current_user: User = Depends(get_current_user)
 ):
     """Get all available files for a case (for selecting files for tabular review)"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         from app.models.case import Case, File as FileModel
         from sqlalchemy import and_
@@ -2060,6 +2099,7 @@ async def get_tabular_chat_history(
     current_user: User = Depends(get_current_user),
 ):
     """Load persisted tabular review chat history for this table."""
+    require_owned_review(db, review_id, current_user.id)
     try:
         from app.services.tabular_chat_service import TabularChatService
 
@@ -2081,6 +2121,7 @@ async def chat_over_table(
     current_user: User = Depends(get_current_user)
 ):
     """Chat over table - ask questions about table data (non-streaming fallback)."""
+    require_owned_review(db, review_id, current_user.id)
     try:
         from app.services.tabular_chat_service import TabularChatService
         
@@ -2102,9 +2143,11 @@ async def chat_over_table(
 async def chat_over_table_stream(
     review_id: str,
     request: TabularChatRequest,
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """SSE stream for tabular review chat — tokens as they arrive."""
+    require_owned_review(db, review_id, current_user.id)
     from fastapi.responses import StreamingResponse
 
     from app.services.chat.events import SSESerializer
@@ -2370,6 +2413,7 @@ async def generate_columns_from_questions(
     current_user: User = Depends(get_current_user)
 ):
     """Generate column suggestions from a block of questions text (no DB write)."""
+    require_owned_review(db, review_id, current_user.id)
     try:
         from app.services.smart_column_service import SmartColumnService
         from app.models.tabular_review import TabularReview
@@ -2408,6 +2452,7 @@ async def create_column_from_description(
     current_user: User = Depends(get_current_user)
 ):
     """Create a column from natural language description"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         from app.services.smart_column_service import SmartColumnService
         
@@ -2446,6 +2491,7 @@ async def create_column_from_examples(
     current_user: User = Depends(get_current_user)
 ):
     """Create a column from examples (few-shot learning)"""
+    require_owned_review(db, review_id, current_user.id)
     try:
         from app.services.smart_column_service import SmartColumnService, Example
         

@@ -89,6 +89,44 @@ def create_refresh_token(data: dict) -> str:
     return encoded_jwt
 
 
+def create_websocket_ticket(
+    *,
+    user_id: str,
+    resource_type: str,
+    resource_id: str,
+    expires_seconds: int = 60,
+) -> str:
+    """Create a short-lived JWT scoped to one WebSocket resource."""
+    expire = datetime.utcnow() + timedelta(seconds=max(10, min(expires_seconds, 120)))
+    payload = {
+        "sub": str(user_id),
+        "type": "websocket",
+        "resource_type": str(resource_type),
+        "resource_id": str(resource_id),
+        "exp": expire,
+    }
+    return jwt.encode(payload, config.JWT_SECRET_KEY, algorithm=config.JWT_ALGORITHM)
+
+
+def decode_websocket_ticket(
+    ticket: str,
+    *,
+    resource_type: str,
+    resource_id: str,
+) -> Optional[dict]:
+    """Validate a short-lived ticket and its exact resource scope."""
+    payload = decode_token(ticket)
+    if not payload or payload.get("type") != "websocket":
+        return None
+    if payload.get("resource_type") != str(resource_type):
+        return None
+    if payload.get("resource_id") != str(resource_id):
+        return None
+    if not payload.get("sub"):
+        return None
+    return payload
+
+
 def decode_token(token: str) -> Optional[dict]:
     """Decode and verify a JWT token"""
     try:

@@ -1,0 +1,22 @@
+# Keep Semgrep focused on the product surface that lawyers will use.
+# Vendored / backup / eval trees create noise and slow CI.
+
+legaltech/
+court-case-monitor/
+docling-upstream/
+docling-langchain/
+agent-skills/
+evals/
+.restore-backup-*/
+.vm-db-sync/
+tmp_presentation_assets/
+docs/user-guide/
+frontend/dist/
+**/node_modules/
+**/__pycache__/
+**/.venv/
+**/venv/
+backend/evals/
+backend/scripts/
+*.min.js
+*.map

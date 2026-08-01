@@ -19,6 +19,10 @@ describe('productFeatures', () => {
     expect(productFeatures.operationsAssistant).toBe(true)
   })
 
+  it('operationsPage defaults off (hidden product surface)', () => {
+    expect(productFeatures.operationsPage).toBe(false)
+  })
+
   it('caseHomePath lands on overview when caseAssistant is off', () => {
     if (!productFeatures.caseAssistant) {
       expect(caseHomePath('abc')).toBe('/cases/abc')
@@ -38,6 +42,7 @@ describe('productFeatures', () => {
   it('legalCorpusPages exposes page surface flags', () => {
     expect(typeof productFeatures.legalCorpusPages).toBe('boolean')
     expect(typeof productFeatures.courtPracticePages).toBe('boolean')
+    expect(typeof productFeatures.operationsPage).toBe('boolean')
   })
 
   it('chatHasActiveInstruments respects disabled features', () => {

@@ -5,6 +5,12 @@ services:
     buildCommand: pip install --upgrade pip && pip install -r backend/requirements-core.txt && cd frontend && npm install --legacy-peer-deps && npm run type-check && npm run build
     startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
+      - key: ENVIRONMENT
+        value: "production"
+      - key: TABULAR_ONLY_MODE
+        value: "true"
+      - key: ENABLE_INTERNAL_DIAGNOSTICS
+        value: "false"
       # Database
       - key: DATABASE_URL
         sync: false
@@ -15,11 +21,11 @@ services:
       - key: JWT_ALGORITHM
         value: "HS256"
       - key: ACCESS_TOKEN_EXPIRE_MINUTES
-        value: "1440"
+        value: "60"
       
       # CORS
       - key: CORS_ORIGINS
-        value: "*"
+        sync: false
       
       # Frontend Environment Variables
       - key: VITE_API_URL
@@ -72,7 +78,7 @@ services:
       - key: GIGACHAT_MODEL
         value: "GigaChat-Pro"
       - key: GIGACHAT_VERIFY_SSL
-        value: "false"
+        value: "true"
       
       # Garant API - правовая информационная система
       - key: GARANT_API_KEY

@@ -193,6 +193,17 @@ apiClient.interceptors.response.use(
   }
 )
 
+export async function createWebSocketTicket(
+  resourceType: 'case' | 'tabular_review',
+  resourceId: string,
+): Promise<{ ticket: string; expires_in: number }> {
+  const response = await apiClient.post('/api/auth/ws-ticket', {
+    resource_type: resourceType,
+    resource_id: resourceId,
+  })
+  return response.data
+}
+
 export interface UploadResponse {
   caseId: string
   fileNames: string[]

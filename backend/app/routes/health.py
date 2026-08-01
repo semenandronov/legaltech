@@ -7,13 +7,17 @@ Health Endpoints - Эндпоинты проверки здоровья
 - /api/health/ready - readiness probe
 - /api/health/detailed - детальная проверка всех компонентов
 """
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from typing import Optional
 
 from app.core.health import get_health_checker, HealthStatus
+from app.config import config
+from app.models.user import User
+from app.utils.auth import get_current_user
 
 router = APIRouter(tags=["health"])
+diagnostics_router = APIRouter(tags=["diagnostics"])
 
 
 @router.get("/api/health")
@@ -62,8 +66,11 @@ async def readiness():
     return result
 
 
-@router.get("/api/health/detailed")
-async def detailed_health(include_optional: bool = True):
+@diagnostics_router.get("/api/health/detailed")
+async def detailed_health(
+    include_optional: bool = True,
+    current_user: User = Depends(get_current_user),
+):
     """
     Детальная проверка здоровья всех компонентов
     
@@ -77,6 +84,8 @@ async def detailed_health(include_optional: bool = True):
     - LLM (опционально)
     - ГАРАНТ API (опционально)
     """
+    if not config.ENABLE_INTERNAL_DIAGNOSTICS:
+        raise HTTPException(status_code=404, detail="Resource not found")
     checker = get_health_checker()
     report = await checker.check_all(include_optional=include_optional)
     
@@ -92,38 +101,44 @@ async def detailed_health(include_optional: bool = True):
     )
 
 
-@router.get("/api/metrics/chat")
-async def chat_metrics():
+@diagnostics_router.get("/api/metrics/chat")
+async def chat_metrics(current_user: User = Depends(get_current_user)):
     """
     Метрики чата
     
     Возвращает статистику по запросам, латентности, ошибкам.
     """
+    if not config.ENABLE_INTERNAL_DIAGNOSTICS:
+        raise HTTPException(status_code=404, detail="Resource not found")
     from app.services.chat.metrics import get_metrics
     
     metrics = get_metrics()
     return metrics.get_summary()
 
 
-@router.get("/api/metrics/circuit-breakers")
-async def circuit_breaker_status():
+@diagnostics_router.get("/api/metrics/circuit-breakers")
+async def circuit_breaker_status(current_user: User = Depends(get_current_user)):
     """
     Статус Circuit Breaker'ов
     
     Возвращает состояние всех Circuit Breaker'ов в системе.
     """
+    if not config.ENABLE_INTERNAL_DIAGNOSTICS:
+        raise HTTPException(status_code=404, detail="Resource not found")
     from app.core.resilience import CircuitBreakerRegistry
     
     return CircuitBreakerRegistry.get_status()
 
 
-@router.get("/api/metrics/rate-limits")
-async def rate_limit_status():
+@diagnostics_router.get("/api/metrics/rate-limits")
+async def rate_limit_status(current_user: User = Depends(get_current_user)):
     """
     Статус Rate Limiter
     
     Возвращает текущее состояние rate limiting.
     """
+    if not config.ENABLE_INTERNAL_DIAGNOSTICS:
+        raise HTTPException(status_code=404, detail="Resource not found")
     from app.core.rate_limiter import get_rate_limiter
     
     limiter = get_rate_limiter()

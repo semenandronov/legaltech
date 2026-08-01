@@ -104,19 +104,18 @@ class CellHistoryService:
         change_reason: Optional[str] = None
     ) -> TabularCell:
         """Revert a cell to a previous version"""
-        # Get the history record
+        # Scope the lookup to the exact cell to prevent cross-review history access.
         history_record = self.db.query(CellHistory).filter(
-            CellHistory.id == history_id
+            and_(
+                CellHistory.id == history_id,
+                CellHistory.tabular_review_id == current_cell.tabular_review_id,
+                CellHistory.file_id == current_cell.file_id,
+                CellHistory.column_id == current_cell.column_id,
+            )
         ).first()
         
         if not history_record:
             raise ValueError(f"History record {history_id} not found")
-        
-        # Verify it's for the same cell
-        if (history_record.file_id != current_cell.file_id or
-            history_record.column_id != current_cell.column_id or
-            history_record.tabular_review_id != current_cell.tabular_review_id):
-            raise ValueError("History record does not match current cell")
         
         # Save current state before reverting
         previous_cell_value = current_cell.cell_value
@@ -151,11 +150,19 @@ class CellHistoryService:
     def get_diff(
         self,
         history_id_1: str,
-        history_id_2: str
+        history_id_2: str,
+        review_id: str,
+        file_id: str,
+        column_id: str,
     ) -> Dict[str, Any]:
         """Get diff between two history versions"""
-        record_1 = self.db.query(CellHistory).filter(CellHistory.id == history_id_1).first()
-        record_2 = self.db.query(CellHistory).filter(CellHistory.id == history_id_2).first()
+        scope = (
+            CellHistory.tabular_review_id == review_id,
+            CellHistory.file_id == file_id,
+            CellHistory.column_id == column_id,
+        )
+        record_1 = self.db.query(CellHistory).filter(CellHistory.id == history_id_1, *scope).first()
+        record_2 = self.db.query(CellHistory).filter(CellHistory.id == history_id_2, *scope).first()
         
         if not record_1 or not record_2:
             raise ValueError("One or both history records not found")

@@ -233,9 +233,7 @@ function App() {
         path="/cases/:caseId/operations"
         element={
           <ProtectedRoute>
-            <Suspense fallback={<PageLoader />}>
-              <OperationsPage />
-            </Suspense>
+            <OperationsRouteGate />
           </ProtectedRoute>
         }
       />
@@ -299,6 +297,19 @@ const CaseChatRouteGate = () => {
     return <Navigate to={caseId ? `/cases/${caseId}` : '/cases'} replace />
   }
   return <CaseChatPage />
+}
+
+/** Операции: при выключенном флаге — на обзор дела. */
+const OperationsRouteGate = () => {
+  const { caseId } = useParams<{ caseId: string }>()
+  if (!isProductFeatureEnabled('operationsPage')) {
+    return <Navigate to={caseId ? `/cases/${caseId}` : '/cases'} replace />
+  }
+  return (
+    <Suspense fallback={<PageLoader />}>
+      <OperationsPage />
+    </Suspense>
+  )
 }
 
 const CaseChatPage = () => {

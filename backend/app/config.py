@@ -1223,6 +1223,37 @@ class Config:
     TABULAR_CONTEXT_MAX_CHARS: int = int(
         os.getenv("TABULAR_CONTEXT_MAX_CHARS", "12000") or "12000"
     )
+    # Short documents: skip chunk RAG and pass full original_text into the cell.
+    # ~5–15 pages of RU contract OCR typically fits below this budget.
+    TABULAR_SHORT_DOC_MAX_CHARS: int = int(
+        os.getenv("TABULAR_SHORT_DOC_MAX_CHARS", "18000") or "18000"
+    )
+    TABULAR_SHORT_DOC_FULL_TEXT: bool = (
+        os.getenv("TABULAR_SHORT_DOC_FULL_TEXT", "true").strip().lower() == "true"
+    )
+    # Phase 3: schema-first contract facts (rules always; LLM optional one-pass).
+    CONTRACT_FACTS_ENABLED: bool = (
+        os.getenv("CONTRACT_FACTS_ENABLED", "true").strip().lower() == "true"
+    )
+    CONTRACT_FACTS_LLM_ENABLED: bool = (
+        os.getenv("CONTRACT_FACTS_LLM_ENABLED", "false").strip().lower() == "true"
+    )
+    CONTRACT_FACTS_EXTRACT_MAX_CHARS: int = int(
+        os.getenv("CONTRACT_FACTS_EXTRACT_MAX_CHARS", "12000") or "12000"
+    )
+    # Phase 4: risk_analysis columns use a fixed 3-node graph (not a free agent).
+    TABULAR_RISK_ANALYSIS_ENABLED: bool = (
+        os.getenv("TABULAR_RISK_ANALYSIS_ENABLED", "true").strip().lower() == "true"
+    )
+    TABULAR_RISK_MAX_SECTION_QUERIES: int = int(
+        os.getenv("TABULAR_RISK_MAX_SECTION_QUERIES", "4") or "4"
+    )
+    TABULAR_RISK_MAX_CONTEXT_CHARS: int = int(
+        os.getenv("TABULAR_RISK_MAX_CONTEXT_CHARS", "16000") or "16000"
+    )
+    TABULAR_RISK_MAX_TOKENS: int = int(
+        os.getenv("TABULAR_RISK_MAX_TOKENS", "1200") or "1200"
+    )
     # Tabular: cross-encoder rerank per cell (on by default — same quality bar as case chat).
     TABULAR_RERANK_ENABLED: bool = (
         os.getenv("TABULAR_RERANK_ENABLED", "true").strip().lower() == "true"
@@ -1633,11 +1664,10 @@ class Config:
     # GigaChat (Сбер) - с поддержкой function calling
     GIGACHAT_CREDENTIALS: str = clean_env_str(os.getenv("GIGACHAT_CREDENTIALS", ""))  # Authorization Key (base64 ClientID:ClientSecret)
     # GigaChat SmartSpeech STT (separate API key for speech recognition)
-    GIGACHAT_STT_CREDENTIALS: str = os.getenv("GIGACHAT_STT_CREDENTIALS", "MDE5ZDFhNmQtZWI3Yy03YTQ3LWIwMmMtNDFiZTU0ZGQ2YzU1OjQxZTEzMTMzLWEzMzUtNDNmZC05NjVmLTMyZTEwNDIwNDhjNQ==")
+    GIGACHAT_STT_CREDENTIALS: str = clean_env_str(os.getenv("GIGACHAT_STT_CREDENTIALS", ""))
     GIGACHAT_MODEL: str = os.getenv("GIGACHAT_MODEL", "GigaChat-Pro")
-    # По умолчанию отключаем проверку SSL для совместимости с некоторыми окружениями (Render, прокси)
-    # Установите GIGACHAT_VERIFY_SSL=true для включения проверки SSL (более безопасно)
-    GIGACHAT_VERIFY_SSL: bool = os.getenv("GIGACHAT_VERIFY_SSL", "false").lower() == "true"
+    # TLS verification is mandatory by default; disable only in isolated local development.
+    GIGACHAT_VERIFY_SSL: bool = os.getenv("GIGACHAT_VERIFY_SSL", "true").lower() == "true"
     GIGACHAT_SCOPE: str = os.getenv("GIGACHAT_SCOPE", "GIGACHAT_API_PERS")  # Scope для получения токена (GIGACHAT_API_PERS для физических лиц)
     
     # GigaChat Model Selection (Lite/Pro)
@@ -1691,6 +1721,11 @@ class Config:
     JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
     ALGORITHM: str = "HS256"  # Alias for JWT_ALGORITHM
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))  # 24 hours
+    # Production surface: mount only APIs required by cases + Tabular Review.
+    TABULAR_ONLY_MODE: bool = os.getenv("TABULAR_ONLY_MODE", "false").strip().lower() == "true"
+    ENABLE_INTERNAL_DIAGNOSTICS: bool = (
+        os.getenv("ENABLE_INTERNAL_DIAGNOSTICS", "false").strip().lower() == "true"
+    )
     # Public self-registration via POST /api/auth/register (off by default).
     AUTH_PUBLIC_REGISTRATION_ENABLED: bool = (
         os.getenv("AUTH_PUBLIC_REGISTRATION_ENABLED", "false").strip().lower() == "true"
@@ -1725,6 +1760,44 @@ class Config:
 
 # Create config instance
 config = Config()
+
+
+def validate_production_security() -> None:
+    """Fail fast instead of starting production with unsafe security defaults."""
+    is_production = os.getenv("ENVIRONMENT", "").strip().lower() == "production"
+    if not is_production:
+        return
+
+    insecure_markers = ("change-in-production", "your-secret-key")
+    jwt_secret = str(config.JWT_SECRET_KEY or "")
+    if len(jwt_secret) < 32 or any(marker in jwt_secret for marker in insecure_markers):
+        raise RuntimeError("JWT_SECRET_KEY must be a unique random value of at least 32 characters")
+    if config.JWT_ALGORITHM != "HS256":
+        raise RuntimeError("JWT_ALGORITHM must be HS256 for this deployment")
+    # Soft warnings: VM .env may lag behind image until env sync runs.
+    if not config.GIGACHAT_VERIFY_SSL or not config.TABULAR_ONLY_MODE:
+        import logging
+        _log = logging.getLogger(__name__)
+        if not config.GIGACHAT_VERIFY_SSL:
+            _log.warning(
+                "GIGACHAT_VERIFY_SSL is false in production; enable TLS verification"
+            )
+        if not config.TABULAR_ONLY_MODE:
+            _log.warning(
+                "TABULAR_ONLY_MODE is false in production; unused product APIs remain mounted"
+            )
+    if "*" in config.CORS_ORIGINS:
+        raise RuntimeError("Wildcard CORS origin is forbidden in production")
+    insecure_origins = [
+        origin
+        for origin in config.CORS_ORIGINS
+        if origin.strip().lower().startswith("http://")
+    ]
+    if insecure_origins:
+        raise RuntimeError("Plain HTTP CORS origins are forbidden in production")
+
+
+validate_production_security()
 
 
 def is_legal_corpus_force_enabled() -> bool:

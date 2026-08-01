@@ -1,0 +1,70 @@
+# DAST: OWASP ZAP baseline against a live URL (staging / preview).
+# Best practice: passive baseline on demand or nightly — not on every PR without a target.
+# Full active scans stay manual/pre-release (they can mutate data).
+name: DAST ZAP
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: "HTTPS URL of the running app (staging)"
+        required: true
+        type: string
+      fail_on_warn:
+        description: "Fail the job on ZAP WARN findings"
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    # Random-ish off-peak UTC slot; only runs if ZAP_TARGET_URL repo variable is set.
+    - cron: "37 3 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  zap-baseline:
+    name: OWASP ZAP baseline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve target URL
+        id: target
+        run: |
+          TARGET="${{ github.event.inputs.target_url }}"
+          if [ -z "$TARGET" ]; then
+            TARGET="${{ vars.ZAP_TARGET_URL }}"
+          fi
+          if [ -z "$TARGET" ]; then
+            echo "No target URL. Set workflow input or repository variable ZAP_TARGET_URL."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          case "$TARGET" in
+            https://*) ;;
+            *)
+              echo "Refusing non-HTTPS target: $TARGET"
+              exit 1
+              ;;
+          esac
+          echo "url=$TARGET" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: ZAP baseline scan
+        if: steps.target.outputs.skip != 'true'
+        uses: zaproxy/action-baseline@v0.14.0
+        with:
+          target: ${{ steps.target.outputs.url }}
+          cmd_options: "-a"
+          allow_issue_writing: false
+          fail_action: ${{ github.event.inputs.fail_on_warn == 'true' }}
+        continue-on-error: ${{ github.event.inputs.fail_on_warn != 'true' }}
+
+      - name: Upload ZAP report
+        if: always() && steps.target.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-baseline-report
+          path: report_html.html
+          if-no-files-found: ignore

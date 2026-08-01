@@ -32,6 +32,11 @@ VM_PUBLIC_URL="${VM_PUBLIC_URL:-https://158.160.148.240}"
   grep -v '^UPLOAD_DIR=' "${TMP}" \
     | grep -v '^FILE_STORE_BYTES_IN_DB=' \
     | grep -v '^CORS_ORIGINS=' \
+    | grep -v '^ENVIRONMENT=' \
+    | grep -v '^TABULAR_ONLY_MODE=' \
+    | grep -v '^ENABLE_INTERNAL_DIAGNOSTICS=' \
+    | grep -v '^GIGACHAT_VERIFY_SSL=' \
+    | grep -v '^ACCESS_TOKEN_EXPIRE_MINUTES=' \
     | grep -v '^DATABASE_URL=' || true
   echo ""
   echo "# Postgres on same VM (docker-compose.vm.yml)"
@@ -41,7 +46,12 @@ VM_PUBLIC_URL="${VM_PUBLIC_URL:-https://158.160.148.240}"
   echo ""
   echo "UPLOAD_DIR=/app/backend/uploads"
   echo "FILE_STORE_BYTES_IN_DB=false"
-  echo "CORS_ORIGINS=${VM_PUBLIC_URL},${VM_PUBLIC_URL}:8000,https://xsdwcefrvtgby.ru,http://xsdwcefrvtgby.ru,http://localhost:5173,http://127.0.0.1:5173"
+  echo "ENVIRONMENT=production"
+  echo "TABULAR_ONLY_MODE=true"
+  echo "ENABLE_INTERNAL_DIAGNOSTICS=false"
+  echo "GIGACHAT_VERIFY_SSL=true"
+  echo "ACCESS_TOKEN_EXPIRE_MINUTES=60"
+  echo "CORS_ORIGINS=${VM_PUBLIC_URL},https://xsdwcefrvtgby.ru"
 } >"${TMP}.vm"
 mv "${TMP}.vm" "${TMP}"
 

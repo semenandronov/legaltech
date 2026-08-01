@@ -64,6 +64,9 @@ const HistoryPage = () => {
     if (!isProductFeatureEnabled('caseAssistant')) {
       list = list.filter((item) => item.type !== 'case_chat')
     }
+    if (!isProductFeatureEnabled('operationsPage')) {
+      list = list.filter((item) => item.type !== 'operations')
+    }
     const q = search.trim().toLowerCase()
     if (!q) return list
     return list.filter((item) => {
@@ -79,7 +82,7 @@ const HistoryPage = () => {
       navigate(`/assistant?session=${item.id}`)
     } else if (item.type === 'tabular_review' && item.case_id) {
       navigate(`/cases/${item.case_id}/tabular-review/${item.id}`)
-    } else if (item.type === 'operations' && item.case_id) {
+    } else if (item.type === 'operations' && item.case_id && isProductFeatureEnabled('operationsPage')) {
       navigate(`/cases/${item.case_id}/operations?file=${item.id}`)
     }
   }
@@ -91,7 +94,7 @@ const HistoryPage = () => {
       <p className="mt-1 text-left text-xs text-gray-400">
         {search.trim()
           ? 'Ничего не найдено. Попробуйте другой запрос.'
-          : 'Здесь появятся недавние чаты, табличные обзоры и выписки.'}
+          : 'Здесь появятся недавние чаты и табличные обзоры.'}
       </p>
       {!search.trim() && (
         <button
@@ -170,7 +173,7 @@ const HistoryPage = () => {
                     (item.type === 'case_chat' && !!item.case_id && isProductFeatureEnabled('caseAssistant')) ||
                     (item.type === 'global_chat' && isProductFeatureEnabled('globalAssistant')) ||
                     (item.type === 'tabular_review' && !!item.case_id) ||
-                    (item.type === 'operations' && !!item.case_id)
+                    (item.type === 'operations' && !!item.case_id && isProductFeatureEnabled('operationsPage'))
 
                   return (
                     <MikeTableRow

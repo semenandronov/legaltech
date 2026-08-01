@@ -54,3 +54,37 @@ jobs:
         env:
           DATABASE_URL: postgresql://user:password@localhost:5432/legal_ai
         run: python -c "from app.config import config; print('config ok', config.APP_ROLE)"
+
+  tabular-unit:
+    name: Tabular unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-core.txt
+
+      - name: Install core dependencies + pytest
+        run: |
+          pip install -r backend/requirements-core.txt
+          pip install pytest==8.3.5
+
+      - name: Run tabular / DD classifier unit tests
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://user:password@localhost:5432/legal_ai
+        run: >
+          python -m pytest -q
+          tests/test_tabular_cell_verification.py
+          tests/test_tabular_evidence_grounding.py
+          tests/test_dd_document_classifier.py
+          tests/test_dd_classifier_seed_gold.py
+          tests/test_tabular_short_doc_policy.py
+          tests/test_document_zones.py
+          tests/test_contract_facts.py
+          tests/test_tabular_column_kind.py
+          tests/test_ru_dd_schema_eval.py
+          tests/test_security_authorization.py

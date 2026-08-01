@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { createWebSocketTicket } from '../services/api'
 
 interface WebSocketMessage {
   type: 'token' | 'response' | 'error' | 'processing' | 'done'
@@ -34,14 +35,15 @@ export const useWebSocketChat = ({
   const reconnectAttempts = useRef(0)
   const maxReconnectAttempts = 5
 
-  const connect = useCallback(() => {
+  const connect = useCallback(async () => {
     if (!enabled || !caseId) return
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const host = import.meta.env.VITE_API_URL?.replace(/^https?:\/\//, '') || window.location.host
-    const wsUrl = `${protocol}//${host}/ws/chat/${caseId}`
 
     try {
+      const { ticket } = await createWebSocketTicket('case', caseId)
+      const wsUrl = `${protocol}//${host}/ws/chat/${caseId}?ticket=${encodeURIComponent(ticket)}`
       const ws = new WebSocket(wsUrl)
 
       ws.onopen = () => {
@@ -112,7 +114,7 @@ export const useWebSocketChat = ({
           const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 10000)
           reconnectTimeoutRef.current = setTimeout(() => {
             console.log(`Reconnecting... (attempt ${reconnectAttempts.current})`)
-            connect()
+            void connect()
           }, delay)
         } else {
           onError('Не удалось подключиться к серверу')
@@ -156,7 +158,7 @@ export const useWebSocketChat = ({
 
   useEffect(() => {
     if (enabled && caseId) {
-      connect()
+      void connect()
     }
 
     return () => {
