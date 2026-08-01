@@ -41,7 +41,7 @@ jobs:
     name: Pre-deploy checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -65,7 +65,7 @@ jobs:
       image: ${{ steps.meta.outputs.image }}
       image_latest: ${{ steps.meta.outputs.image_latest }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Resolve image tags
         id: meta
@@ -118,7 +118,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Sync runtime .env (optional)
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.sync_runtime_env == 'true'
