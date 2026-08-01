@@ -48,7 +48,7 @@
     "@tanstack/react-virtual": "^3.11.1",
     "@tiptap/core": "^2.27.2",
     "@tiptap/extension-highlight": "^2.27.2",
-    "@tiptap/extension-link": "^2.27.2",
+    "@tiptap/extension-link": "^3.29.2",
     "@tiptap/extension-placeholder": "^2.27.2",
     "@tiptap/extension-table": "^2.27.2",
     "@tiptap/extension-table-cell": "^2.27.2",
