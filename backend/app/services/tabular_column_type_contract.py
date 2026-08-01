@@ -53,14 +53,57 @@ def validate_column_type(column_type: str) -> str:
 
 
 def validate_column_config(column_type: str, column_config: Optional[Dict[str, Any]]) -> None:
-    if column_type != "tag":
-        return
     cfg = column_config if isinstance(column_config, dict) else {}
-    options = cfg.get("options") or []
-    labels = [str(o.get("label", "")).strip() for o in options if isinstance(o, dict)]
-    labels = [label for label in labels if label]
-    if not labels:
-        raise ValueError("column_type 'tag' requires column_config.options with at least one label")
+    if column_type == "tag":
+        options = cfg.get("options") or []
+        labels = [str(o.get("label", "")).strip() for o in options if isinstance(o, dict)]
+        labels = [label for label in labels if label]
+        if not labels:
+            raise ValueError("column_type 'tag' requires column_config.options with at least one label")
+
+    raw_zones = cfg.get("preferred_zones")
+    if raw_zones is None:
+        pass
+    else:
+        from app.services.document_zones import DOCUMENT_ZONE_SET, normalize_zone
+
+        if isinstance(raw_zones, str):
+            values = [p.strip() for p in raw_zones.split(",") if p.strip()]
+        elif isinstance(raw_zones, (list, tuple)):
+            values = list(raw_zones)
+        else:
+            raise ValueError("column_config.preferred_zones must be a list or comma-separated string")
+        if values:
+            bad = []
+            for v in values:
+                z = normalize_zone(v)
+                if not z or z not in DOCUMENT_ZONE_SET:
+                    bad.append(str(v))
+            if bad:
+                allowed = ", ".join(sorted(DOCUMENT_ZONE_SET))
+                raise ValueError(
+                    f"Invalid preferred_zones {bad}. Allowed: {allowed}"
+                )
+
+    raw_field = cfg.get("field_id")
+    if raw_field is not None and str(raw_field).strip():
+        from app.services.contract_field_catalog import normalize_field_id, known_field_ids
+
+        if normalize_field_id(raw_field) is None:
+            allowed = ", ".join(known_field_ids())
+            raise ValueError(
+                f"Invalid field_id '{raw_field}'. Allowed: {allowed}"
+            )
+
+    raw_kind = cfg.get("column_kind")
+    if raw_kind is not None and str(raw_kind).strip():
+        from app.services.tabular_column_kind import COLUMN_KINDS, normalize_column_kind
+
+        if normalize_column_kind(raw_kind) is None:
+            allowed = ", ".join(COLUMN_KINDS)
+            raise ValueError(
+                f"Invalid column_kind '{raw_kind}'. Allowed: {allowed}"
+            )
 
 
 def _combined_text(label: str, prompt: str) -> str:
@@ -264,11 +307,13 @@ def strict_normalize_cell_value(
             return "N/A", "N/A", f"invalid number: {value!r}"
 
     if column_type == "currency":
+        from app.services.ru_contract_value_normalize import normalize_ru_money_amount
         from app.services.tabular_review_models import validate_currency
 
         try:
             normalized_num = validate_currency(value)
-            return value, normalized_num, None
+            display = normalize_ru_money_amount(value) or value
+            return display, normalized_num, None
         except ValueError:
             return "N/A", "N/A", f"invalid currency: {value!r}"
 

@@ -1,0 +1,67 @@
+{
+  "title": "RU DD doc_type classifier seed gold (v1)",
+  "version": "dd_taxonomy_v1",
+  "notes": "Anonymised excerpts of real RU DD documents; PDF extraction artefacts (split words, one-word-per-line layout) are preserved on purpose.",
+  "documents": [
+    {
+      "id": "addendum_lease",
+      "path": "addendum_lease.txt",
+      "filename": "ds1_arenda.pdf",
+      "expected": "addendum"
+    },
+    {
+      "id": "letter_about_lease",
+      "path": "letter_about_lease.txt",
+      "filename": "pismo_arenda_03-03-22.pdf",
+      "expected": "correspondence"
+    },
+    {
+      "id": "claim_letter",
+      "path": "claim_letter.txt",
+      "filename": "pretenzija.pdf",
+      "expected": "correspondence"
+    },
+    {
+      "id": "counterclaim",
+      "path": "counterclaim.txt",
+      "filename": "vstrechnyj_isk.pdf",
+      "expected": "litigation"
+    },
+    {
+      "id": "inline_lease",
+      "filename": "dogovor_arendy.pdf",
+      "text": "ДОГОВОР АРЕНДЫ коммерческой недвижимости. Арендодатель передаёт Арендатору имущество. Арендная плата уплачивается ежемесячно.",
+      "expected": "lease_commercial"
+    },
+    {
+      "id": "inline_supply",
+      "filename": "dogovor_postavki.pdf",
+      "text": "ДОГОВОР ПОСТАВКИ. Поставщик обязуется передать товар в собственность Покупателю.",
+      "expected": "supply"
+    },
+    {
+      "id": "inline_services",
+      "filename": "dogovor_uslug.pdf",
+      "text": "ДОГОВОР ОКАЗАНИЯ УСЛУГ. Исполнитель оказывает услуги Заказчику на условиях настоящего договора.",
+      "expected": "services"
+    },
+    {
+      "id": "inline_works",
+      "filename": "dogovor_podryada.pdf",
+      "text": "ДОГОВОР ПОДРЯДА. Подрядчик обязуется выполнить работы и сдать результат работ Заказчику.",
+      "expected": "works"
+    },
+    {
+      "id": "inline_pp",
+      "filename": "pp_001.pdf",
+      "text": "Платежное поручение № 15. Плательщик ООО Альфа. Получатель ООО Бета.",
+      "expected": "payment_order"
+    },
+    {
+      "id": "inline_statement",
+      "filename": "bank_statement.pdf",
+      "text": "Выписка по счету за период. Остаток на начало дня. Движение средств по счёту.",
+      "expected": "bank_statement"
+    }
+  ]
+}

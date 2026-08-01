@@ -16,6 +16,10 @@ from app.services.tabular_extraction_policy import (
     column_requires_evidence,
     is_na_cell_value,
 )
+from app.services.tabular_evidence_grounding import (
+    value_grounded_in_corpus,
+    value_grounded_in_document,
+)
 from app.services.tabular_quote_then_answer import (
     normalize_for_grounding,
     quote_grounded_in_corpus,
@@ -31,6 +35,8 @@ class EvidenceAssessment:
     quote_grounded_in_document: bool
     quote_grounded_in_context: bool = False
     date_grounded_in_document: bool = False
+    value_grounded_in_document: bool = False
+    value_grounded_in_context: bool = False
 
     @property
     def has_sufficient_evidence(self) -> bool:
@@ -38,8 +44,13 @@ class EvidenceAssessment:
         Non-N/A answers require a model-provided citation that is grounded in the
         document or retrieval corpus. Chunk provenance alone is never enough —
         retrieval always returns chunks with offsets.
+
+        Structured facts (ИНН, суммы, номера дел) may pass via value grounding when
+        OCR breaks verbatim quote substring match.
         """
         if self.date_grounded_in_document:
+            return True
+        if self.value_grounded_in_document or self.value_grounded_in_context:
             return True
         has_model_cite = self.has_verbatim or self.has_model_references
         if not has_model_cite:
@@ -129,6 +140,26 @@ def assess_evidence(
         if normalized and not is_na_cell_value(normalized):
             date_grounded = date_value_grounded_in_document(normalized, file)
 
+    cell_value = (result.cell_value or "").strip()
+    val_doc = (
+        value_grounded_in_document(
+            cell_value,
+            column_type=column_type,
+            original_text=file.original_text or "",
+        )
+        if cell_value and not is_na_cell_value(cell_value)
+        else False
+    )
+    val_ctx = (
+        value_grounded_in_corpus(
+            cell_value,
+            column_type=column_type,
+            corpus=corpus,
+        )
+        if cell_value and not is_na_cell_value(cell_value) and corpus
+        else False
+    )
+
     return EvidenceAssessment(
         has_model_references=has_model_refs,
         has_verbatim=has_verbatim,
@@ -136,6 +167,8 @@ def assess_evidence(
         quote_grounded_in_document=grounded_doc,
         quote_grounded_in_context=grounded_ctx,
         date_grounded_in_document=date_grounded,
+        value_grounded_in_document=val_doc,
+        value_grounded_in_context=val_ctx,
     )
 
 

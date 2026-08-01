@@ -1,0 +1,61 @@
+{
+  "title": "RU lease DD schema eval (seed)",
+  "pack": "ru_lease",
+  "template": "lease",
+  "case_title": "RU lease DD seed (anonymised)",
+  "notes": "Anonymised seed addendum for CI schema eval (no PII).",
+  "documents": [
+    {
+      "id": "ds1_arenda",
+      "label": "ДС №1 к договору аренды 03/03-2022/1",
+      "filename": "addendum_lease.txt",
+      "dd_doc_type": "addendum"
+    }
+  ],
+  "questions": [
+    {
+      "id": "doc_number",
+      "label": "Номер договора",
+      "difficulty": "easy",
+      "column_type": "text",
+      "field_id": "doc_number",
+      "column_kind": "fact",
+      "prompt": "Укажи основной номер договора аренды, к которому относится документ."
+    },
+    {
+      "id": "doc_date",
+      "label": "Дата документа",
+      "difficulty": "easy",
+      "column_type": "date",
+      "field_id": "doc_date",
+      "column_kind": "fact",
+      "prompt": "Дата составления этого документа (YYYY-MM-DD)."
+    },
+    {
+      "id": "rent_amount",
+      "label": "Арендная плата",
+      "difficulty": "medium",
+      "column_type": "currency",
+      "field_id": "rent_amount",
+      "column_kind": "fact",
+      "prompt": "Ключевая сумма арендной платы за весь период."
+    },
+    {
+      "id": "buyout_right",
+      "label": "Право выкупа",
+      "difficulty": "medium",
+      "column_type": "yes_no",
+      "field_id": "buyout_right",
+      "column_kind": "fact",
+      "prompt": "Предусмотрено ли право выкупа? Да / Нет."
+    }
+  ],
+  "gold": {
+    "ds1_arenda": {
+      "doc_number": "03/03-2022/1",
+      "doc_date": "2022-07-25",
+      "rent_amount": "959335",
+      "buyout_right": "Да"
+    }
+  }
+}

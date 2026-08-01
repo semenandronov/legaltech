@@ -1,0 +1,61 @@
+{
+  "title": "RU supply DD schema eval (seed)",
+  "pack": "ru_supply",
+  "template": "supply",
+  "case_title": "RU supply DD seed",
+  "notes": "Synthetic mini supply contract for schema/rules baseline. Replace with real PDFs.",
+  "documents": [
+    {
+      "id": "supply_mini",
+      "label": "Договор поставки № П-42/2024",
+      "filename": "supply_mini.txt",
+      "dd_doc_type": "supply"
+    }
+  ],
+  "questions": [
+    {
+      "id": "doc_number",
+      "label": "Номер договора",
+      "difficulty": "easy",
+      "column_type": "text",
+      "field_id": "doc_number",
+      "column_kind": "fact",
+      "prompt": "Укажи номер договора поставки."
+    },
+    {
+      "id": "doc_date",
+      "label": "Дата документа",
+      "difficulty": "easy",
+      "column_type": "date",
+      "field_id": "doc_date",
+      "column_kind": "fact",
+      "prompt": "Дата договора (YYYY-MM-DD)."
+    },
+    {
+      "id": "price_total",
+      "label": "Сумма / цена",
+      "difficulty": "medium",
+      "column_type": "currency",
+      "field_id": "price_total",
+      "column_kind": "fact",
+      "prompt": "Общая стоимость товара."
+    },
+    {
+      "id": "penalty",
+      "label": "Неустойка",
+      "difficulty": "medium",
+      "column_type": "text",
+      "field_id": "penalty",
+      "column_kind": "fact",
+      "prompt": "Условия неустойки / пени."
+    }
+  ],
+  "gold": {
+    "supply_mini": {
+      "doc_number": "П-42/2024",
+      "doc_date": "2024-03-15",
+      "price_total": "1250000",
+      "penalty": "0.1%"
+    }
+  }
+}

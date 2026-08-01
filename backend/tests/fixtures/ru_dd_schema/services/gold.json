@@ -1,0 +1,61 @@
+{
+  "title": "RU services/works DD schema eval (seed)",
+  "pack": "ru_services",
+  "template": "services",
+  "case_title": "RU services DD seed",
+  "notes": "Synthetic mini services contract for schema/rules baseline.",
+  "documents": [
+    {
+      "id": "services_mini",
+      "label": "Договор оказания услуг № У-17/2023",
+      "filename": "services_mini.txt",
+      "dd_doc_type": "services"
+    }
+  ],
+  "questions": [
+    {
+      "id": "doc_number",
+      "label": "Номер договора",
+      "difficulty": "easy",
+      "column_type": "text",
+      "field_id": "doc_number",
+      "column_kind": "fact",
+      "prompt": "Укажи номер договора оказания услуг."
+    },
+    {
+      "id": "doc_date",
+      "label": "Дата документа",
+      "difficulty": "easy",
+      "column_type": "date",
+      "field_id": "doc_date",
+      "column_kind": "fact",
+      "prompt": "Дата договора (YYYY-MM-DD)."
+    },
+    {
+      "id": "price_total",
+      "label": "Сумма / цена",
+      "difficulty": "medium",
+      "column_type": "currency",
+      "field_id": "price_total",
+      "column_kind": "fact",
+      "prompt": "Цена услуг."
+    },
+    {
+      "id": "penalty",
+      "label": "Неустойка",
+      "difficulty": "medium",
+      "column_type": "text",
+      "field_id": "penalty",
+      "column_kind": "fact",
+      "prompt": "Условия неустойки."
+    }
+  ],
+  "gold": {
+    "services_mini": {
+      "doc_number": "У-17/2023",
+      "doc_date": "2023-11-10",
+      "price_total": "480000",
+      "penalty": "0.05%"
+    }
+  }
+}

@@ -48,19 +48,16 @@ def coerce_optional_int(value: Any) -> Optional[int]:
 
 
 def validate_currency(value: str) -> str:
-    """Validate and normalize currency value"""
+    """Validate and normalize currency value to a plain numeric string."""
     if not value or not isinstance(value, str):
         raise ValueError(f"Invalid currency value: {value}")
-    
-    # Remove currency symbols, spaces, and commas
-    cleaned = re.sub(r'[^\d.,]', '', value.replace(' ', '').replace(',', '.'))
-    
-    # Try to parse as float
-    try:
-        float(cleaned)
-        return cleaned
-    except ValueError:
+
+    from app.services.ru_contract_value_normalize import money_plain_normalized
+
+    plain = money_plain_normalized(value)
+    if plain is None:
         raise ValueError(f"Invalid currency format: {value}")
+    return plain
 
 
 def validate_number(value: str) -> str:

@@ -190,6 +190,51 @@ def test_evidence_from_grounded_quote_passes_fact_column(monkeypatch):
     assert outcome.result.cell_value == "Договор поставки"
 
 
+def test_inn_value_grounded_without_verbatim_quote(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.tabular_extraction_policy.config.TABULAR_EVIDENCE_REQUIRED",
+        True,
+        raising=False,
+    )
+    doc_text = "ООО «Смарт Сити», ИНН 9701032688, КПП 770101001"
+    result = TabularCellExtractionModel(
+        cell_value="9701032688",
+        reasoning="из реквизитов",
+        column_type="text",
+        confidence=0.9,
+        verbatim_extract="ИНН 9701 032 688 с OCR пробелами не в тексте",
+    )
+    outcome = apply_evidence_first_policy(
+        result,
+        column=_column("text"),
+        file=_file(doc_text),
+        included_docs=[],
+    )
+    assert not outcome.forced_na
+    assert outcome.result.cell_value == "9701032688"
+
+
+def test_value_grounding_does_not_accept_hallucinated_inn(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.tabular_extraction_policy.config.TABULAR_EVIDENCE_REQUIRED",
+        True,
+        raising=False,
+    )
+    result = TabularCellExtractionModel(
+        cell_value="9998887776",
+        reasoning="угадано",
+        column_type="text",
+        confidence=0.95,
+    )
+    outcome = apply_evidence_first_policy(
+        result,
+        column=_column("text"),
+        file=_file("совсем другой текст без нужных цифр"),
+        included_docs=[],
+    )
+    assert outcome.forced_na
+
+
 def test_evidence_grounded_in_retrieval_context_passes(monkeypatch):
     monkeypatch.setattr(
         "app.services.tabular_extraction_policy.config.TABULAR_EVIDENCE_REQUIRED",
