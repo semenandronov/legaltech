@@ -87,7 +87,7 @@ jobs:
       - uses: docker/setup-buildx-action@v3
 
       - name: Login to Yandex Container Registry
-        uses: yc-actions/yc-cr-login@v2
+        uses: yc-actions/yc-cr-login@v3
         with:
           yc-sa-json-credentials: ${{ secrets.YC_SA_JSON_CREDENTIALS }}
 
