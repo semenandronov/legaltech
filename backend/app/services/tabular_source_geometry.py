@@ -13,12 +13,15 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from langchain_core.documents import Document
 
-from app.services.prov_span_utils import char_spans_overlap, locate_quote_in_original
+from app.services.prov_span_utils import (
+    char_spans_overlap,
+    locate_quote_in_original,
+    narrow_char_span_to_quote,
+)
 from app.services.tabular_cell_payload import (
     _clean_text,
     _copy_bbox,
     _copy_page_bbox,
-    _quote_in_span,
 )
 
 logger = logging.getLogger(__name__)
@@ -135,7 +138,9 @@ def resolve_ref_char_span(
     ref: Dict[str, Any],
     original_text: str,
 ) -> tuple[Optional[int], Optional[int]]:
-    """Locate quote offsets in the file original_text; fall back to stored span if valid."""
+    """Locate quote offsets in the file original_text; fall back to stored span if faithful."""
+    from app.services.prov_span_utils import span_faithfully_covers_quote
+
     ref_text = _clean_text(ref.get("text"))
     located = locate_quote_in_original(original_text, ref_text) if original_text and ref_text else None
     if located is not None:
@@ -145,8 +150,19 @@ def resolve_ref_char_span(
         cs = ref.get("char_start")
         ce = ref.get("char_end")
         if cs is not None and ce is not None and int(ce) > int(cs):
-            if not original_text or _quote_in_span(original_text, int(cs), int(ce), ref_text):
+            if not original_text or span_faithfully_covers_quote(
+                original_text, int(cs), int(ce), ref_text
+            ):
                 return int(cs), int(ce)
+            # Stored span is a loose parent chunk — try to shrink onto the quote.
+            ns, ne = narrow_char_span_to_quote(
+                original=original_text,
+                span_start=int(cs),
+                span_end=int(ce),
+                quote_anchor=ref_text,
+            )
+            if span_faithfully_covers_quote(original_text, ns, ne, ref_text):
+                return ns, ne
     except (TypeError, ValueError):
         pass
     return None, None
@@ -159,12 +175,15 @@ def attach_bbox_to_source_reference(
     original_text: str = "",
 ) -> Dict[str, Any]:
     """
-    Return a copy of ref with bbox/page_bbox from the best leaf chunk.
+    Return a copy of ref with quote-accurate char spans and leaf-chunk bbox.
 
     If a micro/row match is found, its geometry wins over any pre-existing bbox
     (which may have been stamped from a parent macro).
+    When the quote is relocated in original_text but no safe leaf geometry exists,
+    clear stale bbox so the viewer falls back to text-layer highlight.
     """
     from app.services.chat.citation_payload import resolve_citation_page_from_metadata
+    from app.services.prov_span_utils import span_faithfully_covers_quote
     from app.services.rag_service import RAGService
 
     out = dict(ref)
@@ -173,6 +192,10 @@ def attach_bbox_to_source_reference(
         return out
 
     char_start, char_end = resolve_ref_char_span(ref=out, original_text=original_text)
+    if char_start is not None and char_end is not None:
+        out["char_start"] = char_start
+        out["char_end"] = char_end
+
     matched = best_doc_for_geometry(
         docs,
         quote=ref_text,
@@ -180,16 +203,28 @@ def attach_bbox_to_source_reference(
         char_end=char_end,
     )
     if matched is None:
+        old_cs, old_ce = ref.get("char_start"), ref.get("char_end")
+        if char_start is not None and char_end is not None:
+            out["char_start"] = char_start
+            out["char_end"] = char_end
+            relocated = old_cs != char_start or old_ce != char_end
+            stale_parent = bool(
+                original_text
+                and ref_text
+                and not span_faithfully_covers_quote(
+                    original_text, old_cs, old_ce, ref_text
+                )
+            )
+            if (relocated or stale_parent) and _has_bbox(out):
+                # Prefer text-layer highlight over a parent-chunk box for the old span.
+                out.pop("bbox", None)
+                out.pop("page_bbox", None)
         return out
 
     meta = getattr(matched, "metadata", None) or {}
     page = resolve_citation_page_from_metadata(meta)
     if page is not None:
         out["page"] = page
-
-    if char_start is not None and char_end is not None:
-        out["char_start"] = char_start
-        out["char_end"] = char_end
 
     try:
         regions, page_bbox = RAGService._extract_bbox_regions(
@@ -204,6 +239,8 @@ def attach_bbox_to_source_reference(
     bbox = _copy_bbox(regions[0]) if regions else None
     pb = _copy_page_bbox(page_bbox)
     if bbox is None:
+        out.pop("bbox", None)
+        out.pop("page_bbox", None)
         return out
 
     if (
@@ -211,8 +248,10 @@ def attach_bbox_to_source_reference(
         and char_start is not None
         and char_end is not None
         and ref_text
-        and not _quote_in_span(original_text, char_start, char_end, ref_text)
+        and not span_faithfully_covers_quote(original_text, char_start, char_end, ref_text)
     ):
+        out.pop("bbox", None)
+        out.pop("page_bbox", None)
         return out
 
     out["bbox"] = bbox

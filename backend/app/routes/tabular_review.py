@@ -786,17 +786,33 @@ async def get_cell_details(
                         except (KeyError, TypeError, ValueError):
                             return None
 
-                    changed = any(
-                        _bbox_key(before) != _bbox_key(after)
-                        for before, after in zip(source_references, enriched)
-                    ) or len(source_references) != len(enriched)
+                    def _span_key(ref: Any) -> Optional[Tuple[Any, ...]]:
+                        if not isinstance(ref, dict):
+                            return None
+                        return (ref.get("char_start"), ref.get("char_end"), ref.get("page"))
+
+                    changed = (
+                        any(
+                            _bbox_key(before) != _bbox_key(after)
+                            or _span_key(before) != _span_key(after)
+                            for before, after in zip(source_references, enriched)
+                        )
+                        or len(source_references) != len(enriched)
+                    )
+                    source_references = enriched
                     if changed:
-                        source_references = enriched
                         cell.source_references = enriched
+                        # Keep primary deep-link columns in sync with repaired refs.
+                        first = enriched[0] if enriched else None
+                        if isinstance(first, dict):
+                            if first.get("char_start") is not None:
+                                cell.primary_source_char_start = first.get("char_start")
+                            if first.get("char_end") is not None:
+                                cell.primary_source_char_end = first.get("char_end")
+                            if first.get("page") is not None:
+                                cell.source_page = first.get("page")
                         db.add(cell)
                         db.commit()
-                    else:
-                        source_references = enriched
         except Exception:
             logger.debug(
                 "source_references geometry enrich skipped review=%s file=%s",

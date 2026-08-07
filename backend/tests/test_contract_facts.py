@@ -50,7 +50,85 @@ def test_rules_extract_lease_core_fields():
     assert fields["doc_date"]["value"] == "2022-07-25"
     assert fields["buyout_right"]["value"] == "Да"
     assert fields["rent_amount"]["value"] == "959 335 руб."
-    assert "движимого имущества" in fields["leased_object"]["value"]
+    # Generic title «движимого имущества» must NOT short-circuit as leased_object.
+    assert "leased_object" not in fields
+
+
+OCR_PREAMBLE_LEASE = """
+Договор аренды движимого имущества
+с правом выкупа № 20/01-2022/1
+г. Москва
+«20» января 2022г.
+Общество с ограниченной ответственностью «СМАРТ СИТИ» (ИНН 9701032688, ОГРН
+1167746181173) в лице Генерального директора Елизарова Данилы Михайловича, действующего на
+основании устава, именуемое в дальнейшем «Арендодатель», с одной стороны
+и Индивидуальный предприниматель Красноштанова Ольга Борисовна (ИНН 380503776092,
+ОГРНИП 321385000042741) в собственном лице, действующий на основании свидетельства о
+государственной регистрации физического лица в качестве индивидуального предпринимателя
+ОГРНИП 321385000042741, именуемый в дальнейшем «Арендатор», с другой стороны, совместно
+именуемые «Стороны», заключили настоящий договор (далее также именуемый «Договор») о
+нижеследующем:
+1. Предмет Договора
+1.1. Арендодатель передаёт Арендатору электросамокаты в количестве 50 штук.
+5.1. Размер арендной платы за весь период аренды составляет 1 894 705 (один миллион
+восемьсот девяносто четыре тысячи семьсот пять) руб. 00 копеек.
+"""
+
+
+def test_rules_extract_parties_from_ocr_multiline_preamble():
+    fields = extract_contract_facts_rules(
+        OCR_PREAMBLE_LEASE,
+        filename="lease_scan.pdf",
+        dd_doc_type="lease_commercial",
+    )
+    assert "СМАРТ СИТИ" in fields["landlord"]["value"].upper().replace("«", "").replace("»", "")
+    assert "Красноштанова" in fields["tenant"]["value"]
+    assert "основании" not in fields["landlord"]["value"].lower()
+    assert "огрнип" not in fields["tenant"]["value"].lower()
+    assert fields["rent_amount"]["value"] == "1 894 705 руб."
+    assert fields["doc_number"]["value"] == "20/01-2022/1"
+    assert fields["doc_date"]["value"] == "2022-01-20"
+
+
+def test_rules_reject_garbage_party_tail():
+    from app.services.contract_facts_service import is_plausible_party_name
+
+    assert not is_plausible_party_name("основании устава")
+    assert not is_plausible_party_name("ОГРНИП 321385000042741")
+    assert is_plausible_party_name(
+        "Общество с ограниченной ответственностью «СМАРТ СИТИ»"
+    )
+
+
+def test_try_extraction_skips_garbage_cached_fact(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.contract_facts_service.config.CONTRACT_FACTS_ENABLED",
+        True,
+        raising=False,
+    )
+    file_model = SimpleNamespace(
+        id="f1",
+        filename="bad.txt",
+        original_text="x",
+        contract_facts={
+            "fields": {
+                "landlord": {
+                    "value": "основании устава",
+                    "verbatim": "основании устава, именуемое Арендодатель",
+                    "confidence": 0.9,
+                }
+            }
+        },
+        dd_doc_type="lease_commercial",
+        processing_progress=None,
+    )
+    column = SimpleNamespace(
+        column_type="text",
+        column_config={"field_id": "landlord"},
+        column_label="Арендодатель",
+        prompt="Кто арендодатель?",
+    )
+    assert try_extraction_from_contract_facts(file_model, column, allow_lazy=False) is None
 
 
 def test_rules_extract_money_with_broken_ocr_spacing():

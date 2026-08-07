@@ -98,6 +98,11 @@ def build_outline_from_chunks(chunks: Sequence[Document]) -> Tuple[List[OutlineS
     outline = [
         OutlineSectionEntry.from_dict(v)
         for v in sorted(by_root.values(), key=lambda x: (x.get("char_start") or 0, x.get("section_root_id") or ""))
+        if (
+            str(v.get("section_title") or "").strip()
+            or str(v.get("section_number") or "").strip()
+            or str(v.get("section_label") or "").strip()
+        )
     ]
     def_roots: List[str] = []
     for entry in outline:

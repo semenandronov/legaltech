@@ -210,24 +210,13 @@ def build_template_columns(field_ids: List[str]) -> List[Dict[str, Any]]:
     return cols
 
 
-# Optional risk column appendable to any DD template.
-RU_DD_RISK_COLUMN: Dict[str, Any] = {
-    "column_label": "Ключевые риски",
-    "column_type": "text",
-    "prompt": (
-        "Перечисли ключевые риски этого договора для due diligence "
-        "(ответственность, расторжение, неустойка, оплата). Краткий маркированный список."
-    ),
-    "column_config": {"column_kind": "risk_analysis"},
-}
-
-
 # Seed templates for add_tabular_templates / product catalog.
+# Fact/precise columns only — vague "key risks" columns are not part of DD packs.
 RU_DD_LEASE_TEMPLATE: Dict[str, Any] = {
     "name": "DD: коммерческая аренда",
     "description": (
         "Карточка договора аренды для due diligence: стороны, объект, плата, "
-        "срок, выкуп, неустойка, расторжение и риски."
+        "срок, выкуп, неустойка и расторжение."
     ),
     "category": "due_diligence",
     "tags": ["DD", "аренда", "lease", "RU"],
@@ -265,7 +254,6 @@ RU_DD_LEASE_TEMPLATE: Dict[str, Any] = {
             ),
         },
         *build_template_columns(["governing_law"]),
-        RU_DD_RISK_COLUMN,
     ],
 }
 
@@ -273,7 +261,7 @@ RU_DD_SUPPLY_TEMPLATE: Dict[str, Any] = {
     "name": "DD: поставка",
     "description": (
         "Карточка договора поставки: стороны, товар, цена, сроки поставки, "
-        "неустойка, расторжение и риски."
+        "неустойка и расторжение."
     ),
     "category": "due_diligence",
     "tags": ["DD", "поставка", "supply", "RU"],
@@ -310,7 +298,6 @@ RU_DD_SUPPLY_TEMPLATE: Dict[str, Any] = {
             ),
         },
         *build_template_columns(["governing_law"]),
-        RU_DD_RISK_COLUMN,
     ],
 }
 
@@ -318,7 +305,7 @@ RU_DD_SERVICES_WORKS_TEMPLATE: Dict[str, Any] = {
     "name": "DD: услуги и подряд",
     "description": (
         "Карточка договора услуг или подряда: стороны, объём, цена, сроки/SLA, "
-        "неустойка, расторжение и риски."
+        "неустойка и расторжение."
     ),
     "category": "due_diligence",
     "tags": ["DD", "услуги", "подряд", "services", "RU"],
@@ -355,7 +342,6 @@ RU_DD_SERVICES_WORKS_TEMPLATE: Dict[str, Any] = {
             ),
         },
         *build_template_columns(["governing_law"]),
-        RU_DD_RISK_COLUMN,
     ],
 }
 

@@ -62,6 +62,23 @@ _WS_RE = re.compile(r"\s+")
 _QUOTE_CHARS = "\"«»„“”'`"
 
 
+def find_hard_body_section_start(text: str) -> Optional[int]:
+    """
+    Offset of the first hard body heading (e.g. «1. ПРЕДМЕТ…»), or None.
+
+    Skips ultra-early letterhead false positives the same way as the front-matter zone cutter.
+    """
+    body = text or ""
+    if not body.strip():
+        return None
+    search_from = min(120, max(0, len(body) // 20))
+    match = _HARD_SECTION_RE.search(body, search_from)
+    min_cut = min(80, max(40, search_from))
+    if match and match.start() >= min_cut:
+        return int(match.start())
+    return None
+
+
 def front_matter_facts_enabled() -> bool:
     return bool(getattr(config, "FRONT_MATTER_FACTS_ENABLED", True))
 
@@ -185,15 +202,11 @@ def select_front_matter_zone(text: str, *, max_chars: Optional[int] = None) -> T
     if not body.strip():
         return "", 0
     cap = max_chars if max_chars is not None else front_matter_extract_max_chars()
-    # Ignore ultra-early false positives (letterhead noise); look after a short prefix.
-    search_from = min(120, max(0, len(body) // 20))
-    match = _HARD_SECTION_RE.search(body, search_from)
-    # Accept a hard section cut once we are past letterhead noise.
-    min_cut = min(80, max(40, search_from))
-    if match and match.start() >= min_cut:
+    hard_at = find_hard_body_section_start(body)
+    if hard_at is not None:
         # Stop at the hard section heading (keep preamble only).
-        line_end = body.find("\n", match.start())
-        end = (line_end + 1) if line_end > match.start() else match.start()
+        line_end = body.find("\n", hard_at)
+        end = (line_end + 1) if line_end > hard_at else hard_at
     else:
         end = min(len(body), cap)
     end = min(end, cap, len(body))

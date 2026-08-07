@@ -1283,13 +1283,17 @@ class Config:
         os.getenv("TABULAR_CONTEXT_COMPILER_ENABLED", "true").strip().lower() == "true"
     )
     TABULAR_DCP_ENABLED: bool = (
-        os.getenv("TABULAR_DCP_ENABLED", "false").strip().lower() == "true"
+        os.getenv("TABULAR_DCP_ENABLED", "true").strip().lower() == "true"
     )
     TABULAR_SECTION_ROUTER_ENABLED: bool = (
-        os.getenv("TABULAR_SECTION_ROUTER_ENABLED", "false").strip().lower() == "true"
+        os.getenv("TABULAR_SECTION_ROUTER_ENABLED", "true").strip().lower() == "true"
     )
     TABULAR_SECTION_ROUTER_MAX_ROOTS: int = int(
         os.getenv("TABULAR_SECTION_ROUTER_MAX_ROOTS", "5") or "5"
+    )
+    # Soft floor: below this, do not hard-filter retrieval to routed sections.
+    TABULAR_SECTION_ROUTER_MIN_CONFIDENCE: float = float(
+        os.getenv("TABULAR_SECTION_ROUTER_MIN_CONFIDENCE", "0.55") or "0.55"
     )
     TABULAR_RETRIEVAL_ESCALATION_ENABLED: bool = (
         os.getenv("TABULAR_RETRIEVAL_ESCALATION_ENABLED", "false").strip().lower() == "true"

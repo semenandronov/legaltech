@@ -29,6 +29,7 @@ from app.services.ru_contract_value_normalize import (
     normalize_ru_contract_number,
     normalize_ru_money_amount,
 )
+from app.services.document_date_resolver import resolve_document_issuance_date
 from app.services.tabular_extraction_schemas import typed_extraction_to_cell_model
 from app.services.tabular_review_models import TabularCellExtractionModel
 
@@ -46,23 +47,17 @@ _CONTRACT_LIKE = frozenset(
 )
 
 _DOC_NUMBER_RE = re.compile(
-    r"(?i)(?:договор\w*|соглашени\w*|дс)\s*"
-    r"(?:аренды|поставки|подряда|оказания\s+услуг)?\s*"
+    r"(?is)(?:договор\w*|соглашени\w*|дс)\s*"
+    r"(?:аренды|поставки|подряда|оказания\s+услуг)?"
+    r".{0,90}?"
     r"(?:№|N[oо]?\.?)\s*([0-9A-Za-z][0-9A-Za-z/\-–—\._]*)"
 )
 _DS_NUMBER_RE = re.compile(
-    r"(?i)дополнительн\w+\s+соглашени\w*\s*(?:№|N[oо]?\.?)\s*([0-9A-Za-z][0-9A-Za-z/\-–—\._]*)"
+    r"(?i)дополнительн\w*\s+соглашени\w*\s*(?:№|N[oо]?\.?)\s*([0-9A-Za-z][0-9A-Za-z/\-–—\._]*)"
 )
 _BASE_CONTRACT_RE = re.compile(
     r"(?i)к\s+договору[^№\n]{0,80}(?:№|N[oо]?\.?)\s*([0-9A-Za-z][0-9A-Za-z/\-–—\._]*)"
 )
-_DATE_RE = re.compile(
-    r"(?i)(?:от\s+)?[«\"]?(\d{1,2})[»\"]?\s+"
-    r"(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)"
-    r"\s+(\d{4})\s*г?\.?"
-)
-_DATE_ISO_RE = re.compile(r"\b(20\d{2})-(\d{2})-(\d{2})\b")
-_DATE_DOT_RE = re.compile(r"\b(\d{1,2})\.(\d{1,2})\.(20\d{2})\s*г?\.?\b")
 _RENT_AMOUNT_RE = re.compile(
     r"(?i)(?:размер\s+)?арендн\w+\s+плат\w+[^\d]{0,40}"
     r"(\d[\d\s\u00a0\u202f]{2,}(?:[.,]\d{1,2})?)\s*(?:руб|₽|RUB)?"
@@ -84,26 +79,42 @@ _LEASED_OBJECT_EXPLICIT_RE = re.compile(
     r"(?i)(?:объект\s+аренды|предмет\s+договора(?:\s+аренды)?|в\s+аренду\s+переда[её]т?ся)\s*[:\-]?\s*"
     r"([^\n.]{5,180})"
 )
-_LANDLORD_RE = re.compile(
-    r"(?is)([^\n]{8,220}?)\s*,\s*именуем\w+\s+в\s+дальнейшем\s+[«\"„]?Арендодатель"
+# Role anchor; party name is resolved from a multi-line window BEFORE this mark
+# (OCR often puts «ООО …» on earlier lines and «на основании устава, именуемое …» on the last).
+_PARTY_ROLE_ANCHOR_RE = re.compile(
+    r"(?is),\s*именуем\w+\s+в\s+дальнейшем\s+[«\"„]?(?P<role>Арендодатель|Арендатор|"
+    r"Заказчик|Исполнитель|Подрядчик|Поставщик|Покупатель)\b"
 )
-_TENANT_RE = re.compile(
-    r"(?is)([^\n]{8,220}?)\s*,\s*именуем\w+\s+в\s+дальнейшем\s+[«\"„]?Арендатор"
+_ORG_OR_IP_RE = re.compile(
+    r"(?is)("
+    r"(?:общество\s+с\s+ограниченной\s+ответственностью|ооо|акционерное\s+общество|"
+    r"публичное\s+акционерное\s+общество|пао|ао|зао)\s*"
+    r"[«\"„][^»\"\n]{1,120}[»\"“]?|"
+    r"(?:общество\s+с\s+ограниченной\s+ответственностью|ооо)\s+[А-ЯЁA-Z][А-ЯЁA-Za-zа-яё0-9\-\s]{2,80}?|"
+    r"индивидуальный\s+предприниматель\s+[А-ЯЁ][а-яё\-]+(?:\s+[А-ЯЁ][а-яё\-]+){1,3}|"
+    r"ип\s+[А-ЯЁ][а-яё\-]+(?:\s+[А-ЯЁ][а-яё\-]+){1,3}"
+    r")"
 )
-_MONTHS = {
-    "января": "01",
-    "февраля": "02",
-    "марта": "03",
-    "апреля": "04",
-    "мая": "05",
-    "июня": "06",
-    "июля": "07",
-    "августа": "08",
-    "сентября": "09",
-    "октября": "10",
-    "ноября": "11",
-    "декабря": "12",
-}
+_PARTY_GARBAGE_RE = re.compile(
+    r"(?i)^(?:"
+    r"основани[еюя]|устава|доверенност\w*|огрн(?:ип)?|инн|кпп|"
+    r"действующ\w*|в\s+лице|с\s+одной\s+стороны|с\s+другой\s+стороны"
+    r")\b"
+)
+_ID_ONLY_RE = re.compile(r"(?i)^(?:огрн(?:ип)?|инн|кпп)?\s*\d{10,15}\s*$")
+_GENERIC_LEASE_OBJECT_RE = re.compile(
+    r"(?i)^(?:движимого|недвижимого)\s+имущества\s*$"
+)
+_LEASED_OBJECT_GARBAGE_RE = re.compile(
+    r"(?i)^[)\]»,.\s]+|за\s+плату,\s+а\s+арендатор|принимает\s+объект\s+аренды"
+)
+_RENT_CLAUSE_RE = re.compile(
+    r"(?is)(?:размер\s+)?арендн\w+\s+плат\w*.{0,80}?"
+    r"(?:составляет|в\s+размере|равна|равняется)?[^\d]{0,40}"
+    r"(\d[\d\s\u00a0\u202f]{0,}(?:[.,]\d{1,2})?)\s*(?:руб|₽|RUB)?"
+)
+# Schema must not lock in pocket-change OCR noise when a real rent figure exists.
+_MIN_SCHEMA_RENT_RUB = 100.0
 
 
 def contract_facts_enabled() -> bool:
@@ -150,6 +161,140 @@ def _merge_fields(
         if prev is None or float(val.get("confidence") or 0) >= float(prev.get("confidence") or 0):
             out[key] = val
     return out
+
+
+def _money_to_float(display: str) -> Optional[float]:
+    plain = normalize_ru_money_amount(display, with_rub_suffix=False)
+    if not plain:
+        return None
+    try:
+        return float(plain.replace(" ", "").replace(",", "."))
+    except ValueError:
+        return None
+
+
+def is_plausible_party_name(value: str) -> bool:
+    """Reject OCR tail fragments that must never short-circuit tabular cells."""
+    text = re.sub(r"\s+", " ", (value or "")).strip(" .,;:«»\"'")
+    if len(text) < 8:
+        return False
+    if _PARTY_GARBAGE_RE.search(text):
+        return False
+    if _ID_ONLY_RE.match(text):
+        return False
+    # Must look like an org/IP/person name, not a legal-boilerplate clause.
+    if not _ORG_OR_IP_RE.search(text) and not re.search(
+        r"(?i)\b(?:ооо|ип|ао|пао|зао|общество|предприниматель)\b", text
+    ):
+        # Allow bare FIO-like strings (3 capitalized tokens) for individuals.
+        fio = re.match(
+            r"^[А-ЯЁ][а-яё\-]+(?:\s+[А-ЯЁ][а-яё\-]+){1,3}$",
+            text,
+        )
+        if not fio:
+            return False
+    return True
+
+
+def is_plausible_leased_object(value: str) -> bool:
+    text = re.sub(r"\s+", " ", (value or "")).strip(" .,;:«»\"'")
+    if len(text) < 5:
+        return False
+    if _LEASED_OBJECT_GARBAGE_RE.search(text):
+        return False
+    return True
+
+
+def is_acceptable_contract_fact(field_id: str, value: str) -> bool:
+    """Quality gate before schema short-circuit — bad facts fall through to RAG/LLM."""
+    fid = normalize_field_id(field_id) or str(field_id or "")
+    text = str(value or "").strip()
+    if not text or text in {"—", "N/A", "n/a", "NA"}:
+        return False
+    if fid in {"landlord", "tenant", "party_a", "party_b", "supplier", "buyer", "customer", "contractor"}:
+        return is_plausible_party_name(text)
+    if fid == "leased_object":
+        return is_plausible_leased_object(text)
+    if fid in {"rent_amount", "price_total"}:
+        amount = _money_to_float(text)
+        if amount is None:
+            return False
+        # Pocket-change hits are almost always OCR/deposit noise for commercial DD.
+        if amount < _MIN_SCHEMA_RENT_RUB:
+            return False
+        return True
+    return True
+
+
+def _extract_party_for_role(
+    head: str, role: str
+) -> Optional[Tuple[str, int, int, str]]:
+    """
+    Resolve party name for a preamble role.
+
+    Looks at a multi-line window before «именуемое в дальнейшем «Роль»» and picks
+    the nearest ООО/ИП/АО span — not the last clause fragment on the same line.
+    """
+    role_l = role.lower()
+    best: Optional[Tuple[str, int, int, str]] = None
+    for m in _PARTY_ROLE_ANCHOR_RE.finditer(head):
+        if (m.group("role") or "").lower() != role_l:
+            continue
+        window_start = max(0, m.start() - 700)
+        window = head[window_start : m.start()]
+        orgs = list(_ORG_OR_IP_RE.finditer(window))
+        if not orgs:
+            continue
+        org = orgs[-1]
+        party = re.sub(r"\s+", " ", org.group(1)).strip()
+        party = party.strip(" .,;:")
+        # Keep guillemets / quotes that belong to the legal name.
+        if not is_plausible_party_name(party):
+            continue
+        abs_start = window_start + org.start(1)
+        abs_end = window_start + org.end(1)
+        verbatim = head[abs_start : m.end()][:240]
+        cand = (party, abs_start, abs_end, verbatim)
+        # Prefer the first role occurrence in the preamble (true header).
+        if best is None or abs_start < best[1]:
+            best = cand
+    return best
+
+
+def _extract_rent_amount(
+    head: str,
+) -> Optional[Tuple[str, int, int, str]]:
+    """Pick the strongest rent figure; ignore tiny OCR noise when larger figures exist."""
+    candidates: List[Tuple[float, str, int, int, str]] = []
+    for m in _RENT_CLAUSE_RE.finditer(head):
+        amount = normalize_ru_money_amount(m.group(1))
+        if not amount:
+            continue
+        val = _money_to_float(amount)
+        if val is None:
+            continue
+        candidates.append((val, amount, m.start(), m.end(), m.group(0)[:240]))
+    if not candidates:
+        # Fallback to legacy pattern for older fixtures.
+        rm = _RENT_AMOUNT_RE.search(head)
+        if not rm:
+            return None
+        amount = normalize_ru_money_amount(rm.group(1))
+        if not amount:
+            return None
+        val = _money_to_float(amount)
+        if val is None or val < _MIN_SCHEMA_RENT_RUB:
+            return None
+        return amount, rm.start(), rm.end(), rm.group(0)[:240]
+
+    # Prefer amounts that look like commercial rent; among those, largest near clause.
+    strong = [c for c in candidates if c[0] >= _MIN_SCHEMA_RENT_RUB]
+    pool = strong or candidates
+    # Largest wins among plausible (buyout/total rent usually the headline figure).
+    best = max(pool, key=lambda c: c[0])
+    if best[0] < _MIN_SCHEMA_RENT_RUB:
+        return None
+    return best[1], best[2], best[3], best[4]
 
 
 def extract_contract_facts_rules(
@@ -202,54 +347,27 @@ def extract_contract_facts_rules(
             end=base.end(),
         )
 
-    # Prefer Russian month dates in the header (doc signing date) over
-    # dotted dates that often appear in contract-number references.
-    dm = _DATE_RE.search(head[:2500])
-    if dm:
-        day, month_ru, year = dm.group(1), dm.group(2).lower(), dm.group(3)
-        month = _MONTHS.get(month_ru)
-        if month:
-            iso = f"{year}-{month}-{int(day):02d}"
-            fields["doc_date"] = _pack_field(
-                iso,
-                verbatim=dm.group(0),
-                confidence=0.86,
-                char_start=dm.start(),
-                char_end=dm.end(),
-            )
-    if "doc_date" not in fields:
-        for pattern, parser in (
-            (_DATE_ISO_RE, lambda g: f"{g.group(1)}-{g.group(2)}-{g.group(3)}"),
-            (
-                _DATE_DOT_RE,
-                lambda g: f"{g.group(3)}-{int(g.group(2)):02d}-{int(g.group(1)):02d}",
-            ),
-        ):
-            dm = pattern.search(head[:2500])
-            if dm:
-                try:
-                    iso = parser(dm)
-                    fields["doc_date"] = _pack_field(
-                        iso,
-                        verbatim=dm.group(0),
-                        confidence=0.85,
-                        char_start=dm.start(),
-                        char_end=dm.end(),
-                    )
-                    break
-                except Exception:
-                    pass
+    # Issuance/signing date of THIS document (narrow zone + candidate scoring).
+    date_hit = resolve_document_issuance_date(head, filename=filename or "")
+    if date_hit is not None:
+        fields["doc_date"] = _pack_field(
+            date_hit.iso_date,
+            verbatim=date_hit.verbatim,
+            confidence=date_hit.confidence,
+            char_start=date_hit.char_start,
+            char_end=date_hit.char_end,
+        )
 
-    rm = _RENT_AMOUNT_RE.search(head)
-    if rm:
-        amount = normalize_ru_money_amount(rm.group(1))
-        if amount:
+    rent_hit = _extract_rent_amount(head)
+    if rent_hit:
+        amount, r_start, r_end, r_verb = rent_hit
+        if is_acceptable_contract_fact("rent_amount", amount):
             fields["rent_amount"] = _pack_field(
                 amount,
-                verbatim=rm.group(0)[:240],
+                verbatim=r_verb,
                 confidence=0.84,
-                char_start=rm.start(),
-                char_end=rm.end(),
+                char_start=r_start,
+                char_end=r_end,
             )
             fields["price_total"] = dict(fields["rent_amount"])
 
@@ -257,7 +375,7 @@ def extract_contract_facts_rules(
         pm_price = _PRICE_TOTAL_RE.search(head)
         if pm_price:
             amount = normalize_ru_money_amount(pm_price.group(1))
-            if amount:
+            if amount and is_acceptable_contract_fact("price_total", amount):
                 fields["price_total"] = _pack_field(
                     amount,
                     verbatim=pm_price.group(0)[:240],
@@ -294,7 +412,7 @@ def extract_contract_facts_rules(
     obj_m = _LEASED_OBJECT_EXPLICIT_RE.search(head) or _LEASED_OBJECT_FROM_TITLE_RE.search(head)
     if obj_m:
         obj = re.sub(r"\s+", " ", obj_m.group(1)).strip(" .,;:«»\"'")
-        if len(obj) >= 5:
+        if is_plausible_leased_object(obj) and not _GENERIC_LEASE_OBJECT_RE.match(obj):
             fields["leased_object"] = _pack_field(
                 obj,
                 verbatim=obj_m.group(0)[:240],
@@ -313,32 +431,37 @@ def extract_contract_facts_rules(
                 ),
             )
 
-    landlord_m = _LANDLORD_RE.search(head[:4000])
-    if landlord_m:
-        party = re.sub(r"\s+", " ", landlord_m.group(1)).strip(" .,;:")
-        if len(party) >= 8:
-            fields["landlord"] = _pack_field(
-                party,
-                verbatim=landlord_m.group(0)[:240],
-                confidence=0.86,
-                char_start=landlord_m.start(),
-                char_end=landlord_m.end(),
-            )
-            fields.setdefault("party_a", dict(fields["landlord"]))
+    landlord = _extract_party_for_role(head[:6000], "Арендодатель")
+    if landlord:
+        party, p_start, p_end, p_verb = landlord
+        fields["landlord"] = _pack_field(
+            party,
+            verbatim=p_verb,
+            confidence=0.9,
+            char_start=p_start,
+            char_end=p_end,
+        )
+        fields.setdefault("party_a", dict(fields["landlord"]))
 
-    tenant_m = _TENANT_RE.search(head[:4000])
-    if tenant_m:
-        party = re.sub(r"\s+", " ", tenant_m.group(1)).strip(" .,;:")
-        if len(party) >= 8:
-            fields["tenant"] = _pack_field(
-                party,
-                verbatim=tenant_m.group(0)[:240],
-                confidence=0.86,
-                char_start=tenant_m.start(),
-                char_end=tenant_m.end(),
-            )
-            fields.setdefault("party_b", dict(fields["tenant"]))
+    tenant = _extract_party_for_role(head[:6000], "Арендатор")
+    if tenant:
+        party, p_start, p_end, p_verb = tenant
+        fields["tenant"] = _pack_field(
+            party,
+            verbatim=p_verb,
+            confidence=0.9,
+            char_start=p_start,
+            char_end=p_end,
+        )
+        fields.setdefault("party_b", dict(fields["tenant"]))
 
+    # Never persist garbage that would short-circuit tabular cells.
+    fields = {
+        fid: row
+        for fid, row in fields.items()
+        if isinstance(row, dict)
+        and is_acceptable_contract_fact(fid, str(row.get("value") or ""))
+    }
     return fields
 
 
@@ -541,6 +664,13 @@ def try_extraction_from_contract_facts(
 
     fact = lookup_contract_fact(payload, field_id)
     if not fact:
+        return None
+    if not is_acceptable_contract_fact(field_id, str(fact.get("value") or "")):
+        logger.info(
+            "contract_facts skip short-circuit field_id=%s value=%r (failed quality gate)",
+            field_id,
+            str(fact.get("value") or "")[:80],
+        )
         return None
 
     raw = contract_fact_to_extraction_dict(fact, field_id=field_id)

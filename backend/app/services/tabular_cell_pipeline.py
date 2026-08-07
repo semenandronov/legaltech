@@ -38,6 +38,7 @@ from app.services.tabular_extraction_schemas import (
 )
 from app.services.tabular_extraction_policy import TABULAR_NA_VALUE, ensure_na_reasoning
 from app.services.tabular_review_models import TabularCellExtractionModel
+from app.services.document_date_resolver import select_document_date_zone
 
 logger = logging.getLogger(__name__)
 
@@ -204,8 +205,8 @@ def augment_context_for_column(
     if column_type != "date":
         return context_text
 
-    header = original_text.strip()[:2500]
-    if not header:
+    header, _ = select_document_date_zone(original_text)
+    if not header.strip():
         return context_text
     if header[:120] in context_text:
         return context_text
@@ -710,9 +711,9 @@ def _build_system_prompt_content(column: TabularColumn) -> str:
     if column.column_type == "date":
         date_rules = (
             "\nДля date:\n"
-            "- Извлеки дату подписания или составления ЭТОГО документа из шапки, реквизитов, "
-            "строки «г. …» или блока подписей\n"
-            "- Не подставляй даты из приложений, ссылок на другие документы и исторических данных сторон\n"
+            "- Извлеки дату издания / подписания / составления ЭТОГО документа "
+            "из шапки или титульного блока\n"
+            "- Не бери даты из ссылок на законы (ФЗ), «ред. от», чужие договоры и приложения\n"
             "- cell_value — только YYYY-MM-DD или ровно «—»\n"
         )
     yes_no_rules = ""
@@ -874,10 +875,13 @@ def enrich_source_from_documents(
     included_docs: List[Document],
 ) -> TabularCellExtractionModel:
     """
-    Attach page/section/geometry from chunks that contain the model's quote.
+    Attach page/section from chunks that contain the model's quote.
 
-    Never invent verbatim_extract or source_references from the top chunk —
-    that would fake evidence and defeat the evidence-first gate.
+    Never invent verbatim_extract from the top chunk.
+    Never stamp chunk-level char_start/char_end onto source_references — those
+    offsets belong to the whole leaf/parent chunk and cause PDF highlights to
+    start before the quote. Quote spans are resolved later via
+    locate_quote_in_original in the cell payload / geometry enrichers.
     """
     if not included_docs:
         return result
@@ -921,8 +925,6 @@ def enrich_source_from_documents(
                     "text": anchor[:500],
                     "page": page,
                     "section": meta.get("source_section"),
-                    "char_start": meta.get("char_start"),
-                    "char_end": meta.get("char_end"),
                 }
             ]
         if not result.verbatim_extract:

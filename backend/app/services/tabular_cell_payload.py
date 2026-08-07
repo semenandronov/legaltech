@@ -70,11 +70,10 @@ def _reference_identity(ref: Dict[str, Any]) -> Tuple[Any, ...]:
 
 
 def _quote_in_span(original: str, start: Optional[int], end: Optional[int], quote: str) -> bool:
-    if start is None or end is None or end <= start or not original or not quote:
-        return False
-    snippet = original[int(start) : int(end)].lower()
-    head = _clean_text(quote).lower()[:40]
-    return bool(head) and head in snippet
+    """True when span is a faithful highlight for quote (not a loose parent chunk)."""
+    from app.services.prov_span_utils import span_faithfully_covers_quote
+
+    return span_faithfully_covers_quote(original, start, end, quote)
 
 
 def _best_doc_for_quote(

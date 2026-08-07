@@ -2285,21 +2285,17 @@ class TabularReviewService:
         except RuntimeError as exc:
             raise ValueError(f"Query embedding failed: {exc}") from exc
 
-        from app.services.tabular_document_context import (
-            prepare_file_context_packages,
-            tabular_dcp_enabled,
-        )
+        from app.services.tabular_document_context import prepare_file_context_packages
 
-        file_context_packages = None
-        if tabular_dcp_enabled():
-            vector_store = getattr(document_processor, "vector_store", None)
-            file_context_packages = await asyncio.to_thread(
-                prepare_file_context_packages,
-                self.db,
-                case_id=str(review.case_id),
-                file_ids=[str(f.id) for f in files],
-                vector_store=vector_store,
-            )
+        # Outline packages power section routing for every column run.
+        vector_store = getattr(document_processor, "vector_store", None)
+        file_context_packages = await asyncio.to_thread(
+            prepare_file_context_packages,
+            self.db,
+            case_id=str(review.case_id),
+            file_ids=[str(f.id) for f in files],
+            vector_store=vector_store,
+        )
 
         logger.info(
             "Tabular column extraction: column=%s files=%s bm25_ready=%s rerank=%s parallel=%s embed_once=true",

@@ -219,6 +219,7 @@ def compile_tabular_cell_context(
         lexical_terms=lexical_terms,
         exact_query=exact_query or "",
         column_type=params.column_type,
+        column_label=params.column_label or "",
     )
 
     attached_file_ids = [params.file_id]

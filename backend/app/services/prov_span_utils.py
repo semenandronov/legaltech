@@ -174,6 +174,87 @@ def _normalize_quote_for_locate(value: str) -> str:
     return " ".join(cleaned.split())
 
 
+def _iter_norm_to_raw_map(original: str) -> List[int]:
+    """
+    For each character index in whitespace-normalized text, the raw offset in ``original``.
+
+    Normalization matches ``_normalize_quote_for_locate`` (collapse whitespace/bullets).
+    """
+    mapping: List[int] = []
+    prev_space = True
+    for i, ch in enumerate(original):
+        if ch.isspace() or ch in "●•":
+            if prev_space:
+                continue
+            mapping.append(i)
+            prev_space = True
+            continue
+        mapping.append(i)
+        prev_space = False
+    return mapping
+
+
+def _map_norm_range_to_raw(
+    original: str,
+    norm_start: int,
+    norm_end: int,
+) -> Optional[Tuple[int, int]]:
+    """Map half-open [norm_start, norm_end) → raw [start, end) in ``original``."""
+    if norm_end <= norm_start or norm_start < 0:
+        return None
+    mapping = _iter_norm_to_raw_map(original)
+    if not mapping or norm_start >= len(mapping):
+        return None
+    raw_start = mapping[norm_start]
+    if norm_end >= len(mapping):
+        raw_end = len(original)
+    else:
+        raw_end = mapping[norm_end]
+    if raw_end <= raw_start:
+        return None
+    return raw_start, raw_end
+
+
+def span_faithfully_covers_quote(
+    original: str,
+    start: Optional[int],
+    end: Optional[int],
+    quote: str,
+    *,
+    max_leading_junk: int = 8,
+) -> bool:
+    """
+    True when [start, end) is a highlight span for ``quote``, not a loose parent chunk.
+
+    Requires the quote (whitespace-normalized) to begin near the start of the span.
+    Containment alone is not enough — wide chunk spans always contain short quotes.
+    """
+    if start is None or end is None or end <= start or not original or not quote:
+        return False
+    try:
+        s, e = int(start), int(end)
+    except (TypeError, ValueError):
+        return False
+    if s < 0 or e > len(original) or e <= s:
+        return False
+    snippet = original[s:e]
+    q_norm = _normalize_quote_for_locate(quote)
+    sn_norm = _normalize_quote_for_locate(snippet)
+    if not q_norm or not sn_norm:
+        return False
+    # Prefer full quote; fall back to a stable head for long OCR quotes.
+    probes = [q_norm]
+    if len(q_norm) > 64:
+        probes.append(q_norm[:64])
+    for probe in probes:
+        idx = sn_norm.find(probe)
+        if idx == -1:
+            continue
+        if idx <= max_leading_junk:
+            return True
+    return False
+
+
 def narrow_char_span_to_quote(
     *,
     original: str,
@@ -184,7 +265,9 @@ def narrow_char_span_to_quote(
 ) -> Tuple[int, int]:
     """
     Shrink [span_start, span_end) to the substring matching quote_anchor when possible.
-    Falls back to the full span if the quote cannot be located.
+
+    Uses whitespace-normalized matching so OCR line breaks do not block narrowing.
+    Falls back to the full span only if the quote cannot be located inside it.
     """
     if not original or span_end <= span_start:
         return span_start, span_end
@@ -194,15 +277,41 @@ def narrow_char_span_to_quote(
     chunk = original[span_start:span_end]
     if not chunk:
         return span_start, span_end
+
+    # Fast path: exact / casefold within the raw chunk.
     q_lower = q.lower().replace("\u2026", "").replace("...", "").strip()
     chunk_lower = chunk.lower()
     idx = chunk_lower.find(q_lower)
     if idx == -1 and len(q_lower) > 80:
         idx = chunk_lower.find(q_lower[:80])
-    if idx == -1:
-        return span_start, span_end
-    q_len = min(len(q), len(chunk) - idx)
-    return span_start + idx, span_start + idx + q_len
+        if idx != -1:
+            return span_start + idx, span_start + idx + 80
+    if idx != -1:
+        return span_start + idx, span_start + idx + min(len(q), len(chunk) - idx)
+
+    # OCR path: newlines in chunk vs spaces in quote (no recursion into locate).
+    norm_chunk = _normalize_quote_for_locate(chunk)
+    for probe in (
+        _normalize_quote_for_locate(q),
+        _normalize_quote_for_locate(q[:80]) if len(q) > 80 else "",
+    ):
+        if not probe or len(probe) < min_quote_len:
+            continue
+        use_probe = probe
+        nidx = norm_chunk.find(probe)
+        if nidx == -1 and len(probe) > 64:
+            use_probe = probe[:64]
+            nidx = norm_chunk.find(use_probe)
+        if nidx == -1:
+            continue
+        mapped = _map_norm_range_to_raw(chunk, nidx, nidx + len(use_probe))
+        if mapped is None:
+            continue
+        local_s, local_e = mapped
+        if len(use_probe) < len(_normalize_quote_for_locate(q)):
+            local_e = min(len(chunk), local_s + max(len(q), local_e - local_s))
+        return span_start + local_s, span_start + local_e
+    return span_start, span_end
 
 
 def locate_quote_in_original(
@@ -214,7 +323,9 @@ def locate_quote_in_original(
     """
     Find quote_anchor inside the full document text.
 
-    Returns a half-open [start, end) span in ``original``, or None when not found.
+    Returns a half-open [start, end) span that begins at the quote itself.
+    Never returns a parent-chunk window padded before the match (that caused
+    PDF highlights to start ~40 characters early on OCR preambles).
     """
     if not original:
         return None
@@ -240,14 +351,25 @@ def locate_quote_in_original(
 
     for probe in raw_probes:
         idx = raw_lower.find(probe)
+        span_len = len(probe)
         if idx == -1 and len(probe) > 80:
             idx = raw_lower.find(probe[:80])
             span_len = 80
-        else:
-            span_len = len(probe)
         if idx != -1:
             end = min(len(original), idx + max(span_len, min(len(q), len(original) - idx)))
+            if end > idx and span_faithfully_covers_quote(original, idx, end, q):
+                return idx, end
             if end > idx:
+                # Raw probe matched; trim trailing overshoot via narrow on a tight window.
+                ns, ne = narrow_char_span_to_quote(
+                    original=original,
+                    span_start=idx,
+                    span_end=min(len(original), idx + max(len(q) + 40, span_len + 40)),
+                    quote_anchor=q,
+                    min_quote_len=min_quote_len,
+                )
+                if span_faithfully_covers_quote(original, ns, ne, q):
+                    return ns, ne
                 return idx, end
 
     norm_original = _normalize_quote_for_locate(original)
@@ -257,25 +379,32 @@ def locate_quote_in_original(
             norm_probes.append(candidate)
 
     for probe in norm_probes:
+        use_probe = probe
         idx = norm_original.find(probe)
         if idx == -1 and len(probe) > 80:
-            idx = norm_original.find(probe[:80])
+            use_probe = probe[:80]
+            idx = norm_original.find(use_probe)
         if idx == -1:
             continue
-        raw_start = _norm_index_to_raw(original, idx)
-        if raw_start is None:
+        mapped = _map_norm_range_to_raw(original, idx, idx + len(use_probe))
+        if mapped is None:
             continue
+        raw_start, raw_end = mapped
+        # Extend raw_end toward full quote length when probe was truncated.
+        if len(use_probe) < len(probe):
+            raw_end = min(len(original), raw_start + max(len(q), raw_end - raw_start))
+        if span_faithfully_covers_quote(original, raw_start, raw_end, q):
+            return raw_start, raw_end
+        # Tighten within a local window starting at the mapped match — never pad left.
         ns, ne = narrow_char_span_to_quote(
             original=original,
-            span_start=max(0, raw_start - 40),
-            span_end=min(len(original), raw_start + max(len(q), len(probe)) + 80),
+            span_start=raw_start,
+            span_end=min(len(original), raw_start + max(len(q) + 80, raw_end - raw_start + 40)),
             quote_anchor=q,
             min_quote_len=min_quote_len,
         )
-        head = probe[: min(40, len(probe))]
-        if head and head in _normalize_quote_for_locate(original[ns:ne]):
+        if span_faithfully_covers_quote(original, ns, ne, q):
             return ns, ne
-        raw_end = min(len(original), raw_start + max(len(q), len(probe)))
         if raw_end > raw_start:
             return raw_start, raw_end
     return None
@@ -283,24 +412,10 @@ def locate_quote_in_original(
 
 def _norm_index_to_raw(original: str, norm_index: int) -> Optional[int]:
     """Map an index in whitespace/bullet-normalized text back to raw offset."""
-    if norm_index < 0:
+    mapping = _iter_norm_to_raw_map(original)
+    if norm_index < 0 or norm_index >= len(mapping):
         return None
-    norm_pos = 0
-    prev_space = True
-    for i, ch in enumerate(original):
-        if ch.isspace() or ch in "●•":
-            if prev_space:
-                continue
-            if norm_pos == norm_index:
-                return i
-            norm_pos += 1
-            prev_space = True
-            continue
-        if norm_pos == norm_index:
-            return i
-        norm_pos += 1
-        prev_space = False
-    return None
+    return mapping[norm_index]
 
 
 __all__ = [
@@ -314,4 +429,5 @@ __all__ = [
     "narrow_char_span_to_quote",
     "prov_entries_have_char_spans",
     "prov_items_for_char_span",
+    "span_faithfully_covers_quote",
 ]

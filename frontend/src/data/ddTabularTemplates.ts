@@ -1,6 +1,7 @@
 /**
  * Встроенные шаблоны Tabular Review для due diligence коммерческих договоров (РФ).
  * Три рабочих пресета: аренда, поставка, услуги/подряд.
+ * Только точные факт-колонки (без расплывчатых «ключевых рисков»).
  */
 import type { ProposedColumn } from '../services/tabularReviewApi'
 
@@ -32,16 +33,6 @@ function fieldCol(
   }
 }
 
-const RISK_COLUMN: ProposedColumn = {
-  column_label: 'Ключевые риски',
-  column_type: 'text',
-  prompt:
-    'Перечисли ключевые риски этого договора для due diligence ' +
-    '(ответственность, расторжение, неустойка, оплата, односторонний отказ). ' +
-    'Краткий маркированный список со ссылкой на пункты, если они есть в тексте.',
-  column_config: { column_kind: 'risk_analysis' },
-}
-
 const TERMINATION_COLUMN: ProposedColumn = {
   column_label: 'Расторжение / отказ',
   column_type: 'text',
@@ -63,7 +54,7 @@ export const DD_RF_TABULAR_TEMPLATES: BuiltinTabularTemplate[] = [
     id: 'builtin-dd-lease-commercial',
     name: 'DD: коммерческая аренда',
     description:
-      'Карточка договора аренды для due diligence: стороны, объект, плата, срок, выкуп, неустойка и риски.',
+      'Карточка договора аренды для due diligence: стороны, объект, плата, срок, выкуп и неустойка.',
     legalBasis: 'гл. 34 ГК РФ',
     documentHint: 'Договоры аренды, доп. соглашения к аренде',
     category: 'due_diligence',
@@ -82,14 +73,13 @@ export const DD_RF_TABULAR_TEMPLATES: BuiltinTabularTemplate[] = [
       TERMINATION_COLUMN,
       LIABILITY_COLUMN,
       fieldCol('governing_law', 'Применимое право', 'text', 'Применимое право и/или подсудность.'),
-      RISK_COLUMN,
     ],
   },
   {
     id: 'builtin-dd-supply',
     name: 'DD: поставка',
     description:
-      'Карточка договора поставки: стороны, товар, цена, сроки поставки, неустойка, расторжение и риски.',
+      'Карточка договора поставки: стороны, товар, цена, сроки поставки, неустойка и расторжение.',
     legalBasis: '§ 3 гл. 30 ГК РФ',
     documentHint: 'Договоры поставки, спецификации, доп. соглашения',
     category: 'due_diligence',
@@ -107,14 +97,13 @@ export const DD_RF_TABULAR_TEMPLATES: BuiltinTabularTemplate[] = [
       TERMINATION_COLUMN,
       LIABILITY_COLUMN,
       fieldCol('governing_law', 'Применимое право', 'text', 'Применимое право и/или подсудность.'),
-      RISK_COLUMN,
     ],
   },
   {
     id: 'builtin-dd-services-works',
     name: 'DD: услуги и подряд',
     description:
-      'Карточка договора услуг или подряда: стороны, объём, цена, сроки/SLA, неустойка, расторжение и риски.',
+      'Карточка договора услуг или подряда: стороны, объём, цена, сроки/SLA, неустойка и расторжение.',
     legalBasis: 'гл. 37, 39 ГК РФ',
     documentHint: 'Договоры оказания услуг, подряда, доп. соглашения',
     category: 'due_diligence',
@@ -137,7 +126,6 @@ export const DD_RF_TABULAR_TEMPLATES: BuiltinTabularTemplate[] = [
       TERMINATION_COLUMN,
       LIABILITY_COLUMN,
       fieldCol('governing_law', 'Применимое право', 'text', 'Применимое право и/или подсудность.'),
-      RISK_COLUMN,
     ],
   },
 ]

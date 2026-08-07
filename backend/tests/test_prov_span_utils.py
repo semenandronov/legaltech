@@ -49,6 +49,57 @@ def test_locate_quote_in_original_finds_each_passage():
     assert "реструктуризацию" in original[b[0] : b[1]]
 
 
+def test_locate_quote_does_not_pad_forty_chars_before_ocr_party():
+    """Regression: OCR preamble quotes must not start ~40 chars early (chunk padding)."""
+    from app.services.prov_span_utils import locate_quote_in_original, span_faithfully_covers_quote
+
+    original = (
+        "Договор аренды № 20/01-2022/1\n\n"
+        "г. Москва\n\n"
+        "«20» января 2022г.\n\n"
+        "Общество с ограниченной ответственностью «СМАРТ СИТИ» (ИНН 9701032688, ОГРН\n"
+        "1167746181173) в лице Генерального директора, действующего на\n"
+        "основании устава, именуемое в дальнейшем «Арендодатель»"
+    )
+    quote = (
+        "Общество с ограниченной ответственностью «СМАРТ СИТИ» "
+        "(ИНН 9701032688, ОГРН 1167746181173)"
+    )
+    located = locate_quote_in_original(original, quote)
+    assert located is not None
+    start, end = located
+    snippet = original[start:end]
+    assert snippet.lstrip().startswith("Общество")
+    assert "20/01-2022" not in snippet
+    assert "января" not in snippet
+    assert span_faithfully_covers_quote(original, start, end, quote)
+    # Explicitly reject the historical padded window.
+    bad_start = start - 40
+    assert bad_start > 0
+    assert not span_faithfully_covers_quote(original, bad_start, end, quote)
+
+
+def test_narrow_char_span_handles_ocr_newlines_in_party_block():
+    from app.services.prov_span_utils import narrow_char_span_to_quote
+
+    original = (
+        "хвост номера 3-2022/1\n\nг. Москва\n\n"
+        "Общество с ограниченной ответственностью «СМАРТ СИТИ» (ИНН 9701032688, ОГРН\n"
+        "1167746181173) далее текст"
+    )
+    quote = (
+        "Общество с ограниченной ответственностью «СМАРТ СИТИ» "
+        "(ИНН 9701032688, ОГРН 1167746181173)"
+    )
+    ns, ne = narrow_char_span_to_quote(
+        original=original,
+        span_start=0,
+        span_end=len(original),
+        quote_anchor=quote,
+    )
+    assert original[ns:ne].lstrip().startswith("Общество")
+    assert "3-2022/1" not in original[ns:ne]
+
 def test_extract_bbox_regions_filters_by_char_span():
     meta = {
         "dl_meta": {

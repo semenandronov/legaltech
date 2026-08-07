@@ -24,7 +24,7 @@ _file_context_cache: Dict[Tuple[str, str, str], "TabularFileContextPackage"] = {
 
 
 def tabular_dcp_enabled() -> bool:
-    return bool(getattr(config, "TABULAR_DCP_ENABLED", False))
+    return bool(getattr(config, "TABULAR_DCP_ENABLED", True))
 
 
 @dataclass(frozen=True)
@@ -65,7 +65,16 @@ def build_file_context_package(
     outline_payload: Dict[str, Any],
 ) -> TabularFileContextPackage:
     outline_raw = outline_payload.get("outline") or []
-    outline = tuple(OutlineSectionEntry.from_dict(x) for x in outline_raw if isinstance(x, dict))
+    outline = tuple(
+        OutlineSectionEntry.from_dict(x)
+        for x in outline_raw
+        if isinstance(x, dict)
+        and (
+            str(x.get("section_title") or "").strip()
+            or str(x.get("section_number") or "").strip()
+            or str(x.get("section_label") or "").strip()
+        )
+    )
     def_roots = tuple(
         str(x).strip()
         for x in (outline_payload.get("definition_section_roots") or [])
