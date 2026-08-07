@@ -30,7 +30,7 @@
 
 | # | Работа | Критерий |
 |---|--------|----------|
-| 1.1 | Модель `File.doc_type` + `doc_type_confidence` + `doc_type_source` | Персистится после ingest |
+| 1.1 | Модель `File.dd_doc_type` + `dd_doc_type_confidence` + `dd_doc_type_source` | Персистится после ingest (prefix `dd_` — без коллизии с `DocumentClassification.doc_type`) |
 | 1.2 | Классификатор: правила (имя, якоря) → LLM на первые 1.5–2k символов + outline title | `unknown` при confidence < порога |
 | 1.3 | Таксономия v1: `lease_commercial`, `supply`, `services`, `works`, `addendum`, `appendix_spec`, `litigation`, `other` | Документирована в коде и в UI (опционально) |
 | 1.4 | Gold-набор 30–50 PDF (10+ на тип) для accuracy классификатора | ≥90% на v1 gold |
@@ -82,14 +82,18 @@ Multi-step (не костыль): **Plan → retrieve sections (liability, termi
 
 ---
 
-## Фаза 5 — Выписки и реестры (параллельно, 2 недели)
+## Фаза 5 — Выписки и реестры (отложена)
 
-**Зачем:** уже есть SQL router; нужно жёстко не пускать statement в абзацный RAG для сумм.
+**Статус: пропущена** для юридического DD договоров.
+
+Выписки/реестры почти не грузят в классический DD аренды/поставки/услуг — это зона бухгалтерии,
+финконтроля и налогового DD. SQL plane для statements оставляем как есть (уже есть router);
+доработку 5.1–5.2 не делаем, пока продукт не пойдёт в фин/банкротный DD.
 
 | # | Работа | Критерий |
 |---|--------|----------|
-| 5.1 | Ingest probe: statement/register → structured rows 100% | Tabular currency columns на выписке идут в SQL plane |
-| 5.2 | UI: индикатор «данные из таблицы операций» vs «из текста договора» | Прозрачность для юриста |
+| 5.1 | Ingest probe: statement/register → structured rows 100% | _(отложено)_ |
+| 5.2 | UI: индикатор SQL vs текст договора | _(отложено)_ |
 
 ---
 
@@ -119,6 +123,42 @@ Multi-step (не костыль): **Plan → retrieve sections (liability, termi
 | 7.2 | Re-run cell / column; conditional columns `@Col` |
 | 7.3 | Table instructions (глобальный prompt таблицы) |
 | 7.4 | Export Excel/CSV с source refs |
+| 7.5 | Trust cues: N/A ≠ empty, low-confidence, popover copy |
+
+---
+
+## Статус реализации (живой)
+
+| Пункт | Статус | Примечание |
+|-------|--------|------------|
+| 0.1 Eval = `run_tabular_cell_extraction` | ✅ | `tabular_eval_runner.py` |
+| 0.2 Quote→answer off hot path | ✅ | default `TABULAR_QUOTE_THEN_ANSWER=false` |
+| 0.3 OCR-tolerant evidence (digit-core) | ✅ | `tabular_evidence_grounding.py` |
+| 0.4 Run JSON diagnostics | ✅ | chunks / gold_in_context / forced_na |
+| 0.5 CI tabular unit | ✅ | job `tabular-unit` в `.github/workflows/ci.yml` |
+| 1.1 Persist DD type on File | ✅ | `dd_doc_type` + confidence + source (+ progress mirror) |
+| 1.2 Rules classifier | ✅ | form-before-subject; LLM refine — next |
+| 1.3 Taxonomy v1 | ✅ | `dd_document_taxonomy.py` |
+| 1.4 Classifier gold | 🟡 | seed `evals/ru_dd_doc_type/` (≥90% CI); expand to 30–50 PDF |
+| 2.4 Short-doc full text | ✅ | `TABULAR_SHORT_DOC_MAX_CHARS` |
+| 2.1 Zone on chunks | ✅ | `document_zones.annotate_documents_with_zones` at ingest |
+| 2.2 Heuristics | ✅ | preamble/table/requisites/signature from metadata+text |
+| 2.3 preferred_zones | ✅ | `column_config.preferred_zones` + prompt/type defaults |
+| 3.1 Pydantic schemas | ✅ | `LeaseExtraction` / `SupplyExtraction` / `ServicesWorksExtraction` |
+| 3.2 Persist + ingest/lazy | ✅ | `File.contract_facts`; rules on ingest; LLM opt-in |
+| 3.3 One LLM pass | ✅ | `CONTRACT_FACTS_LLM_ENABLED` (default off) |
+| 3.4 Templates field_id | ✅ | Аренда/Поставка/Услуги в `contract_field_catalog` + seed script |
+| 3.5 Schema cell short-circuit | ✅ | `field_id` → без RAG в `run_tabular_cell_extraction` |
+| 4.1 ColumnKind | ✅ | `column_config.column_kind` + infer heuristics |
+| 4.2 Risk multi-step | ✅ | LangGraph plan→retrieve→synthesize (3 nodes, caps) |
+| 4.3 Tabular agent only for risk | ✅ | router; chat agentic unchanged |
+| 5.x SQL statements | ⏭️ | **пропущена** — не критично для юр. DD договоров |
+| 6.x RU eval packs | 🟡 | seed `ru_lease/supply/services` + schema CI; expand gold |
+| 7.x UX prod | 🟡 | citations / re-run / export уже есть; polish: N/A≠empty, confidence cue, export N/A |
+
+
+
+
 
 ---
 
@@ -130,12 +170,12 @@ flowchart LR
   P1 --> P2[Фаза 2 zones]
   P2 --> P3[Фаза 3 schema extract]
   P3 --> P4[Фаза 4 router]
-  P1 --> P5[Фаза 5 SQL]
-  P3 --> P6[Фаза 6 RU eval]
-  P3 --> P7[Фаза 7 UX]
+  P4 --> P6[Фаза 6 RU eval]
+  P6 --> P7[Фаза 7 UX]
+  P5[Фаза 5 SQL — отложена]
 ```
 
-**Первый пользовательский win:** Фаза 0 + 1 + шаблоны колонок «Аренда РФ» (часть 3.4) на schema-lite (front matter + ключевые поля) до полного 3.2.
+**Первый пользовательский win:** Фаза 0–4 + шаблоны «Аренда РФ» (schema + risk). Фаза 5 (выписки) не в scope юр. DD.
 
 ---
 
@@ -146,6 +186,7 @@ flowchart LR
 - Одна универсальная колонка «сумма/договор» на все типы документов.
 - Agentic loop на все 40 ячеек таблицы.
 - Оценка качества только по «accuracy без разбивки recall/gate».
+- Приоритет выписок/реестров в юр. DD договоров (фаза 5 отложена).
 
 ---
 

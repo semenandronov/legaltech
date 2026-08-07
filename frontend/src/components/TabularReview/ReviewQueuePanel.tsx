@@ -117,7 +117,7 @@ export const ReviewQueuePanel: React.FC<ReviewQueuePanelProps> = ({
       low_confidence: "Низкая уверенность",
       critical_column: "Критичная колонка",
       always_review_type: "Обязательная проверка",
-      empty_or_na: "Пустое/N/A",
+      empty_or_na: "Пустое / прочерк",
       pending: "Ожидает обработки",
     }
     return reason.split(", ").map(r => labels[r] || r).join(", ")

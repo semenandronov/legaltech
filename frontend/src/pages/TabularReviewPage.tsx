@@ -15,23 +15,28 @@ import { TabularReviewHelpPanel } from "../components/TabularReview/TabularRevie
 import { TabularReviewContextChat } from "../components/TabularReview/TabularReviewContextChat"
 import { TabularSidePanel } from "../components/TabularReview/TabularSidePanel"
 import { ExportTableDialog } from "../components/TabularReview/ExportTableDialog"
-import { tabularReviewApi, TableData, TabularColumn } from "../services/tabularReviewApi"
-import { appendColumnsToTableData, applyColumnCellsToTableData, applySingleColumnCellToTableData, buildProcessingCellKeys, clearProcessingCellKey, clearProcessingCellKeysForColumn, removeColumnFromTableData } from "../utils/tabularTableState"
+import { tabularReviewApi, TableData, TabularColumn, UserFlagColor } from "../services/tabularReviewApi"
+import type { MikeCellCommentEvent } from "../components/TabularReview/mike/MikeTabularCell"
+import { appendColumnsToTableData, applyColumnCellsToTableData, applySingleColumnCellToTableData, buildProcessingCellKeys, clearProcessingCellKey, clearProcessingCellKeysForColumn, markColumnCellsProcessing, removeColumnFromTableData } from "../utils/tabularTableState"
 import {
   countResolvedColumnCells,
+  isInFlightColumnCellStatus,
   startColumnExtractionPoll,
   type ColumnExtractionPollController,
 } from "../utils/tabularColumnExtractionPoll"
 import { buildTabularViewerCellData, type TabularCellClickPayload } from "../utils/tabularCellViewerData"
 import { useTabularReviewWebSocket } from "../hooks/useTabularReviewWebSocket"
 import { getCase, getDocuments } from "../services/api"
+import { CaseParticipantsModal } from "../components/CaseOverview/CaseParticipantsModal"
 import { buildMainNavItems } from "@/lib/mainNavItems"
 import { caseHomePath } from "@/lib/productFeatures"
 import { Card } from "../components/UI/Card"
 import Spinner from "../components/UI/Spinner"
+import { useAuth } from "../contexts/AuthContext"
 import { toast } from "sonner"
 
 const TabularReviewPage: React.FC = () => {
+  const { user } = useAuth()
   const { reviewId, caseId } = useParams<{ reviewId?: string; caseId: string }>()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -51,6 +56,8 @@ const TabularReviewPage: React.FC = () => {
   
   const [caseName, setCaseName] = useState<string>("")
   const [tableData, setTableData] = useState<TableData | null>(null)
+  const canWrite = tableData?.can_write ?? true
+  const [commentEvent, setCommentEvent] = useState<MikeCellCommentEvent | null>(null)
   const [loading, setLoading] = useState(false) // Start with false, will be set to true when actually loading
   const [processing, setProcessing] = useState(false)
   const [runningColumnIds, setRunningColumnIds] = useState<Set<string>>(new Set())
@@ -64,6 +71,7 @@ const TabularReviewPage: React.FC = () => {
   const [showDocumentSelector, setShowDocumentSelector] = useState(false)
   const [showTemplatesModal, setShowTemplatesModal] = useState(false)
   const [showExportDialog, setShowExportDialog] = useState(false)
+  const [showParticipants, setShowParticipants] = useState(false)
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([])
   const [selectedDocument, setSelectedDocument] = useState<{
     fileId: string
@@ -125,6 +133,7 @@ const TabularReviewPage: React.FC = () => {
       }
       return next
     })
+    setTableData((prev) => (prev ? markColumnCellsProcessing(prev, columnId) : prev))
   }, [])
 
   const finishColumnExtractionUi = useCallback((columnId: string) => {
@@ -256,7 +265,8 @@ const TabularReviewPage: React.FC = () => {
       let next = prev
       for (const row of data.rows) {
         const cell = row.cells[columnId]
-        if (cell?.status && cell.status !== "pending") {
+        // Keep skeleton while pending/processing; only clear after a real result status.
+        if (cell?.status && !isInFlightColumnCellStatus(cell.status)) {
           next = clearProcessingCellKey(next, columnId, row.file_id)
         }
       }
@@ -268,7 +278,7 @@ const TabularReviewPage: React.FC = () => {
     const empty = Math.max(0, saved - filled)
     if (empty > 0) {
       toast.success(
-        `Готово: ${filled} из ${saved} ячеек с ответом. ${empty} — в документе нет ответа на вопрос (N/A).`,
+        `Готово: ${filled} из ${saved} ячеек с ответом. ${empty} — в документе нет ответа на вопрос (прочерк).`,
       )
       return
     }
@@ -350,6 +360,83 @@ const TabularReviewPage: React.FC = () => {
     ],
   )
 
+  const handleRealtimeCommentEvent = useCallback(
+    (event: MikeCellCommentEvent) => {
+      setCommentEvent(event)
+
+      // Skip echo of own "added" — local optimistic path already updated counts.
+      if (
+        event.type === 'comment_added' &&
+        event.comment?.created_by_id &&
+        user?.id &&
+        event.comment.created_by_id === user.id
+      ) {
+        return
+      }
+
+      setTableData((prev) => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          rows: prev.rows.map((row) => {
+            if (row.file_id !== event.fileId) return row
+            const cell = row.cells[event.columnId]
+            const comment_count = cell?.comment_count ?? 0
+            const unresolved = cell?.unresolved_comment_count ?? 0
+            let nextCount = comment_count
+            let nextUnresolved = unresolved
+            switch (event.type) {
+              case 'comment_added':
+                nextCount = comment_count + 1
+                nextUnresolved = unresolved + 1
+                break
+              case 'comment_deleted':
+                nextCount = Math.max(0, comment_count - 1)
+                if (!event.wasResolved) {
+                  nextUnresolved = Math.max(0, unresolved - 1)
+                }
+                break
+              case 'comment_resolved':
+                nextUnresolved = Math.max(0, unresolved - 1)
+                break
+              case 'comment_unresolved':
+                nextUnresolved = unresolved + 1
+                break
+              default:
+                break
+            }
+            if (!cell) {
+              return {
+                ...row,
+                cells: {
+                  ...row.cells,
+                  [event.columnId]: {
+                    cell_value: null,
+                    status: 'pending',
+                    comment_count: nextCount,
+                    unresolved_comment_count: nextUnresolved,
+                  },
+                },
+              }
+            }
+            return {
+              ...row,
+              cells: {
+                ...row.cells,
+                [event.columnId]: {
+                  ...cell,
+                  comment_count: nextCount,
+                  unresolved_comment_count: nextUnresolved,
+                },
+              },
+            }
+          }),
+        }
+      })
+    },
+    [user?.id],
+  )
+
   useTabularReviewWebSocket({
     reviewId: reviewId ?? null,
     enabled: Boolean(reviewId),
@@ -357,6 +444,7 @@ const TabularReviewPage: React.FC = () => {
     onExtractionCellFinished: handleRealtimeExtractionCellFinished,
     onColumnExtractionCompleted: handleColumnExtractionCompleted,
     onColumnDeleted: handleRealtimeColumnDeleted,
+    onCommentEvent: handleRealtimeCommentEvent,
   })
 
   useEffect(() => {
@@ -378,6 +466,96 @@ const TabularReviewPage: React.FC = () => {
       throw err
     }
   }
+
+  const handleCellFlagChange = async (
+    fileId: string,
+    columnId: string,
+    flag: UserFlagColor | null,
+  ) => {
+    if (!reviewId) return
+    try {
+      await tabularReviewApi.updateCellFlag(reviewId, fileId, columnId, flag)
+      setTableData((prev) => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          rows: prev.rows.map((row) => {
+            if (row.file_id !== fileId) return row
+            const cell = row.cells[columnId]
+            if (!cell) {
+              return {
+                ...row,
+                cells: {
+                  ...row.cells,
+                  [columnId]: {
+                    cell_value: null,
+                    status: 'pending',
+                    user_flag: flag,
+                  },
+                },
+              }
+            }
+            return {
+              ...row,
+              cells: {
+                ...row.cells,
+                [columnId]: { ...cell, user_flag: flag },
+              },
+            }
+          }),
+        }
+      })
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Не удалось обновить флаг'
+      toast.error(message)
+      throw err
+    }
+  }
+
+  const handleCommentCountsChange = useCallback(
+    (
+      fileId: string,
+      columnId: string,
+      counts: { comment_count: number; unresolved_comment_count: number },
+    ) => {
+      setTableData((prev) => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          rows: prev.rows.map((row) => {
+            if (row.file_id !== fileId) return row
+            const cell = row.cells[columnId]
+            if (!cell) {
+              return {
+                ...row,
+                cells: {
+                  ...row.cells,
+                  [columnId]: {
+                    cell_value: null,
+                    status: 'pending',
+                    comment_count: counts.comment_count,
+                    unresolved_comment_count: counts.unresolved_comment_count,
+                  },
+                },
+              }
+            }
+            return {
+              ...row,
+              cells: {
+                ...row.cells,
+                [columnId]: {
+                  ...cell,
+                  comment_count: counts.comment_count,
+                  unresolved_comment_count: counts.unresolved_comment_count,
+                },
+              },
+            }
+          }),
+        }
+      })
+    },
+    [],
+  )
 
   const handleAddColumn = async (column: {
     column_label: string
@@ -694,13 +872,16 @@ const TabularReviewPage: React.FC = () => {
           onDocumentSearchChange={setDocumentSearch}
           onNavigateCases={() => navigate('/cases')}
           onNavigateCase={() => navigate(`/cases/${caseId}`)}
-          onStartRename={handleStartRename}
+          onStartRename={canWrite ? handleStartRename : () => undefined}
           onSaveRename={handleSaveRename}
           onCancelRename={() => setIsEditingName(false)}
           onEditNameChange={setEditNameValue}
           onToggleChat={() => setShowTableChat((v) => !v)}
           onExport={() => setShowExportDialog(true)}
           onOpenHelp={() => setShowHelpPanel(true)}
+          onOpenParticipants={
+            caseId ? () => setShowParticipants(true) : () => undefined
+          }
           onOpenFilter={(el) => {
             setFilterAnchorEl(el)
             setFilterPopoverOpen(true)
@@ -708,12 +889,22 @@ const TabularReviewPage: React.FC = () => {
         />
 
         <TabularReviewToolbar
-          onUpdateDocuments={reviewId ? () => setShowDocumentSelector(true) : undefined}
-          onAddColumns={() => setShowTableAddColumn(true)}
+          onUpdateDocuments={
+            canWrite && reviewId ? () => setShowDocumentSelector(true) : undefined
+          }
+          onAddColumns={canWrite ? () => setShowTableAddColumn(true) : undefined}
+          onImportChecklist={
+            canWrite && reviewId
+              ? () => {
+                  setBulkBuilderInitialPrompt(undefined)
+                  setShowColumnBuilder(true)
+                }
+              : undefined
+          }
           processing={processing}
           selectedCount={selectedTableDocIds.length}
           onDeleteSelected={
-            reviewId && selectedTableDocIds.length > 0
+            canWrite && reviewId && selectedTableDocIds.length > 0
               ? async () => {
                   try {
                     const remaining = (tableData?.rows ?? [])
@@ -737,6 +928,13 @@ const TabularReviewPage: React.FC = () => {
           open={showHelpPanel}
           onClose={() => setShowHelpPanel(false)}
         />
+        {caseId ? (
+          <CaseParticipantsModal
+            open={showParticipants}
+            caseId={caseId}
+            onClose={() => setShowParticipants(false)}
+          />
+        ) : null}
 
         <div
           className="ws-tabular-body"
@@ -756,19 +954,29 @@ const TabularReviewPage: React.FC = () => {
                     setFilterPopoverOpen(false)
                     setFilterAnchorEl(null)
                   }}
-                  onAddColumnClick={() => setShowTableAddColumn(true)}
-                  onAddDocumentsClick={reviewId ? () => setShowDocumentSelector(true) : undefined}
-                  onOpenTemplatesClick={() => setShowTemplatesModal(true)}
+                  onAddColumnClick={canWrite ? () => setShowTableAddColumn(true) : undefined}
+                  onAddDocumentsClick={
+                    canWrite && reviewId ? () => setShowDocumentSelector(true) : undefined
+                  }
+                  onOpenTemplatesClick={canWrite ? () => setShowTemplatesModal(true) : undefined}
+                  readOnly={!canWrite}
                   onTableDataUpdate={(updater) => {
                     if (tableData) {
                       setTableData(updater(tableData))
                     }
                   }}
-                  onCellSave={async (fileId, columnId, value) => {
-                    await handleCellEditSave(fileId, columnId, value)
-                  }}
-                  onOpenEditColumn={setEditingColumnId}
-                  onColumnDelete={handleColumnDelete}
+                  onCellSave={
+                    canWrite
+                      ? async (fileId, columnId, value) => {
+                          await handleCellEditSave(fileId, columnId, value)
+                        }
+                      : undefined
+                  }
+                  onUserFlagChange={canWrite ? handleCellFlagChange : undefined}
+                  onCommentCountsChange={handleCommentCountsChange}
+                  commentEvent={commentEvent}
+                  onOpenEditColumn={canWrite ? setEditingColumnId : undefined}
+                  onColumnDelete={canWrite ? handleColumnDelete : undefined}
                   onCellClick={async (fileId, columnId, cellData: TabularCellClickPayload) => {
                     const row = tableData.rows.find(r => r.file_id === fileId)
                     const clickedColumn = tableData.columns.find(col => col.id === columnId)
@@ -863,6 +1071,7 @@ const TabularReviewPage: React.FC = () => {
                       if (result.status === "skipped") {
                         finishColumnExtractionUi(columnId)
                         setProcessing(false)
+                        await refreshTableDataQuiet()
                         return
                       }
                       const filled = result.filled_count ?? result.saved_count ?? 0
@@ -889,6 +1098,7 @@ const TabularReviewPage: React.FC = () => {
                       }
                       finishColumnExtractionUi(columnId)
                       setProcessing(false)
+                      await refreshTableDataQuiet()
                     }
                   }}
                   runningColumnIds={runningColumnIds}
@@ -924,9 +1134,18 @@ const TabularReviewPage: React.FC = () => {
             open
             onClose={closeColumnModal}
             editingColumn={editingColumn}
+            existingColumns={tableData?.columns ?? []}
             onAdd={handleAddColumns}
             onSave={handleColumnSave}
             onDelete={handleColumnDelete}
+            onImportChecklist={
+              reviewId
+                ? () => {
+                    setBulkBuilderInitialPrompt(undefined)
+                    setShowColumnBuilder(true)
+                  }
+                : undefined
+            }
           />
         )}
 
@@ -970,6 +1189,7 @@ const TabularReviewPage: React.FC = () => {
                     finishColumnExtractionUi(col.id)
                   } catch {
                     finishColumnExtractionUi(col.id)
+                    await refreshTableDataQuiet()
                   }
                 }),
               )

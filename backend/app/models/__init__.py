@@ -3,6 +3,7 @@
 
 from app.models.case import Base, Case, ChatMessage, File, LegalCorpusFile
 from app.models.case_file_transaction import CaseFileTransaction
+from app.models.case_sharing import CaseInvite, CaseMember
 from app.models.user import User
 from app.models.analysis import (
     AnalysisResult,
@@ -47,6 +48,8 @@ __all__ = [
     "File",
     "LegalCorpusFile",
     "CaseFileTransaction",
+    "CaseMember",
+    "CaseInvite",
     "User",
     # Analysis models
     "AnalysisResult",

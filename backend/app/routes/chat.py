@@ -6,6 +6,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from typing import List, Optional, Dict, Any
 from app.utils.database import get_db
 from app.utils.auth import get_current_user
+from app.utils.authorization import require_case_access, require_case_write
 from app.models.case import Case, ChatMessage, File as FileModel
 from app.models.user import User
 from app.services.rag_service import RAGService
@@ -228,13 +229,7 @@ async def chat(
     Returns: answer, sources, status
     """
     # Get case and verify ownership
-    case = db.query(Case).filter(
-        Case.id == request.case_id,
-        Case.user_id == current_user.id
-    ).first()
-    if not case:
-        raise HTTPException(status_code=404, detail="Дело не найдено")
-    
+    case = require_case_write(db, case_id, current_user.id)
     # Verify case has files uploaded
     file_count = db.query(FileModel).filter(FileModel.case_id == request.case_id).count()
     if file_count == 0:
@@ -421,13 +416,7 @@ async def execute_task(
     Returns: plan, status, message
     """
     # Verify case ownership
-    case = db.query(Case).filter(
-        Case.id == request.case_id,
-        Case.user_id == current_user.id
-    ).first()
-    if not case:
-        raise HTTPException(status_code=404, detail="Дело не найдено")
-    
+    case = require_case_write(db, case_id, current_user.id)
     try:
         logger.info(f"Task execution request for case {request.case_id}: {request.task[:100]}...")
         
@@ -822,9 +811,10 @@ async def get_chat_sessions(
     try:
         from sqlalchemy import func, desc
         
-        # Get all cases for current user
+        # Get all accessible cases for current user
+        from app.services.case_sharing_service import accessible_case_ids_subquery
         cases = db.query(Case).filter(
-            Case.user_id == current_user.id
+            Case.id.in_(accessible_case_ids_subquery(db, current_user.id))
         ).all()
         
         sessions = []
@@ -879,13 +869,7 @@ async def get_history(
     Returns: list of messages with role, content, sources, created_at
     """
     # Check if case exists and verify ownership
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
-    if not case:
-        raise HTTPException(status_code=404, detail="Дело не найдено")
-    
+    case = require_case_access(db, case_id, current_user.id)
     # Get messages
     messages = db.query(ChatMessage).filter(
         ChatMessage.case_id == case_id
@@ -919,13 +903,7 @@ async def export_chat_history(
     from fastapi.responses import Response
     
     # Check if case exists and verify ownership
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
-    if not case:
-        raise HTTPException(status_code=404, detail="Дело не найдено")
-    
+    case = require_case_write(db, case_id, current_user.id)
     # Get messages
     messages = db.query(ChatMessage).filter(
         ChatMessage.case_id == case_id

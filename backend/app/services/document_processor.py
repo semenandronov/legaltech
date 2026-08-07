@@ -285,6 +285,21 @@ class DocumentProcessor:
                     documents, basis_text, basis_name or CHAR_BASIS_DOCLING_DIRECT
                 )
 
+        try:
+            from app.services.document_zones import annotate_documents_with_zones
+
+            doc_chars = len(text) if isinstance(text, str) and text.strip() else None
+            if doc_chars is None and pending_char_basis and pending_char_basis[0]:
+                doc_chars = len(pending_char_basis[0])
+            annotate_documents_with_zones(documents, document_chars=doc_chars)
+        except Exception as zone_exc:
+            logger.warning(
+                "Zone annotation skipped for %s: %s",
+                filename,
+                zone_exc,
+                exc_info=True,
+            )
+
         return documents
 
     def create_embeddings(self, documents: List[Document], batch_size: int = 100) -> List[List[float]]:

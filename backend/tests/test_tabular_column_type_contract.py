@@ -42,9 +42,19 @@ def test_parse_and_normalize_date_skips_na():
 
 def test_strict_normalize_date_na_without_warning_path():
     cell, norm, rejection = strict_normalize_cell_value("N/A", "date")
-    assert cell == "N/A"
-    assert norm == "N/A"
-    assert rejection is not None
+    assert cell == "—"
+    assert norm == "—"
+    assert rejection is None
+
+    cell2, norm2, rejection2 = strict_normalize_cell_value("—", "date")
+    assert cell2 == "—"
+    assert norm2 == "—"
+    assert rejection2 is None
+
+    cell3, norm3, rejection3 = strict_normalize_cell_value("Не найдено", "date")
+    assert cell3 == "—"
+    assert norm3 == "—"
+    assert rejection3 is None
 
 
 def test_strict_normalize_date_russian_format():
@@ -63,14 +73,14 @@ def test_strict_normalize_date_extracts_from_sentence():
     assert norm == "2023-09-20"
     assert reason is None
     cell, norm, rejection = strict_normalize_cell_value("неизвестно", "date")
-    assert cell == "N/A"
-    assert norm == "N/A"
+    assert cell == "—"
+    assert norm == "—"
     assert rejection is not None
 
 
 def test_strict_normalize_yes_no_unknown_becomes_na():
     cell, norm, rejection = strict_normalize_cell_value("возможно", "yes_no")
-    assert cell == "N/A"
+    assert cell == "—"
     assert rejection is not None
 
 
@@ -103,7 +113,7 @@ def test_strict_normalize_tag_must_match_options():
     assert rejection is None
 
     cell2, _, rejection2 = strict_normalize_cell_value("Invoice", "tag", column_config=cfg)
-    assert cell2 == "N/A"
+    assert cell2 == "—"
     assert rejection2 is not None
 
 

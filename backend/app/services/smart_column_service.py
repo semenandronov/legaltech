@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from app.models.tabular_review import TabularColumn, TabularReview
 from app.services.llm_factory import create_llm
-from app.services.tabular_column_type_contract import validate_column_type
+from app.services.tabular_column_type_contract import TABULAR_COLUMN_TYPES, validate_column_type
 import logging
 
 logger = logging.getLogger(__name__)
@@ -271,32 +271,38 @@ class SmartColumnService:
         if not text:
             return []
 
-        system_msg = """Ты эксперт по созданию колонок для извлечения информации из юридических документов.
+        system_msg = """Ты эксперт по созданию колонок для извлечения информации из юридических документов (российское право).
 
 Твоя задача: по тексту с несколькими вопросами/запросами разбить его на отдельные вопросы и для каждого создать определение колонки.
 
-Типы колонок (используй только эти значения):
-- text: свободный текст
-- number: числовое значение
-- currency: денежная сумма с валютой
-- yes_no: да/нет (boolean)
-- date: дата
-- tag: один тег из предопределенного списка
-- verbatim: точная цитата из документа
-- manual_input: ручной ввод (без AI)
+Типы колонок — используй ТОЛЬКО эти значения (как в UI «Добавить колонку»):
+- text: Текст (свободный ответ)
+- number: Число
+- currency: Валюта / денежная сумма
+- yes_no: Да/Нет
+- date: Дата
+- tag: Тег (одно значение из списка)
+- verbatim: Цитата (дословно из документа)
+- manual_input: Ручной ввод (без AI)
 
 Для каждого вопроса определи:
-1. column_label: короткое название колонки (на русском или английском, для заголовка таблицы)
+1. column_label: КОРОТКОЕ название колонки СТРОГО НА РУССКОМ языке (для заголовка таблицы). НЕ используй английские слова. Примеры: «Стороны», «Срок договора», «Право субаренды», «Применимое право».
 2. column_type: наиболее подходящий тип из списка выше
-3. prompt: четкий промпт для AI-извлечения (на русском), формулировка вопроса
-4. column_config: только для type=tag — предложи options: [{"label": "...", "color": "..."}]; иначе null
+3. prompt: четкий промпт для AI-извлечения НА РУССКОМ (формулировка вопроса к документу)
+4. column_config: только для type=tag — предложи options с русскими label: [{"label": "...", "color": "#3B82F6"}]; иначе null. Для yes_no column_config = null.
 
 Верни список колонок в том же порядке, в каком идут вопросы в тексте. Не объединяй и не пропускай вопросы.
 
-ВАЖНО: ответь ТОЛЬКО валидным JSON без дополнительного текста, в формате:
+ВАЖНО:
+- column_label и prompt — только на русском.
+- Ответь ТОЛЬКО валидным JSON без дополнительного текста:
 {"columns": [{"column_label": "...", "column_type": "...", "prompt": "...", "column_config": null}]}"""
 
-        human_msg = f"Обработай следующий текст и верни список определений колонок:\n\n{text}"
+        human_msg = (
+            "Обработай следующий чек-лист / список вопросов и верни определения колонок. "
+            "Названия колонок (column_label) — только по-русски.\n\n"
+            f"{text}"
+        )
 
         from langchain_core.messages import SystemMessage, HumanMessage
 
@@ -328,28 +334,28 @@ class SmartColumnService:
                 return []
 
             out = []
+            valid_types = set(TABULAR_COLUMN_TYPES)
             for c in raw_columns:
                 if not isinstance(c, dict):
                     continue
                 label = c.get("column_label", "").strip()
-                col_type = c.get("column_type", "text").strip()
+                col_type = c.get("column_type", "text").strip().lower()
                 col_prompt = c.get("prompt", "").strip()
                 if not label or not col_prompt:
                     continue
-                # Validate column_type
-                valid_types = {
-                    "text", "number", "currency", "yes_no", "date", "tag",
-                    "verbatim", "manual_input",
-                }
                 if col_type not in valid_types:
-                    col_type = validate_column_type("text")
-                else:
-                    col_type = validate_column_type(col_type)
+                    col_type = "text"
+                col_type = validate_column_type(col_type)
+                config = c.get("column_config")
+                if col_type != "tag":
+                    config = None
+                elif not isinstance(config, dict):
+                    config = None
                 out.append(ColumnDescription(
                     column_label=label,
                     column_type=col_type,
                     prompt=col_prompt,
-                    column_config=c.get("column_config"),
+                    column_config=config,
                 ))
             logger.info(f"[generate_columns_from_questions] Generated {len(out)} column suggestions")
             return out

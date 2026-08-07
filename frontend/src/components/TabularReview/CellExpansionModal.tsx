@@ -1,5 +1,6 @@
 import Modal from "@/components/UI/Modal"
 import { TabularCell, CellDetails } from "@/services/tabularReviewApi"
+import { TABULAR_NA_DISPLAY } from "@/utils/tabularCellDisplay"
 import {
   Box,
   Typography,
@@ -100,7 +101,7 @@ export function CellExpansionModal({
               p: 2,
             }}
           >
-            <Typography variant="body2">{details.cell_value || "N/A"}</Typography>
+            <Typography variant="body2">{details.cell_value || TABULAR_NA_DISPLAY}</Typography>
           </Box>
         </Box>
 

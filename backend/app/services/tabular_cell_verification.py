@@ -13,7 +13,9 @@ from langchain_core.documents import Document
 from app.models.case import File
 from app.models.tabular_review import TabularColumn
 from app.services.tabular_extraction_policy import (
+    TABULAR_NA_VALUE,
     column_requires_evidence,
+    ensure_na_reasoning,
     is_na_cell_value,
 )
 from app.services.tabular_evidence_grounding import (
@@ -200,14 +202,14 @@ def apply_evidence_first_policy(
     issues.append("missing_evidence")
     downgraded = result.model_copy(
         update={
-            "cell_value": "N/A",
-            "normalized_value": "N/A",
+            "cell_value": TABULAR_NA_VALUE,
+            "normalized_value": TABULAR_NA_VALUE,
             "confidence": 0.0,
-            "reasoning": (
+            "reasoning": ensure_na_reasoning(
                 (result.reasoning or "")
                 + " Ответ отклонён: нет подтверждающей цитаты, дословно найденной "
                 "в документе или во фрагментах retrieval."
-            ).strip(),
+            ),
         }
     )
     return CellVerificationOutcome(

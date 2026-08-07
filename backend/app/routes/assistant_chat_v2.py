@@ -20,6 +20,7 @@ import time
 
 from app.utils.database import get_db
 from app.utils.auth import get_current_user
+from app.utils.authorization import require_case_access, require_case_write
 from app.models.user import User
 from app.services.chat import (
     ChatOrchestrator,
@@ -880,12 +881,7 @@ async def get_chat_sessions_v2(
         from app.models.case import Case
         
         # Проверяем доступ
-        case = db.query(Case).options(
-            load_only(Case.id, Case.user_id),
-        ).filter(
-            Case.id == case_id,
-            Case.user_id == current_user.id
-        ).first()
+        case = require_case_access(db, case_id, current_user.id)
         
         if not case:
             raise HTTPException(status_code=404, detail="Case not found")
@@ -923,12 +919,7 @@ async def get_chat_history_v2(
         from app.models.case import Case
         
         # Проверяем доступ
-        case = db.query(Case).options(
-            load_only(Case.id, Case.user_id),
-        ).filter(
-            Case.id == case_id,
-            Case.user_id == current_user.id
-        ).first()
+        case = require_case_access(db, case_id, current_user.id)
         
         if not case:
             raise HTTPException(status_code=404, detail="Case not found")
@@ -976,12 +967,7 @@ async def delete_chat_session_v2(
         from app.models.case import Case
         
         # Проверяем доступ
-        case = db.query(Case).options(
-            load_only(Case.id, Case.user_id),
-        ).filter(
-            Case.id == case_id,
-            Case.user_id == current_user.id
-        ).first()
+        case = require_case_write(db, case_id, current_user.id)
         
         if not case:
             raise HTTPException(status_code=404, detail="Case not found")
@@ -2376,6 +2362,8 @@ async def get_recent_activity(
     from app.models.operations_statement_session import OperationsStatementSession
     from sqlalchemy import func, desc
 
+    from app.services.case_sharing_service import accessible_case_ids_subquery
+
     PREVIEW = 80
     items = []
 
@@ -2388,7 +2376,7 @@ async def get_recent_activity(
         )
         .join(Case, Case.id == ChatMessage.case_id)
         .filter(
-            Case.user_id == current_user.id,
+            Case.id.in_(accessible_case_ids_subquery(db, current_user.id)),
             ChatMessage.session_id.isnot(None),
             ChatMessage.content.isnot(None),
             ChatMessage.content != "",

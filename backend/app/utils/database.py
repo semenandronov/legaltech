@@ -252,6 +252,43 @@ def ensure_schema():
                     text("ALTER TABLE files ADD COLUMN IF NOT EXISTS front_matter_facts JSON")
                 )
                 logger.info("✅ Added front_matter_facts column to files table")
+            if "dd_doc_type" not in file_columns:
+                conn.execute(
+                    text(
+                        "ALTER TABLE files ADD COLUMN IF NOT EXISTS dd_doc_type VARCHAR(64)"
+                    )
+                )
+                logger.info("✅ Added dd_doc_type column to files table")
+            if "dd_doc_type_confidence" not in file_columns:
+                conn.execute(
+                    text(
+                        "ALTER TABLE files ADD COLUMN IF NOT EXISTS "
+                        "dd_doc_type_confidence VARCHAR(16)"
+                    )
+                )
+            if "dd_doc_type_source" not in file_columns:
+                conn.execute(
+                    text(
+                        "ALTER TABLE files ADD COLUMN IF NOT EXISTS "
+                        "dd_doc_type_source VARCHAR(32)"
+                    )
+                )
+            if "contract_facts" not in file_columns:
+                conn.execute(
+                    text(
+                        "ALTER TABLE files ADD COLUMN IF NOT EXISTS contract_facts JSON"
+                    )
+                )
+                logger.info("✅ Added contract_facts column to files table")
+            try:
+                conn.execute(
+                    text(
+                        "CREATE INDEX IF NOT EXISTS ix_files_dd_doc_type "
+                        "ON files(dd_doc_type)"
+                    )
+                )
+            except Exception as idx_exc:
+                logger.warning("Could not create ix_files_dd_doc_type: %s", idx_exc)
     
     # Create pgvector indexes for optimization
     try:
@@ -867,6 +904,8 @@ def init_db():
                 missing_columns.append("primary_source_char_end")
             if "verified_flag" not in cells_columns:
                 missing_columns.append("verified_flag")
+            if "user_flag" not in cells_columns:
+                missing_columns.append("user_flag")
             
             if missing_columns:
                 logger.info(f"⚠️  Applying migration: adding {', '.join(missing_columns)} to tabular_cells")
@@ -889,12 +928,15 @@ def init_db():
                             conn.execute(text("ALTER TABLE tabular_cells ADD COLUMN IF NOT EXISTS primary_source_char_end INTEGER"))
                         if "verified_flag" in missing_columns:
                             conn.execute(text("ALTER TABLE tabular_cells ADD COLUMN IF NOT EXISTS verified_flag BOOLEAN"))
+                        if "user_flag" in missing_columns:
+                            conn.execute(text("ALTER TABLE tabular_cells ADD COLUMN IF NOT EXISTS user_flag VARCHAR(16)"))
+                            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_tabular_cells_user_flag ON tabular_cells(user_flag)"))
                     logger.info(f"✅ Migration applied: {', '.join(missing_columns)} added to tabular_cells")
                 except Exception as mig_error:
                     logger.error(f"❌ Failed to apply tabular_cells migration: {mig_error}", exc_info=True)
                     raise
             else:
-                logger.info("✅ source_references, normalized_value, candidates, conflict_resolution, primary_source_doc_id, primary_source_char_start, primary_source_char_end, and verified_flag already exist in tabular_cells")
+                logger.info("✅ source_references, normalized_value, candidates, conflict_resolution, primary_source_doc_id, primary_source_char_start, primary_source_char_end, verified_flag, and user_flag already exist in tabular_cells")
     except Exception as e:
         logger.warning(f"Could not apply tabular_columns migration: {e}", exc_info=True)
     

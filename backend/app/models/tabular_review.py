@@ -83,7 +83,7 @@ class TabularCell(Base):
     confidence_score = Column(DECIMAL(3, 2), nullable=True)  # 0.00 - 1.00
     source_page = Column(Integer, nullable=True)
     source_section = Column(String(255), nullable=True)
-    status = Column(String(50), default="pending")  # pending, processing, completed, reviewed, conflict, empty, n_a
+    status = Column(String(50), default="pending")  # pending, processing, completed, reviewed, conflict, empty, n_a, skipped
     candidates = Column(JSON, nullable=True)  # Массив кандидатов: [{value, confidence, source_page, verbatim, reasoning, normalized_value}]
     conflict_resolution = Column(JSON, nullable=True)  # Метаданные разрешения конфликта: {resolved_by, resolution_method, selected_candidate_id, resolved_at}
     locked_by = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
@@ -97,6 +97,8 @@ class TabularCell(Base):
     primary_source_char_start = Column(Integer, nullable=True)  # Начальная позиция символа в источнике
     primary_source_char_end = Column(Integer, nullable=True)  # Конечная позиция символа в источнике
     verified_flag = Column(Boolean, nullable=True)  # Флаг верификации цитаты
+    # Lawyer triage flag (independent from citation verified_flag): red|orange|yellow|green
+    user_flag = Column(String(16), nullable=True, index=True)
     
     # Unique constraint: одна ячейка на документ+колонку
     __table_args__ = (

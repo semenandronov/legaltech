@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field, model_validator
 from app.config import config
 from app.models.case import File
 from app.models.tabular_review import TabularColumn
+from app.services.tabular_extraction_policy import TABULAR_NA_VALUE
 from app.services.tabular_extraction_schemas import typed_extraction_to_cell_model
 from app.services.tabular_review_models import TabularCellExtractionModel
 
@@ -71,8 +72,8 @@ class RiskItem(BaseModel):
 class RiskSynthesisModel(BaseModel):
     risks: List[RiskItem] = Field(default_factory=list)
     cell_value: str = Field(
-        default="N/A",
-        description="Итоговый список рисков для ячейки (маркированный), или N/A",
+        default=TABULAR_NA_VALUE,
+        description="Итоговый список рисков для ячейки (маркированный), или «—»",
     )
     verbatim_extract: Optional[str] = Field(
         None, description="Главная подтверждающая цитата"
@@ -113,8 +114,8 @@ class RiskSynthesisModel(BaseModel):
                     lines.append(line)
                 elif item:
                     lines.append(f"- {item}")
-            data["cell_value"] = "\n".join(lines) if lines else "N/A"
-        data.setdefault("cell_value", "N/A")
+            data["cell_value"] = "\n".join(lines) if lines else TABULAR_NA_VALUE
+        data.setdefault("cell_value", TABULAR_NA_VALUE)
         data.setdefault("reasoning", "Risk analysis graph")
         return data
 
@@ -303,7 +304,7 @@ def _format_risk_line(item: RiskItem) -> str:
 
 def _format_risks_fallback(items: List[RiskItem]) -> str:
     lines = [line for item in items if (line := _format_risk_line(item))]
-    return "\n".join(lines) if lines else "N/A"
+    return "\n".join(lines) if lines else TABULAR_NA_VALUE
 
 
 async def _synthesize(
@@ -317,7 +318,7 @@ async def _synthesize(
     if not (context_text or "").strip():
         return typed_extraction_to_cell_model(
             {
-                "cell_value": "N/A",
+                "cell_value": TABULAR_NA_VALUE,
                 "reasoning": "Нет фрагментов для risk analysis",
                 "extraction_method": "risk_analysis_graph",
                 "confidence": 0.0,
@@ -355,9 +356,9 @@ async def _synthesize(
         if model.risks:
             cell_value = _format_risks_fallback(model.risks)
         else:
-            cell_value = (payload.get("cell_value") or "").strip() or "N/A"
+            cell_value = (payload.get("cell_value") or "").strip() or TABULAR_NA_VALUE
         if not cell_value:
-            cell_value = "N/A"
+            cell_value = TABULAR_NA_VALUE
 
         refs = []
         for risk in model.risks[:8]:
@@ -396,7 +397,7 @@ async def _synthesize(
         text = resp.content if hasattr(resp, "content") else str(resp)
         return typed_extraction_to_cell_model(
             {
-                "cell_value": (text or "N/A").strip()[:4000] or "N/A",
+                "cell_value": (text or TABULAR_NA_VALUE).strip()[:4000] or TABULAR_NA_VALUE,
                 "reasoning": "Risk analysis fallback (unstructured)",
                 "extraction_method": "risk_analysis_graph",
                 "confidence": 0.55,
@@ -423,7 +424,7 @@ async def run_tabular_risk_analysis(
     if not tabular_risk_analysis_enabled():
         extraction = typed_extraction_to_cell_model(
             {
-                "cell_value": "N/A",
+                "cell_value": TABULAR_NA_VALUE,
                 "reasoning": "Risk analysis disabled by config",
                 "extraction_method": "risk_analysis_disabled",
                 "confidence": 0.0,
@@ -492,7 +493,7 @@ async def run_tabular_risk_analysis(
     if extraction is None:
         extraction = typed_extraction_to_cell_model(
             {
-                "cell_value": "N/A",
+                "cell_value": TABULAR_NA_VALUE,
                 "reasoning": "Risk graph produced no extraction",
                 "extraction_method": "risk_analysis_graph",
                 "confidence": 0.0,

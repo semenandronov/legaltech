@@ -2,7 +2,7 @@
 """
 RU tabular mini-eval: SS↔KOB case docs × mixed-difficulty questions.
 
-Uses the same tabular cell pipeline as production (light ingest + extract).
+Uses the same tabular cell pipeline as production (light ingest + ``run_tabular_cell_extraction``).
 Gold: evals/ru_ss_kob/gold.json
 """
 from __future__ import annotations
@@ -14,10 +14,8 @@ import re
 import sys
 import time
 import uuid
-from collections import defaultdict
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = ROOT.parent
@@ -29,9 +27,15 @@ TEXT_DIR = REPO / "evals" / "ru_ss_kob" / "raw_text"
 
 
 def _normalize(s: str) -> str:
-    t = (s or "").lower().replace("ё", "е")
-    t = re.sub(r"[^\w\s./\-]", " ", t, flags=re.UNICODE)
-    return " ".join(t.split())
+    from app.services.tabular_eval_runner import normalize_eval_text
+
+    return normalize_eval_text(s)
+
+
+def _digits(s: str) -> str:
+    from app.services.tabular_eval_runner import eval_digits
+
+    return eval_digits(s)
 
 
 def _yn_token(s: str) -> str:
@@ -41,62 +45,6 @@ def _yn_token(s: str) -> str:
     if n in {"no", "n", "false", "нет"}:
         return "no"
     return n
-
-
-def _digits(s: str) -> str:
-    return re.sub(r"[^\d.]", "", (s or "").replace(",", ".").replace(" ", ""))
-
-
-def _chunks_for_run(included_docs: List[Any], *, max_chars: int = 2500) -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = []
-    for i, doc in enumerate(included_docs or []):
-        text = str(getattr(doc, "page_content", None) or "")
-        meta = getattr(doc, "metadata", None) or {}
-        rows.append(
-            {
-                "index": i,
-                "chars": len(text),
-                "source_page": meta.get("source_page"),
-                "source_section": meta.get("source_section"),
-                "text": text[:max_chars] + ("…" if len(text) > max_chars else ""),
-            }
-        )
-    return rows
-
-
-def _gold_signal_in_text(gold: str, qid: str, text: str) -> bool:
-    g = (gold or "").strip()
-    if not g or g.upper() in {"N/A", "NA", "Н/Д"}:
-        return False
-    t_norm = _normalize(text)
-    if qid == "inn_smart_city":
-        return _digits(g) in re.sub(r"\D", "", text)
-    if qid in {"rent_or_buyout_amount", "case_number", "contract_number", "amount", "payee_inn", "pp_number"}:
-        gd = _digits(g)
-        if gd and gd in re.sub(r"\D", "", text):
-            return True
-        return _normalize(g) in t_norm or gd in t_norm.replace(" ", "")
-    if _normalize(g) in t_norm:
-        return True
-    gn = _normalize(g)
-    return len(gn) >= 4 and gn in t_norm
-
-
-def _gold_in_context(gold: str, qid: str, included_docs: List[Any], context_text: str) -> Dict[str, Any]:
-    g_na = (gold or "").strip().upper() in {"N/A", "NA", "Н/Д"}
-    corpus = context_text or ""
-    if not corpus and included_docs:
-        corpus = "\n\n".join(str(getattr(d, "page_content", "") or "") for d in included_docs)
-    chunk_hits: List[int] = []
-    for row in _chunks_for_run(included_docs, max_chars=999999):
-        if _gold_signal_in_text(gold, qid, row["text"]):
-            chunk_hits.append(int(row["index"]))
-    in_full = _gold_signal_in_text(gold, qid, corpus) if not g_na else False
-    return {
-        "gold_in_any_chunk": bool(chunk_hits),
-        "gold_chunk_indices": chunk_hits,
-        "gold_in_merged_context": in_full,
-    }
 
 
 def ru_match(predicted: str, gold: str, *, qid: str) -> bool:
@@ -175,6 +123,38 @@ def light_index(db, *, document_processor, case_id: str, file_model, text: str) 
     file_model.original_text = citation_text
     file_model.processing_status = "ready"
     file_model.processing_error = None
+    try:
+        from app.services.dd_document_classifier import (
+            classify_dd_document,
+            save_dd_classification_on_file,
+        )
+
+        save_dd_classification_on_file(
+            file_model,
+            classify_dd_document(text=citation_text, filename=filename),
+        )
+    except Exception:
+        pass
+    try:
+        from app.services.contract_facts_service import (
+            build_contract_facts_payload,
+            contract_facts_enabled,
+            save_contract_facts_on_file,
+        )
+        from app.services.dd_document_classifier import get_file_dd_doc_type
+
+        if contract_facts_enabled():
+            save_contract_facts_on_file(
+                file_model,
+                build_contract_facts_payload(
+                    text=citation_text,
+                    filename=filename,
+                    dd_doc_type=get_file_dd_doc_type(file_model) or "unknown",
+                    allow_llm=False,
+                ),
+            )
+    except Exception:
+        pass
     db.commit()
     document_processor.store_in_vector_db(
         case_id=case_id,
@@ -249,189 +229,23 @@ async def run_matrix(
     files_by_id: Dict[str, Any],
     gold_pack: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
-    from app.models.case import File
-    from app.services.llm_factory import create_llm
-    from app.services.rag_service import RAGService
-    from app.services.tabular_cell_payload import build_tabular_cell_db_payload
-    from app.services.tabular_cell_pipeline import (
-        augment_context_for_column,
-        cell_retrieval_params_from_models,
-        docs_for_cell_geometry,
-        invoke_structured_cell_extraction,
-        prepare_cell_retrieval_sync,
+    from app.services.tabular_eval_runner import run_tabular_eval_matrix
+
+    match_fn = ru_match
+    if getattr(run_matrix, "_match_override", None):
+        match_fn = run_matrix._match_override  # type: ignore[attr-defined]
+    return await run_tabular_eval_matrix(
+        case_id=case_id,
+        files_by_id=files_by_id,
+        gold_pack=gold_pack,
+        match_fn=match_fn,
     )
-    from app.services.tabular_cell_verification import apply_evidence_first_policy
-    from app.services.tabular_column_run_context import TabularColumnRunContext
-    from app.services.tabular_column_type_contract import finalize_extraction_dict
-    from app.services.tabular_search_query_rewrite import rewrite_tabular_search_query
-    from app.services.yandex_embeddings import get_yandex_embeddings
-    from app.utils.database import SessionLocal
-
-    llm = create_llm(temperature=0.0, max_tokens=700)
-    rag = RAGService()
-    emb = get_yandex_embeddings()
-    questions = gold_pack["questions"]
-    gold = gold_pack["gold"]
-    results: List[Dict[str, Any]] = []
-
-    file_context_packages: Dict[str, Any] = {}
-    prep_db = SessionLocal()
-    try:
-        from app.services.tabular_document_context import (
-            prepare_file_context_packages,
-            tabular_dcp_enabled,
-        )
-
-        if tabular_dcp_enabled():
-            file_ids = [str(files_by_id[d["id"]].id) for d in gold_pack["documents"]]
-            file_context_packages = prepare_file_context_packages(
-                prep_db,
-                case_id=case_id,
-                file_ids=file_ids,
-            )
-            print(
-                f"DCP packages: {len(file_context_packages)} "
-                f"(outline sections: "
-                f"{sum(len(p.outline) for p in file_context_packages.values())})",
-                flush=True,
-            )
-    finally:
-        prep_db.close()
-
-    def normalize_fn(d, column, file):
-        return finalize_extraction_dict(
-            d,
-            column_type=str(column.column_type),
-            column_config=column.column_config
-            if isinstance(getattr(column, "column_config", None), dict)
-            else None,
-        )
-
-    for doc in gold_pack["documents"]:
-        doc_id = doc["id"]
-        file_model = files_by_id[doc_id]
-        for q in questions:
-            qid = q["id"]
-            gold_val = gold[doc_id][qid]
-            column = SimpleNamespace(
-                id=f"ru-{qid}",
-                prompt=q["prompt"],
-                column_label=q["label"],
-                column_type=q["column_type"],
-                column_config={},
-                tag_options=None,
-            )
-            rewritten = rewrite_tabular_search_query(column, allow_llm=True)
-            vec = emb.embed_query(rewritten.search_query)
-            run = TabularColumnRunContext(
-                search_query=rewritten.search_query,
-                query_embedding=tuple(float(x) for x in vec),
-                source_query=rewritten.source_query,
-                rewrite_method=rewritten.method,
-                rewrite_rationale=rewritten.rationale,
-                exact_query=rewritten.exact_query,
-                lexical_terms=tuple(rewritten.lexical_terms or ()),
-                exact_literals=tuple(rewritten.exact_literals or ()),
-                search_queries=tuple(rewritten.search_queries or ())
-                or (rewritten.search_query,),
-            )
-            db = SessionLocal()
-            try:
-                f = db.query(File).filter(File.id == file_model.id).one()
-                file_ctx = file_context_packages.get(str(f.id))
-                params = cell_retrieval_params_from_models(
-                    f, column, column_run=run, file_context=file_ctx
-                )
-                prepared = prepare_cell_retrieval_sync(rag, params=params)
-                ctx = augment_context_for_column(
-                    prepared.context_text,
-                    column_type=q["column_type"],
-                    original_text=str(f.original_text or ""),
-                )
-                extraction = await invoke_structured_cell_extraction(
-                    llm,
-                    column=column,
-                    context_text=ctx,
-                    normalize_fn=normalize_fn,
-                    file=f,
-                )
-                verification = apply_evidence_first_policy(
-                    extraction,
-                    column=column,
-                    file=f,
-                    included_docs=prepared.included_docs,
-                )
-                extraction = verification.result
-                payload = build_tabular_cell_db_payload(
-                    file=f,
-                    column=column,
-                    result=extraction,
-                    included_docs=prepared.included_docs,
-                    geometry_docs=docs_for_cell_geometry(prepared),
-                    db=None,
-                    verification_outcome=verification,
-                )
-                pred = str(payload.get("cell_value") or extraction.cell_value or "")
-                ok = ru_match(pred, gold_val, qid=qid)
-                na = (not pred.strip()) or pred.strip().upper() in {"N/A", "NA"}
-                gold_ctx = _gold_in_context(
-                    gold_val, qid, prepared.included_docs, ctx
-                )
-                mark = "OK" if ok else "MISS"
-                print(
-                    f"  [{mark}] {doc_id} | {q['label']} ({q['difficulty']}): "
-                    f"pred={pred!r} gold={gold_val!r}",
-                    flush=True,
-                )
-                results.append(
-                    {
-                        "doc_id": doc_id,
-                        "doc_label": doc["label"],
-                        "question_id": qid,
-                        "question": q["label"],
-                        "difficulty": q["difficulty"],
-                        "column_type": q["column_type"],
-                        "gold": gold_val,
-                        "predicted": pred,
-                        "match": ok,
-                        "na": na,
-                        "forced_na": bool(verification.forced_na),
-                        "n_refs": len(payload.get("source_references") or []),
-                        "extraction_method": getattr(extraction, "extraction_method", None),
-                        "verbatim_extract": (extraction.verbatim_extract or None),
-                        "search_query": run.search_query,
-                        "n_chunks": len(prepared.included_docs or []),
-                        "context_chars": len(ctx or ""),
-                        **gold_ctx,
-                        "chunks": _chunks_for_run(prepared.included_docs),
-                    }
-                )
-            finally:
-                db.close()
-    return results
 
 
 def summarize(results: List[Dict[str, Any]]) -> Dict[str, Any]:
-    scored = [r for r in results if r.get("gold") is not None]
-    correct = sum(1 for r in scored if r["match"])
-    by_diff: Dict[str, Dict[str, int]] = defaultdict(lambda: {"n": 0, "ok": 0, "na": 0})
-    by_q: Dict[str, Dict[str, int]] = defaultdict(lambda: {"n": 0, "ok": 0, "na": 0})
-    for r in scored:
-        d = r["difficulty"]
-        by_diff[d]["n"] += 1
-        by_diff[d]["ok"] += int(r["match"])
-        by_diff[d]["na"] += int(r["na"])
-        by_q[r["question"]]["n"] += 1
-        by_q[r["question"]]["ok"] += int(r["match"])
-        by_q[r["question"]]["na"] += int(r["na"])
-    return {
-        "scored": len(scored),
-        "correct": correct,
-        "accuracy": round(correct / len(scored), 4) if scored else 0.0,
-        "na_count": sum(1 for r in scored if r["na"]),
-        "by_difficulty": dict(by_diff),
-        "by_question": dict(by_q),
-    }
+    from app.services.tabular_eval_runner import summarize_eval_results
+
+    return summarize_eval_results(results)
 
 
 def main() -> None:

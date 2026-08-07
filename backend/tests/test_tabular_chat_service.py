@@ -12,7 +12,7 @@ def test_tabular_chat_session_id():
 
 def test_format_cell_display_empty_and_na():
     assert "не заполнено" in format_cell_display({"cell_value": None, "status": "pending"})
-    assert "N/A" in format_cell_display({"cell_value": "N/A", "status": "completed"})
+    assert "—" in format_cell_display({"cell_value": "N/A", "status": "completed"})
 
 
 def test_build_llm_messages_includes_readability_guidance():

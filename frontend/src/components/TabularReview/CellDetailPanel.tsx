@@ -18,6 +18,7 @@ import {
   Warning as WarningIcon,
 } from "@mui/icons-material"
 import { CellDetails, SourceReference } from "@/services/tabularReviewApi"
+import { TABULAR_NA_DISPLAY } from "@/utils/tabularCellDisplay"
 
 interface CellDetailPanelProps {
   fileName: string
@@ -145,7 +146,7 @@ export const CellDetailPanel: React.FC<CellDetailPanelProps> = ({
                 borderRadius: 1,
               }}
             >
-              <Typography variant="body2">{cellDetails.cell_value || "N/A"}</Typography>
+              <Typography variant="body2">{cellDetails.cell_value || TABULAR_NA_DISPLAY}</Typography>
             </Paper>
           </Box>
 

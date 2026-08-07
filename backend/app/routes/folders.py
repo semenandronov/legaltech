@@ -69,17 +69,16 @@ class TagResponse(BaseModel):
         from_attributes = True
 
 
+from app.utils.authorization import require_case_access, require_case_write
+
+
 def _verify_case_access(case_id: str, user: User, db: Session) -> Case:
-    """Verify user has access to the case"""
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == user.id
-    ).first()
-    
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
-    
-    return case
+    """Verify user has access to the case (viewer+)."""
+    return require_case_access(db, case_id, user.id)
+
+
+def _verify_case_write(case_id: str, user: User, db: Session) -> Case:
+    return require_case_write(db, case_id, user.id)
 
 
 @router.get("/cases/{case_id}/folders")
@@ -121,7 +120,7 @@ async def create_folder(
     current_user: User = Depends(get_current_user)
 ):
     """Create a new folder"""
-    _verify_case_access(case_id, current_user, db)
+    _verify_case_write(case_id, current_user, db)
     
     service = FolderService(db)
     folder = service.create_folder(
@@ -166,7 +165,7 @@ async def update_folder(
     current_user: User = Depends(get_current_user)
 ):
     """Update a folder"""
-    _verify_case_access(case_id, current_user, db)
+    _verify_case_write(case_id, current_user, db)
     
     service = FolderService(db)
     updates = request.model_dump(exclude_unset=True)
@@ -186,7 +185,7 @@ async def delete_folder(
     current_user: User = Depends(get_current_user)
 ):
     """Delete a folder"""
-    _verify_case_access(case_id, current_user, db)
+    _verify_case_write(case_id, current_user, db)
     
     service = FolderService(db)
     if not service.delete_folder(folder_id):
@@ -204,7 +203,7 @@ async def move_folder(
     current_user: User = Depends(get_current_user)
 ):
     """Move a folder to a new parent"""
-    _verify_case_access(case_id, current_user, db)
+    _verify_case_write(case_id, current_user, db)
     
     service = FolderService(db)
     try:
@@ -224,7 +223,7 @@ async def reorder_folders(
     current_user: User = Depends(get_current_user)
 ):
     """Reorder folders"""
-    _verify_case_access(case_id, current_user, db)
+    _verify_case_write(case_id, current_user, db)
     
     service = FolderService(db)
     service.reorder_folders(request.folder_ids)
@@ -254,7 +253,7 @@ async def create_tag(
     current_user: User = Depends(get_current_user)
 ):
     """Create a new tag"""
-    _verify_case_access(case_id, current_user, db)
+    _verify_case_write(case_id, current_user, db)
     
     # Check if tag already exists
     existing = db.query(FileTag).filter(
@@ -284,7 +283,7 @@ async def delete_tag(
     current_user: User = Depends(get_current_user)
 ):
     """Delete a tag"""
-    _verify_case_access(case_id, current_user, db)
+    _verify_case_write(case_id, current_user, db)
     
     tag = db.query(FileTag).filter(
         FileTag.id == tag_id,

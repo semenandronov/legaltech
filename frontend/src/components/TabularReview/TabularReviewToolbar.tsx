@@ -1,11 +1,12 @@
 "use client"
 
 import { useEffect, useRef, useState } from 'react'
-import { ChevronDown, Plus, Upload } from 'lucide-react'
+import { ChevronDown, FileUp, Plus, Upload } from 'lucide-react'
 import { MikeTableToolbar } from './mike/MikeTableToolbar'
 
 interface TabularReviewToolbarProps {
-  onAddColumns: () => void
+  onAddColumns?: () => void
+  onImportChecklist?: () => void
   onUpdateDocuments?: () => void
   processing?: boolean
   selectedCount?: number
@@ -14,6 +15,7 @@ interface TabularReviewToolbarProps {
 
 export function TabularReviewToolbar({
   onAddColumns,
+  onImportChecklist,
   onUpdateDocuments,
   processing = false,
   selectedCount = 0,
@@ -79,6 +81,22 @@ export function TabularReviewToolbar({
               Добавить документы
             </button>
           )}
+          {onImportChecklist && (
+            <button
+              type="button"
+              onClick={onImportChecklist}
+              disabled={processing}
+              className={`flex items-center gap-1 text-xs font-medium transition-colors ${
+                processing
+                  ? 'text-gray-300 cursor-default'
+                  : 'text-gray-700 hover:text-gray-900'
+              }`}
+            >
+              <FileUp className="h-3.5 w-3.5" aria-hidden />
+              Импорт чек-листа
+            </button>
+          )}
+          {onAddColumns && (
           <button
             type="button"
             onClick={onAddColumns}
@@ -92,6 +110,7 @@ export function TabularReviewToolbar({
             <Plus className="h-3.5 w-3.5" aria-hidden />
             Добавить колонки
           </button>
+          )}
         </>
       }
     />

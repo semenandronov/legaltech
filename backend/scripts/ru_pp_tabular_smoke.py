@@ -218,7 +218,7 @@ def main() -> None:
 
     import ru_ss_kob_tabular_smoke as kob_smoke
 
-    kob_smoke.ru_match = pp_match  # type: ignore[misc]
+    kob_smoke.run_matrix._match_override = pp_match  # type: ignore[attr-defined]
 
     gold_pack = json.loads(GOLD_PATH.read_text(encoding="utf-8"))
     t0 = time.time()

@@ -4,17 +4,34 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { AlertCircle } from 'lucide-react'
-import type { CellDetails, TabularColumn } from '@/services/tabularReviewApi'
+import type { CellComment, CellDetails, TabularColumn, UserFlagColor } from '@/services/tabularReviewApi'
 import { tabularReviewApi } from '@/services/tabularReviewApi'
 import { preprocessTabularCellMarkdown } from '@/utils/tabularCitationUtils'
 import { shouldRenderAsPill } from '@/utils/tabularPillUtils'
+import { TABULAR_EMPTY_DISPLAY, TABULAR_NA_DISPLAY } from '@/utils/tabularCellDisplay'
+import { useAuth } from '@/contexts/AuthContext'
 import type { MikeTableCellVM } from './types'
 import { getMikePillClass } from './mikePillUtils'
 import { SkeletonLine } from './mikeTablePrimitives'
 import { buildCellCitationList } from './buildCellCitationList'
 import { MikeCellDetailPopover } from './MikeCellDetailPopover'
+import { toast } from 'sonner'
 
 export type MikeCellColumnMeta = Pick<TabularColumn, 'column_type' | 'column_config'>
+
+export interface MikeCellCommentEvent {
+  type:
+    | 'comment_added'
+    | 'comment_updated'
+    | 'comment_deleted'
+    | 'comment_resolved'
+    | 'comment_unresolved'
+  fileId: string
+  columnId: string
+  commentId: string
+  comment?: Partial<CellComment> | null
+  wasResolved?: boolean
+}
 
 interface MikeTabularCellProps {
   cell: MikeTableCellVM
@@ -31,15 +48,34 @@ interface MikeTabularCellProps {
   onStartEdit: () => void
   onCancelEdit: () => void
   onSave: (value: string) => Promise<void>
+  onUserFlagChange?: (flag: UserFlagColor | null) => Promise<void>
+  onCommentCountsChange?: (
+    fileId: string,
+    columnId: string,
+    counts: { comment_count: number; unresolved_comment_count: number },
+  ) => void
+  commentEvent?: MikeCellCommentEvent | null
+  readOnly?: boolean
 }
 
-const FLAG_STYLES = {
-  reviewed: 'bg-green-500',
-  green: 'bg-green-500',
-  grey: 'bg-gray-400',
-  yellow: 'bg-amber-400',
-  red: 'bg-red-500',
+/** Soft full-cell tints — muted but clearly distinct. */
+const FLAG_CELL_BG = {
+  reviewed: 'ws-mike-cell-flag ws-mike-cell-flag--green',
+  green: 'ws-mike-cell-flag ws-mike-cell-flag--green',
+  grey: 'ws-mike-cell-flag ws-mike-cell-flag--grey',
+  yellow: 'ws-mike-cell-flag ws-mike-cell-flag--yellow',
+  orange: 'ws-mike-cell-flag ws-mike-cell-flag--orange',
+  red: 'ws-mike-cell-flag ws-mike-cell-flag--red',
 } as const
+
+const FLAG_TITLES: Record<keyof typeof FLAG_CELL_BG, string> = {
+  reviewed: 'Проверено',
+  green: 'Зелёный флаг',
+  grey: 'Серый флаг',
+  yellow: 'Жёлтый флаг',
+  orange: 'Оранжевый флаг',
+  red: 'Красный флаг',
+}
 
 const CLICK_DELAY_MS = 280
 
@@ -48,7 +84,14 @@ function normalizeYesNoEditValue(raw: string): string {
   if (!value) return ''
   if (value === 'Yes' || value.toLowerCase() === 'yes') return 'Да'
   if (value === 'No' || value.toLowerCase() === 'no') return 'Нет'
-  if (value === 'Unknown' || value.toUpperCase() === 'N/A' || value === 'Н/Д') return 'N/A'
+  if (
+    value === 'Unknown' ||
+    value.toUpperCase() === 'N/A' ||
+    value === 'Н/Д' ||
+    value.toUpperCase() === 'НЕ НАЙДЕНО'
+  ) {
+    return TABULAR_NA_DISPLAY
+  }
   return value
 }
 
@@ -199,7 +242,7 @@ function MikeInlineCellEditor({
         <option value="">—</option>
         <option value="Да">Да</option>
         <option value="Нет">Нет</option>
-        <option value="N/A">N/A</option>
+        <option value={TABULAR_NA_DISPLAY}>{TABULAR_NA_DISPLAY}</option>
       </select>
     )
   }
@@ -254,7 +297,12 @@ export function MikeTabularCell({
   onStartEdit,
   onCancelEdit,
   onSave,
+  onUserFlagChange,
+  onCommentCountsChange,
+  commentEvent,
+  readOnly = false,
 }: MikeTabularCellProps) {
+  const { user } = useAuth()
   const cellRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement | HTMLSelectElement | null>(null)
   const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -262,15 +310,65 @@ export function MikeTabularCell({
   const skipBlurCommitRef = useRef(false)
   const [details, setDetails] = useState<CellDetails | null>(null)
   const [detailsLoading, setDetailsLoading] = useState(false)
+  const [flagSaving, setFlagSaving] = useState(false)
   const [selectedCitationIndex, setSelectedCitationIndex] = useState(0)
   const [draft, setDraft] = useState('')
   const [editMinHeight, setEditMinHeight] = useState(40)
+  const [comments, setComments] = useState<CellComment[]>([])
+  const [commentsLoading, setCommentsLoading] = useState(false)
+  const [commentSubmitting, setCommentSubmitting] = useState(false)
+  const [localUnresolvedCount, setLocalUnresolvedCount] = useState<number | null>(null)
+  const lastCommentEventRef = useRef<MikeCellCommentEvent | null>(null)
 
   const markdownSource = (cell.rawValue || cell.displayValue || '').trim()
-  const displayValue = cell.displayValue === '-' ? '—' : cell.displayValue
+  const isSkipped = cell.status === 'skipped'
+  const isExplicitNa = Boolean(cell.isExplicitNa) || cell.displayValue === TABULAR_NA_DISPLAY
+  const displayValue =
+    cell.displayValue === TABULAR_EMPTY_DISPLAY || cell.displayValue === '-'
+      ? '—'
+      : cell.displayValue
   const isEmpty =
     !isEditing &&
-    (!cell.displayValue || cell.displayValue === '-' || cell.displayValue === '—')
+    !isExplicitNa &&
+    !isSkipped &&
+    (!cell.displayValue ||
+      cell.displayValue === TABULAR_EMPTY_DISPLAY ||
+      cell.displayValue === '-' ||
+      cell.displayValue === '—')
+
+  const unresolvedCommentCount =
+    localUnresolvedCount ?? cell.unresolvedCommentCount ?? 0
+
+  useEffect(() => {
+    setLocalUnresolvedCount(null)
+  }, [cell.unresolvedCommentCount, fileId, columnId])
+
+  const emitCounts = useCallback(
+    (nextComments: CellComment[]) => {
+      const comment_count = nextComments.length
+      const unresolved_comment_count = nextComments.filter((c) => !c.is_resolved).length
+      setLocalUnresolvedCount(unresolved_comment_count)
+      onCommentCountsChange?.(fileId, columnId, {
+        comment_count,
+        unresolved_comment_count,
+      })
+    },
+    [columnId, fileId, onCommentCountsChange],
+  )
+
+  const handleFlagChange = useCallback(
+    async (flag: UserFlagColor | null) => {
+      if (!onUserFlagChange) return
+      setFlagSaving(true)
+      try {
+        await onUserFlagChange(flag)
+        setDetails((prev) => (prev ? { ...prev, user_flag: flag } : prev))
+      } finally {
+        setFlagSaving(false)
+      }
+    },
+    [onUserFlagChange],
+  )
 
   const citations = useMemo(
     () => buildCellCitationList(cell.rawValue || markdownSource, details),
@@ -279,14 +377,21 @@ export function MikeTabularCell({
 
   const loadDetails = useCallback(async () => {
     setDetailsLoading(true)
+    setCommentsLoading(true)
     try {
-      const loaded = await tabularReviewApi.getCellDetails(reviewId, fileId, columnId)
+      const [loaded, loadedComments] = await Promise.all([
+        tabularReviewApi.getCellDetails(reviewId, fileId, columnId),
+        tabularReviewApi.listComments(reviewId, fileId, columnId, true),
+      ])
       setDetails(loaded)
+      setComments(loadedComments)
+      setLocalUnresolvedCount(loadedComments.filter((c) => !c.is_resolved).length)
     } catch (error) {
       console.error('Error loading cell details:', error)
       setDetails(null)
     } finally {
       setDetailsLoading(false)
+      setCommentsLoading(false)
     }
   }, [reviewId, fileId, columnId])
 
@@ -297,6 +402,184 @@ export function MikeTabularCell({
       void loadDetails()
     },
     [loadDetails, onPopoverOpen],
+  )
+
+  useEffect(() => {
+    if (!commentEvent) return
+    if (commentEvent.fileId !== fileId || commentEvent.columnId !== columnId) return
+    if (lastCommentEventRef.current === commentEvent) return
+    lastCommentEventRef.current = commentEvent
+
+    setComments((prev) => {
+      let next = prev
+      switch (commentEvent.type) {
+        case 'comment_added': {
+          if (!commentEvent.comment?.id) break
+          if (prev.some((c) => c.id === commentEvent.comment?.id)) break
+          next = [
+            {
+              id: commentEvent.comment.id,
+              comment_text: commentEvent.comment.comment_text || '',
+              created_by: commentEvent.comment.created_by || 'Пользователь',
+              created_by_id: commentEvent.comment.created_by_id ?? null,
+              created_at: commentEvent.comment.created_at ?? null,
+              is_resolved: Boolean(commentEvent.comment.is_resolved),
+            },
+            ...prev,
+          ]
+          break
+        }
+        case 'comment_updated': {
+          if (!commentEvent.commentId) break
+          next = prev.map((c) =>
+            c.id === commentEvent.commentId
+              ? {
+                  ...c,
+                  comment_text: commentEvent.comment?.comment_text ?? c.comment_text,
+                  updated_at: commentEvent.comment?.updated_at ?? c.updated_at,
+                }
+              : c,
+          )
+          break
+        }
+        case 'comment_deleted': {
+          next = prev.filter((c) => c.id !== commentEvent.commentId)
+          break
+        }
+        case 'comment_resolved': {
+          next = prev.map((c) =>
+            c.id === commentEvent.commentId
+              ? {
+                  ...c,
+                  is_resolved: true,
+                  resolved_by: commentEvent.comment?.resolved_by ?? c.resolved_by,
+                }
+              : c,
+          )
+          break
+        }
+        case 'comment_unresolved': {
+          next = prev.map((c) =>
+            c.id === commentEvent.commentId
+              ? { ...c, is_resolved: false, resolved_at: null, resolved_by: null }
+              : c,
+          )
+          break
+        }
+        default:
+          break
+      }
+      if (next !== prev) {
+        const unresolved = next.filter((c) => !c.is_resolved).length
+        setLocalUnresolvedCount(unresolved)
+        onCommentCountsChange?.(fileId, columnId, {
+          comment_count: next.length,
+          unresolved_comment_count: unresolved,
+        })
+      }
+      return next
+    })
+  }, [commentEvent, columnId, fileId, onCommentCountsChange])
+
+  const handleCommentSubmit = useCallback(
+    async (text: string) => {
+      setCommentSubmitting(true)
+      const tempId = `temp-${Date.now()}`
+      const optimistic: CellComment = {
+        id: tempId,
+        comment_text: text,
+        created_by: user?.full_name || user?.email || 'Вы',
+        created_by_id: user?.id ?? null,
+        created_at: new Date().toISOString(),
+        is_resolved: false,
+      }
+      setComments((prev) => {
+        const next = [optimistic, ...prev]
+        emitCounts(next)
+        return next
+      })
+      try {
+        const created = await tabularReviewApi.createComment(reviewId, fileId, columnId, text)
+        setComments((prev) => {
+          const next = prev.map((c) => (c.id === tempId ? created : c))
+          emitCounts(next)
+          return next
+        })
+      } catch (error: unknown) {
+        setComments((prev) => {
+          const next = prev.filter((c) => c.id !== tempId)
+          emitCounts(next)
+          return next
+        })
+        toast.error(
+          error instanceof Error ? error.message : 'Не удалось отправить комментарий',
+        )
+      } finally {
+        setCommentSubmitting(false)
+      }
+    },
+    [columnId, emitCounts, fileId, reviewId, user],
+  )
+
+  const handleCommentResolve = useCallback(
+    async (commentId: string) => {
+      const snapshot = comments
+      setComments((prev) => {
+        const next = prev.map((c) =>
+          c.id === commentId ? { ...c, is_resolved: true } : c,
+        )
+        emitCounts(next)
+        return next
+      })
+      try {
+        await tabularReviewApi.resolveComment(reviewId, commentId)
+      } catch (error: unknown) {
+        setComments(snapshot)
+        emitCounts(snapshot)
+        toast.error(error instanceof Error ? error.message : 'Не удалось закрыть комментарий')
+      }
+    },
+    [comments, emitCounts, reviewId],
+  )
+
+  const handleCommentUnresolve = useCallback(
+    async (commentId: string) => {
+      const snapshot = comments
+      setComments((prev) => {
+        const next = prev.map((c) =>
+          c.id === commentId ? { ...c, is_resolved: false, resolved_at: null, resolved_by: null } : c,
+        )
+        emitCounts(next)
+        return next
+      })
+      try {
+        await tabularReviewApi.unresolveComment(reviewId, commentId)
+      } catch (error: unknown) {
+        setComments(snapshot)
+        emitCounts(snapshot)
+        toast.error(error instanceof Error ? error.message : 'Не удалось открыть комментарий')
+      }
+    },
+    [comments, emitCounts, reviewId],
+  )
+
+  const handleCommentDelete = useCallback(
+    async (commentId: string) => {
+      const snapshot = comments
+      setComments((prev) => {
+        const next = prev.filter((c) => c.id !== commentId)
+        emitCounts(next)
+        return next
+      })
+      try {
+        await tabularReviewApi.deleteComment(reviewId, commentId)
+      } catch (error: unknown) {
+        setComments(snapshot)
+        emitCounts(snapshot)
+        toast.error(error instanceof Error ? error.message : 'Не удалось удалить комментарий')
+      }
+    },
+    [comments, emitCounts, reviewId],
   )
 
   useEffect(() => {
@@ -364,6 +647,7 @@ export function MikeTabularCell({
 
   const handleDoubleClick = (event: React.MouseEvent) => {
     event.stopPropagation()
+    if (readOnly) return
     clearClickTimer()
     onPopoverClose()
     const currentHeight = cellRef.current?.offsetHeight ?? 40
@@ -405,25 +689,54 @@ export function MikeTabularCell({
   }
 
   const flagKey = cell.flag ?? (cell.status === 'reviewed' ? 'reviewed' : undefined)
-  const flagStyle = flagKey ? FLAG_STYLES[flagKey] : undefined
+  const isUserColorFlag =
+    flagKey === 'red' ||
+    flagKey === 'orange' ||
+    flagKey === 'yellow' ||
+    flagKey === 'green' ||
+    flagKey === 'reviewed'
+  const flagCellBg = isUserColorFlag && flagKey ? FLAG_CELL_BG[flagKey] : undefined
+  const attention = cell.attention ?? 'none'
+  const attentionStyle =
+    !isUserColorFlag && attention === 'conflict'
+      ? { className: 'ws-mike-cell-flag ws-mike-cell-flag--red', title: 'Конфликт / требует проверки' }
+      : !isUserColorFlag && attention === 'low_confidence'
+        ? {
+            className: 'ws-mike-cell-flag ws-mike-cell-flag--yellow',
+            title: 'Низкая уверенность',
+          }
+        : null
+  const currentUserFlag: UserFlagColor | null =
+    cell.flag === 'red' ||
+    cell.flag === 'orange' ||
+    cell.flag === 'yellow' ||
+    cell.flag === 'green'
+      ? cell.flag
+      : null
+
+  const cellTitle = flagKey && isUserColorFlag ? FLAG_TITLES[flagKey] : attentionStyle?.title
 
   return (
     <>
       <div
         ref={cellRef}
+        title={cellTitle}
         className={`relative flex h-full min-h-10 w-full flex-1 px-2 py-2 text-xs text-gray-800 leading-relaxed ${
           isEditing ? 'ws-mike-cell--editing' : 'cursor-pointer'
+        } ${!isEditing && flagCellBg ? flagCellBg : ''} ${
+          !isEditing && attentionStyle ? attentionStyle.className : ''
         }`}
         onClick={handleClick}
         onDoubleClick={handleDoubleClick}
       >
-        {flagStyle && !isEditing && (
+        {!isEditing && unresolvedCommentCount > 0 && (
           <span
-            className={`absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full ${flagStyle}`}
-            title="Проверено"
-          />
+            className="ws-mike-cell-comment-badge-dot"
+            title={`Открытых комментариев: ${unresolvedCommentCount}`}
+          >
+            {unresolvedCommentCount > 9 ? '9+' : unresolvedCommentCount}
+          </span>
         )}
-
         {isEditing ? (
           <MikeInlineCellEditor
             columnMeta={columnMeta}
@@ -434,10 +747,24 @@ export function MikeTabularCell({
             inputRef={inputRef}
             minHeight={editMinHeight}
           />
+        ) : isSkipped ? (
+          <span className="ws-mike-cell-skipped" title="Пропущено: условие колонки не выполнено">
+            Пропущено
+          </span>
+        ) : isExplicitNa ? (
+          <span className="ws-mike-cell-na" title="В документе не найдено">
+            {TABULAR_NA_DISPLAY}
+          </span>
         ) : isEmpty ? null : (
           <div className="w-full min-w-0 break-words pr-3">
             <CellMarkdown
-              text={markdownSource === '-' || markdownSource === '—' ? displayValue : markdownSource}
+              text={
+                markdownSource === '-' ||
+                markdownSource === '—' ||
+                markdownSource === TABULAR_EMPTY_DISPLAY
+                  ? displayValue
+                  : markdownSource
+              }
               columnMeta={columnMeta}
               onCitationBadgeClick={(index) => {
                 clearClickTimer()
@@ -464,6 +791,22 @@ export function MikeTabularCell({
         onSelectCitation={setSelectedCitationIndex}
         onViewInDocument={() => onViewInDocument(selectedCitationIndex)}
         columnLabel={columnLabel}
+        fallbackAnswer={cell.displayValue}
+        isExplicitNa={isExplicitNa}
+        attention={attention}
+        userFlag={details?.user_flag ?? currentUserFlag}
+        flagSaving={flagSaving}
+        onUserFlagChange={!readOnly && onUserFlagChange ? handleFlagChange : undefined}
+        isSkipped={isSkipped}
+        comments={comments}
+        commentsLoading={commentsLoading}
+        commentSubmitting={commentSubmitting}
+        currentUserId={user?.id}
+        onCommentSubmit={readOnly ? undefined : handleCommentSubmit}
+        onCommentResolve={readOnly ? undefined : handleCommentResolve}
+        onCommentUnresolve={readOnly ? undefined : handleCommentUnresolve}
+        onCommentDelete={readOnly ? undefined : handleCommentDelete}
+        commentsReadOnly={readOnly}
       />
     </>
   )

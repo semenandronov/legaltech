@@ -6,6 +6,7 @@ import {
   Edit2,
   HelpCircle,
   MessageSquare,
+  Users,
   X,
 } from 'lucide-react'
 import { MikeBreadcrumbRename } from './MikeBreadcrumbRename'
@@ -30,6 +31,7 @@ export interface TabularHeaderControllerInput {
   onToggleChat: () => void
   onExport: () => void
   onOpenHelp: () => void
+  onOpenParticipants?: () => void
   /** Visible Filters control (separate pill), built by TabularReviewHeader. */
   filterAction?: ReactNode
 }
@@ -56,6 +58,7 @@ export function buildMikeTabularHeaderProps(
     onToggleChat,
     onExport,
     onOpenHelp,
+    onOpenParticipants,
     filterAction,
   } = input
 
@@ -88,6 +91,15 @@ export function buildMikeTabularHeaderProps(
   ]
 
   const overflowItems = [
+    ...(onOpenParticipants
+      ? [
+          {
+            label: 'Участники',
+            icon: Users,
+            onSelect: onOpenParticipants,
+          },
+        ]
+      : []),
     {
       label: 'Переименовать',
       icon: Edit2,

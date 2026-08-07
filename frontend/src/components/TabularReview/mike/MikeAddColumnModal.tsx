@@ -1,9 +1,10 @@
 "use client"
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Calendar,
   ChevronDown,
+  FileUp,
   Hash,
   Loader2,
   Plus,
@@ -14,7 +15,14 @@ import {
   Wallet,
   X,
 } from 'lucide-react'
-import type { TabularColumn } from '@/services/tabularReviewApi'
+import { toast } from 'sonner'
+import type {
+  ColumnFlagRule,
+  ColumnRunCondition,
+  TabularColumn,
+  TabularColumnConfig,
+  UserFlagColor,
+} from '@/services/tabularReviewApi'
 import { tabularReviewApi } from '@/services/tabularReviewApi'
 import { TAG_PILL_CLASSES } from '@/utils/tabularPillUtils'
 import { MikeModalShell } from './MikeModalShell'
@@ -28,6 +36,23 @@ const TAG_COLORS = [
   '#EC4899',
   '#06B6D4',
   '#84CC16',
+]
+
+const FLAG_COLORS: Array<{ value: UserFlagColor; label: string; className: string }> = [
+  { value: 'red', label: 'Красный', className: 'bg-red-500' },
+  { value: 'orange', label: 'Оранжевый', className: 'bg-orange-500' },
+  { value: 'yellow', label: 'Жёлтый', className: 'bg-amber-400' },
+  { value: 'green', label: 'Зелёный', className: 'bg-green-500' },
+]
+
+const CONDITION_OPERATORS: Array<{ value: ColumnRunCondition['operator']; label: string }> = [
+  { value: 'is_yes', label: 'равно «Да»' },
+  { value: 'is_no', label: 'равно «Нет»' },
+  { value: 'equals', label: 'равно' },
+  { value: 'not_equals', label: 'не равно' },
+  { value: 'contains', label: 'содержит' },
+  { value: 'is_empty', label: 'пусто / прочерк' },
+  { value: 'is_not_empty', label: 'заполнено' },
 ]
 
 const FORMAT_OPTIONS: Array<{
@@ -45,12 +70,22 @@ const FORMAT_OPTIONS: Array<{
   { value: 'manual_input', label: 'Ручной ввод', icon: Type },
 ]
 
+function operatorNeedsValue(operator: ColumnRunCondition['operator']): boolean {
+  return operator === 'equals' || operator === 'not_equals' || operator === 'contains'
+}
+
 interface ColumnDraft {
   name: string
   prompt: string
   format: TabularColumn['column_type']
   tags: string[]
   tagInput: string
+  conditionEnabled: boolean
+  conditionSourceId: string
+  conditionOperator: ColumnRunCondition['operator']
+  conditionValue: string
+  autoFlagsEnabled: boolean
+  flagRules: ColumnFlagRule[]
 }
 
 const EMPTY_DRAFT: ColumnDraft = {
@@ -59,32 +94,78 @@ const EMPTY_DRAFT: ColumnDraft = {
   format: 'text',
   tags: [],
   tagInput: '',
+  conditionEnabled: false,
+  conditionSourceId: '',
+  conditionOperator: 'is_yes',
+  conditionValue: '',
+  autoFlagsEnabled: false,
+  flagRules: [],
 }
 
 export interface MikeColumnSavePayload {
   column_label: string
   column_type: TabularColumn['column_type']
   prompt: string
-  column_config?: TabularColumn['column_config']
+  column_config?: TabularColumnConfig
 }
 
 interface MikeAddColumnModalProps {
   open: boolean
   onClose: () => void
   editingColumn?: TabularColumn | null
+  /** Existing review columns (for run_condition source picker). */
+  existingColumns?: TabularColumn[]
   onAdd: (columns: MikeColumnSavePayload[]) => Promise<void>
   onSave?: (columnId: string, payload: MikeColumnSavePayload) => Promise<void>
   onDelete?: (columnId: string) => Promise<boolean | void>
+  /** Open checklist import / bulk column builder instead. */
+  onImportChecklist?: () => void
 }
 
 function draftFromColumn(column: TabularColumn): ColumnDraft {
+  const condition = column.column_config?.run_condition
+  const flagRules = column.column_config?.flag_rules ?? []
   return {
     name: column.column_label,
     prompt: column.prompt || '',
     format: column.column_type,
     tags: column.column_config?.options?.map((opt) => opt.label) ?? [],
     tagInput: '',
+    conditionEnabled: Boolean(condition?.source_column_id),
+    conditionSourceId: condition?.source_column_id ?? '',
+    conditionOperator: condition?.operator ?? 'is_yes',
+    conditionValue: condition?.value ?? '',
+    autoFlagsEnabled: flagRules.length > 0,
+    flagRules,
   }
+}
+
+function buildColumnConfig(draft: ColumnDraft): TabularColumnConfig {
+  const config: TabularColumnConfig = {}
+
+  if (draft.format === 'tag') {
+    config.options = draft.tags.map((label, index) => ({
+      label,
+      color: TAG_COLORS[index % TAG_COLORS.length],
+    }))
+  }
+
+  if (draft.conditionEnabled && draft.conditionSourceId) {
+    const runCondition: ColumnRunCondition = {
+      source_column_id: draft.conditionSourceId,
+      operator: draft.conditionOperator,
+    }
+    if (operatorNeedsValue(draft.conditionOperator)) {
+      runCondition.value = draft.conditionValue.trim()
+    }
+    config.run_condition = runCondition
+  }
+
+  if (draft.autoFlagsEnabled && draft.flagRules.length > 0) {
+    config.flag_rules = draft.flagRules
+  }
+
+  return config
 }
 
 function payloadFromDraft(draft: ColumnDraft): MikeColumnSavePayload {
@@ -92,31 +173,36 @@ function payloadFromDraft(draft: ColumnDraft): MikeColumnSavePayload {
     column_label: draft.name.trim(),
     column_type: draft.format,
     prompt: draft.format === 'manual_input' ? '' : draft.prompt.trim(),
-    column_config:
-      draft.format === 'tag'
-        ? {
-            options: draft.tags.map((label, index) => ({
-              label,
-              color: TAG_COLORS[index % TAG_COLORS.length],
-            })),
-          }
-        : undefined,
+    column_config: buildColumnConfig(draft),
   }
+}
+
+function defaultYesNoFlagRules(): ColumnFlagRule[] {
+  return [
+    { flag: 'red', match: { operator: 'is_yes' } },
+    { flag: 'green', match: { operator: 'is_no' } },
+  ]
 }
 
 export function MikeAddColumnModal({
   open,
   onClose,
   editingColumn,
+  existingColumns = [],
   onAdd,
   onSave,
   onDelete,
+  onImportChecklist,
 }: MikeAddColumnModalProps) {
   const isEditing = Boolean(editingColumn)
   const [columns, setColumns] = useState<ColumnDraft[]>([{ ...EMPTY_DRAFT }])
   const [generatingIndices, setGeneratingIndices] = useState<number[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [formatMenuIndex, setFormatMenuIndex] = useState<number | null>(null)
+
+  const sourceColumns = useMemo(() => {
+    return existingColumns.filter((col) => col.id !== editingColumn?.id)
+  }, [existingColumns, editingColumn?.id])
 
   useEffect(() => {
     if (!open) return
@@ -182,14 +268,33 @@ export function MikeAddColumnModal({
     }
   }
 
+  function validateDraft(draft: ColumnDraft): string | null {
+    if (!draft.name.trim()) return 'Укажите название колонки'
+    if (draft.format !== 'manual_input' && !draft.prompt.trim()) return 'Укажите промпт'
+    if (draft.conditionEnabled) {
+      if (!draft.conditionSourceId) return 'Выберите колонку-условие'
+      if (operatorNeedsValue(draft.conditionOperator) && !draft.conditionValue.trim()) {
+        return 'Укажите значение условия'
+      }
+    }
+    if (draft.autoFlagsEnabled) {
+      if (draft.flagRules.length === 0) return 'Добавьте хотя бы одно правило автофлага'
+      for (const rule of draft.flagRules) {
+        if (operatorNeedsValue(rule.match.operator) && !String(rule.match.value || '').trim()) {
+          return 'У автофлага не хватает значения для сравнения'
+        }
+      }
+    }
+    return null
+  }
+
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
-    const invalid = columns.some(
-      (col) =>
-        !col.name.trim() ||
-        (col.format !== 'manual_input' && !col.prompt.trim()),
-    )
-    if (invalid || submitting) return
+    const firstError = columns.map(validateDraft).find(Boolean)
+    if (firstError || submitting) {
+      if (firstError) toast.error(firstError)
+      return
+    }
 
     setSubmitting(true)
     try {
@@ -217,7 +322,13 @@ export function MikeAddColumnModal({
     }
   }
 
-  const breadcrumbs = isEditing ? ['Табличный обзор', 'Редактировать колонку'] : ['Табличный обзор', 'Новая колонка']
+  const breadcrumbs = isEditing
+    ? ['Табличный обзор', 'Редактировать колонку']
+    : ['Табличный обзор', 'Новая колонка']
+
+  const canSubmit =
+    !submitting &&
+    columns.every((col) => !validateDraft(col))
 
   return (
     <MikeModalShell
@@ -244,18 +355,7 @@ export function MikeAddColumnModal({
             <button type="button" onClick={onClose} className="ws-mike-add-column-cancel">
               Отмена
             </button>
-            <button
-              type="submit"
-              disabled={
-                submitting ||
-                columns.some(
-                  (col) =>
-                    !col.name.trim() ||
-                    (col.format !== 'manual_input' && !col.prompt.trim()),
-                )
-              }
-              className="ws-mike-add-column-submit"
-            >
+            <button type="submit" disabled={!canSubmit} className="ws-mike-add-column-submit">
               {submitting
                 ? 'Сохранение…'
                 : isEditing
@@ -321,6 +421,12 @@ export function MikeAddColumnModal({
                             format: option.value,
                             tags: [],
                             tagInput: '',
+                            autoFlagsEnabled:
+                              option.value === 'yes_no' ? column.autoFlagsEnabled : column.autoFlagsEnabled,
+                            flagRules:
+                              option.value === 'yes_no' && column.flagRules.length === 0
+                                ? defaultYesNoFlagRules()
+                                : column.flagRules,
                           })
                           setFormatMenuIndex(null)
                         }}
@@ -403,6 +509,192 @@ export function MikeAddColumnModal({
                 />
               </div>
             )}
+
+            {sourceColumns.length > 0 && (
+              <div className="ws-mike-add-column-advanced mt-4">
+                <label className="ws-mike-add-column-check">
+                  <input
+                    type="checkbox"
+                    checked={column.conditionEnabled}
+                    onChange={(event) =>
+                      updateColumn(index, {
+                        conditionEnabled: event.target.checked,
+                        conditionSourceId:
+                          column.conditionSourceId || sourceColumns[0]?.id || '',
+                      })
+                    }
+                  />
+                  <span>Запускать только при условии</span>
+                </label>
+                {column.conditionEnabled && (
+                  <div className="ws-mike-add-column-condition-grid">
+                    <select
+                      value={column.conditionSourceId}
+                      onChange={(event) =>
+                        updateColumn(index, { conditionSourceId: event.target.value })
+                      }
+                      className="ws-mike-add-column-select"
+                      aria-label="Колонка-условие"
+                    >
+                      <option value="">Колонка…</option>
+                      {sourceColumns.map((col) => (
+                        <option key={col.id} value={col.id}>
+                          {col.column_label}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={column.conditionOperator}
+                      onChange={(event) =>
+                        updateColumn(index, {
+                          conditionOperator: event.target.value as ColumnRunCondition['operator'],
+                        })
+                      }
+                      className="ws-mike-add-column-select"
+                      aria-label="Оператор условия"
+                    >
+                      {CONDITION_OPERATORS.map((op) => (
+                        <option key={op.value} value={op.value}>
+                          {op.label}
+                        </option>
+                      ))}
+                    </select>
+                    {operatorNeedsValue(column.conditionOperator) && (
+                      <input
+                        type="text"
+                        value={column.conditionValue}
+                        onChange={(event) =>
+                          updateColumn(index, { conditionValue: event.target.value })
+                        }
+                        className="ws-mike-add-column-input"
+                        placeholder="Значение"
+                      />
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="ws-mike-add-column-advanced mt-3">
+              <label className="ws-mike-add-column-check">
+                <input
+                  type="checkbox"
+                  checked={column.autoFlagsEnabled}
+                  onChange={(event) => {
+                    const enabled = event.target.checked
+                    updateColumn(index, {
+                      autoFlagsEnabled: enabled,
+                      flagRules:
+                        enabled && column.flagRules.length === 0
+                          ? column.format === 'yes_no'
+                            ? defaultYesNoFlagRules()
+                            : [
+                                {
+                                  flag: 'orange',
+                                  match: { operator: 'contains', value: '' },
+                                },
+                              ]
+                          : column.flagRules,
+                    })
+                  }}
+                />
+                <span>Автофлаги по значению ячейки</span>
+              </label>
+              {column.autoFlagsEnabled && (
+                <div className="space-y-2 mt-2">
+                  {column.flagRules.map((rule, ruleIdx) => (
+                    <div key={ruleIdx} className="ws-mike-add-column-flag-row">
+                      <select
+                        value={rule.match.operator}
+                        onChange={(event) => {
+                          const operator = event.target.value as ColumnRunCondition['operator']
+                          const next = [...column.flagRules]
+                          next[ruleIdx] = {
+                            ...rule,
+                            match: {
+                              operator,
+                              value: operatorNeedsValue(operator) ? rule.match.value ?? '' : null,
+                            },
+                          }
+                          updateColumn(index, { flagRules: next })
+                        }}
+                        className="ws-mike-add-column-select"
+                        aria-label="Оператор автофлага"
+                      >
+                        {CONDITION_OPERATORS.map((op) => (
+                          <option key={op.value} value={op.value}>
+                            {op.label}
+                          </option>
+                        ))}
+                      </select>
+                      {operatorNeedsValue(rule.match.operator) && (
+                        <input
+                          type="text"
+                          value={rule.match.value ?? ''}
+                          onChange={(event) => {
+                            const next = [...column.flagRules]
+                            next[ruleIdx] = {
+                              ...rule,
+                              match: { ...rule.match, value: event.target.value },
+                            }
+                            updateColumn(index, { flagRules: next })
+                          }}
+                          className="ws-mike-add-column-input"
+                          placeholder="Значение"
+                        />
+                      )}
+                      <div className="ws-mike-add-column-flag-swatches">
+                        {FLAG_COLORS.map((color) => (
+                          <button
+                            key={color.value}
+                            type="button"
+                            title={color.label}
+                            aria-label={color.label}
+                            onClick={() => {
+                              const next = [...column.flagRules]
+                              next[ruleIdx] = { ...rule, flag: color.value }
+                              updateColumn(index, { flagRules: next })
+                            }}
+                            className={`ws-mike-flag-swatch ${color.className} ${
+                              rule.flag === color.value ? 'ws-mike-flag-swatch--active' : ''
+                            }`}
+                          />
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        className="text-xs text-gray-400 hover:text-gray-600"
+                        onClick={() =>
+                          updateColumn(index, {
+                            flagRules: column.flagRules.filter((_, i) => i !== ruleIdx),
+                          })
+                        }
+                      >
+                        Убрать
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    className="ws-mike-add-column-autogen"
+                    onClick={() =>
+                      updateColumn(index, {
+                        flagRules: [
+                          ...column.flagRules,
+                          {
+                            flag: 'yellow',
+                            match: { operator: 'contains', value: '' },
+                          },
+                        ],
+                      })
+                    }
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Правило
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         )
       })}
@@ -411,6 +703,20 @@ export function MikeAddColumnModal({
         <button type="button" onClick={addAnotherColumn} className="ws-mike-add-column-another">
           <Plus className="h-4 w-4" />
           Добавить ещё колонку
+        </button>
+      )}
+
+      {!isEditing && onImportChecklist && (
+        <button
+          type="button"
+          className="ws-mike-add-column-another mt-2"
+          onClick={() => {
+            onClose()
+            onImportChecklist()
+          }}
+        >
+          <FileUp className="h-4 w-4" />
+          Импорт чек-листа из файла
         </button>
       )}
     </MikeModalShell>

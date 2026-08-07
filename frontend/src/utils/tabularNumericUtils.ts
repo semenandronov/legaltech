@@ -1,4 +1,5 @@
 import type { TabularColumn } from '@/services/tabularReviewApi'
+import { isExplicitTabularNaValue } from './tabularCellDisplay'
 
 const MONEY_HEADER_RE = /(сумм|amount|дебет|кредит|баланс)/i
 const NUMBER_HEADER_RE = /(колич|count|qty|числ)/i
@@ -17,7 +18,7 @@ export function isNumericColumn(
 /** Parses RU-formatted amounts like «1 234 567,89» into a number. */
 export function parseNumericCellValue(value: string | null | undefined): number | null {
   const raw = (value ?? '').trim()
-  if (!raw || raw === '—' || raw === '-' || raw.toUpperCase() === 'N/A') {
+  if (!raw || raw === '—' || raw === '-' || isExplicitTabularNaValue(raw)) {
     return null
   }
   const match = raw.replace(/\u2212/g, '-').match(/[-+]?\s*[\d\s]+(?:[.,]\d+)?/)

@@ -8,10 +8,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.utils.database import get_db
 from app.models.tabular_review import TabularColumnTemplate
+from app.services.contract_field_catalog import RU_DD_SCHEMA_TEMPLATES
 from datetime import datetime
 
-# Default templates for Russian legal practice
+# Default templates for Russian legal practice (schema-first DD first)
 DEFAULT_TEMPLATES = [
+    *RU_DD_SCHEMA_TEMPLATES,
     {
         "name": "NDA Review (template)",
         "description": "A boilerplate review for NDAs (covering the most common review areas of non-disclosure agreements).",

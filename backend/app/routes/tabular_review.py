@@ -1,15 +1,21 @@
 """Tabular Review routes for Legal AI Vault"""
-from fastapi import APIRouter, HTTPException, Depends, Query, Response
+from fastapi import APIRouter, HTTPException, Depends, Query, Response, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_
 from typing import Optional, List, Any, Tuple
 from pydantic import BaseModel
 from app.utils.database import get_db
 from app.utils.auth import get_current_user
-from app.utils.authorization import require_owned_review
+from app.utils.authorization import (
+    get_case_role,
+    require_owned_review,
+    require_review_access,
+    require_review_write,
+)
 from app.utils.content_disposition import content_disposition_attachment
 from app.models.user import User
 from app.services.tabular_review_service import TabularReviewService
+from app.services.tabular_extraction_policy import TABULAR_NA_VALUE, DEFAULT_NA_REASONING
 import logging
 
 logger = logging.getLogger(__name__)
@@ -40,6 +46,11 @@ class DocumentStatusUpdateRequest(BaseModel):
 class CellUpdateRequest(BaseModel):
     cell_value: str
     is_manual_override: bool = True
+
+
+class CellFlagUpdateRequest(BaseModel):
+    """Lawyer triage flag: red|orange|yellow|green, or null to clear."""
+    user_flag: Optional[str] = None
 
 
 class ColumnUpdateRequest(BaseModel):
@@ -142,6 +153,8 @@ async def create_review(
     current_user: User = Depends(get_current_user)
 ):
     """Create a new tabular review"""
+    from app.utils.authorization import require_case_write
+    require_case_write(db, request.case_id, current_user.id)
     try:
         # #region agent log
         logger.debug(f"[DEBUG HYPOTHESIS U] [API create_review] Called: case_id={request.case_id}, user_id={current_user.id}, name={request.name}, selected_file_ids={request.selected_file_ids}")
@@ -187,7 +200,7 @@ async def delete_review(
     current_user: User = Depends(get_current_user)
 ):
     """Delete a tabular review"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         service.delete_review(
@@ -215,7 +228,7 @@ async def update_review(
     current_user: User = Depends(get_current_user)
 ):
     """Update tabular review name or description"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         review = service.update_review(
@@ -319,10 +332,14 @@ async def get_review(
     current_user: User = Depends(get_current_user)
 ):
     """Get tabular review details"""
-    require_owned_review(db, review_id, current_user.id)
+    review = require_review_access(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         data = service.get_table_data(review_id, current_user.id)
+        if isinstance(data, dict):
+            role = get_case_role(db, review.case_id, current_user.id) if review.case_id else "owner"
+            data["my_role"] = role or "viewer"
+            data["can_write"] = role in ("owner", "editor") if role else False
         return data
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -339,7 +356,7 @@ async def add_column(
     current_user: User = Depends(get_current_user)
 ):
     """Add a column to tabular review"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         # Check columns count before adding
         from app.models.tabular_review import TabularColumn
@@ -403,7 +420,7 @@ async def add_columns_bulk(
     current_user: User = Depends(get_current_user)
 ):
     """Add multiple columns in one request."""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         added = []
@@ -441,7 +458,7 @@ async def update_column(
     current_user: User = Depends(get_current_user)
 ):
     """Update a column (rename, update prompt, config)"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         column = service.update_column(
@@ -479,7 +496,7 @@ async def delete_column(
     current_user: User = Depends(get_current_user)
 ):
     """Delete a column (cascade deletes all cells)"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         result = await service.delete_column_and_notify(
@@ -503,7 +520,7 @@ async def reorder_columns(
     current_user: User = Depends(get_current_user)
 ):
     """Reorder columns by providing ordered list of column IDs"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         columns = service.reorder_columns(
@@ -536,7 +553,7 @@ async def run_extraction(
     current_user: User = Depends(get_current_user)
 ):
     """Run extraction for all documents and columns"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         result = await service.run_extraction(review_id, current_user.id)
@@ -556,7 +573,7 @@ async def run_column_extraction(
     current_user: User = Depends(get_current_user)
 ):
     """Start background extraction for a column across all documents."""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     import asyncio
 
     from app.services.tabular_extraction_runtime import (
@@ -585,6 +602,9 @@ async def run_column_extraction(
                 "error_count": 0,
                 "cells": [],
             }
+
+        # Clear stale completed answers before 202 so poll/WS clients see processing.
+        service.mark_column_cells_processing(review_id, column_id)
 
         asyncio.create_task(
             run_column_extraction_background(review_id, column_id, current_user.id)
@@ -615,7 +635,7 @@ async def get_table_data(
     current_user: User = Depends(get_current_user)
 ):
     """Get table data for tabular review"""
-    require_owned_review(db, review_id, current_user.id)
+    review = require_review_access(db, review_id, current_user.id)
     try:
         # #region agent log
         logger.debug(f"[DEBUG HYPOTHESIS N] [API get_table_data] Called: review_id={review_id}, user_id={current_user.id}")
@@ -640,7 +660,12 @@ async def get_table_data(
         
         # Log columns after getting data
         logger.info(f"[get_table_data] Returned {len(data['columns'])} columns: {[c['column_label'] for c in data['columns']]}")
-        
+
+        if isinstance(data, dict):
+            role = get_case_role(db, review.case_id, current_user.id) if review.case_id else "owner"
+            data["my_role"] = role or "viewer"
+            data["can_write"] = role in ("owner", "editor") if role else False
+
         return data
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -657,7 +682,7 @@ async def update_table_mode(
     current_user: User = Depends(get_current_user)
 ):
     """Update table mode and entity configuration for a review"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     from app.models.tabular_review import TabularReview
     try:
         # Verify review belongs to user
@@ -697,7 +722,7 @@ async def get_cell_details(
     current_user: User = Depends(get_current_user)
 ):
     """Get cell details with verbatim extract and reasoning"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_access(db, review_id, current_user.id)
     try:
         from app.models.tabular_review import TabularCell, TabularColumn
         
@@ -801,12 +826,46 @@ async def get_cell_details(
             "primary_source_char_start": getattr(cell, "primary_source_char_start", None),
             "primary_source_char_end": getattr(cell, "primary_source_char_end", None),
             "verified_flag": getattr(cell, "verified_flag", None),
+            "user_flag": getattr(cell, "user_flag", None),
         }
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error getting cell details: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to get cell details")
+
+
+@router.patch("/{review_id}/cells/{file_id}/{column_id}/flag")
+async def update_cell_flag(
+    review_id: str,
+    file_id: str,
+    column_id: str,
+    request: CellFlagUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Set or clear multi-color triage flag on a cell."""
+    require_review_write(db, review_id, current_user.id)
+    try:
+        service = TabularReviewService(db)
+        cell = service.update_cell_user_flag(
+            review_id=review_id,
+            file_id=file_id,
+            column_id=column_id,
+            user_id=current_user.id,
+            user_flag=request.user_flag,
+        )
+        return {
+            "id": cell.id,
+            "user_flag": cell.user_flag,
+            "status": cell.status,
+            "updated_at": cell.updated_at.isoformat() if cell.updated_at else None,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error updating cell flag: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to update cell flag")
 
 
 @router.patch("/{review_id}/cells/{file_id}/{column_id}")
@@ -819,7 +878,7 @@ async def update_cell(
     current_user: User = Depends(get_current_user)
 ):
     """Update a cell value (manual edit) by file_id and column_id"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         cell = service.update_cell(
@@ -851,7 +910,7 @@ async def update_document_status(
     current_user: User = Depends(get_current_user)
 ):
     """Update document review status"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         status = service.mark_as_reviewed(
@@ -881,7 +940,7 @@ async def bulk_update_status(
     current_user: User = Depends(get_current_user)
 ):
     """Bulk update document status for multiple files"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         updated_count = service.bulk_update_status(
@@ -909,7 +968,7 @@ async def bulk_run_extraction(
     current_user: User = Depends(get_current_user)
 ):
     """Bulk run extraction for specific files and columns"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         result = await service.bulk_run_extraction(
@@ -934,7 +993,7 @@ async def bulk_delete_rows(
     current_user: User = Depends(get_current_user)
 ):
     """Bulk delete rows (remove files from review)"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         deleted_count = service.bulk_delete_rows(
@@ -963,7 +1022,7 @@ async def get_cell_history(
     current_user: User = Depends(get_current_user)
 ):
     """Get history for a specific cell"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_access(db, review_id, current_user.id)
     try:
         from app.services.cell_history_service import CellHistoryService
         history_service = CellHistoryService(db)
@@ -1009,7 +1068,7 @@ async def revert_cell(
     current_user: User = Depends(get_current_user)
 ):
     """Revert a cell to a previous version"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         from app.services.cell_history_service import CellHistoryService
         from app.services.tabular_review_service import TabularReviewService
@@ -1067,7 +1126,7 @@ async def get_cell_diff(
     current_user: User = Depends(get_current_user)
 ):
     """Get diff between two cell history versions"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_access(db, review_id, current_user.id)
     try:
         from app.services.cell_history_service import CellHistoryService
         history_service = CellHistoryService(db)
@@ -1096,7 +1155,7 @@ async def lock_cell(
     current_user: User = Depends(get_current_user)
 ):
     """Lock a cell for editing"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         lock_duration = request.get("lock_duration_seconds", 300) if request else 300
@@ -1129,7 +1188,7 @@ async def unlock_cell(
     current_user: User = Depends(get_current_user)
 ):
     """Unlock a cell"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         cell = service.unlock_cell(
@@ -1161,7 +1220,7 @@ async def create_comment(
     current_user: User = Depends(get_current_user)
 ):
     """Create a comment on a cell"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         from app.services.cell_comment_service import CellCommentService
         comment_service = CellCommentService(db)
@@ -1186,6 +1245,7 @@ async def create_comment(
                     "created_by": current_user.full_name,
                     "created_by_id": current_user.id,
                     "created_at": comment.created_at.isoformat() if comment.created_at else None,
+                    "is_resolved": comment.is_resolved,
                 }
             }
         )
@@ -1214,7 +1274,7 @@ async def get_comments(
     current_user: User = Depends(get_current_user)
 ):
     """Get all comments for a cell"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_access(db, review_id, current_user.id)
     try:
         from app.services.cell_comment_service import CellCommentService
         comment_service = CellCommentService(db)
@@ -1242,7 +1302,7 @@ async def update_comment(
     current_user: User = Depends(get_current_user)
 ):
     """Update a comment"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         from app.services.cell_comment_service import CellCommentService
         comment_service = CellCommentService(db)
@@ -1258,11 +1318,15 @@ async def update_comment(
             review_id,
             {
                 "type": "comment_updated",
+                "file_id": comment.file_id,
+                "column_id": comment.column_id,
                 "comment_id": comment_id,
                 "comment": {
                     "id": comment.id,
                     "comment_text": comment.comment_text,
                     "updated_at": comment.updated_at.isoformat() if comment.updated_at else None,
+                    "is_resolved": comment.is_resolved,
+                    "created_by_id": comment.created_by,
                 }
             }
         )
@@ -1286,11 +1350,11 @@ async def delete_comment(
     current_user: User = Depends(get_current_user)
 ):
     """Delete a comment"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         from app.services.cell_comment_service import CellCommentService
         comment_service = CellCommentService(db)
-        comment_service.delete_comment(
+        deleted = comment_service.delete_comment(
             comment_id=comment_id,
             user_id=current_user.id,
             review_id=review_id,
@@ -1302,6 +1366,9 @@ async def delete_comment(
             {
                 "type": "comment_deleted",
                 "comment_id": comment_id,
+                "file_id": deleted["file_id"],
+                "column_id": deleted["column_id"],
+                "was_resolved": deleted["was_resolved"],
             }
         )
         return {"success": True}
@@ -1320,7 +1387,7 @@ async def resolve_comment(
     current_user: User = Depends(get_current_user)
 ):
     """Mark a comment as resolved"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         from app.services.cell_comment_service import CellCommentService
         comment_service = CellCommentService(db)
@@ -1336,7 +1403,10 @@ async def resolve_comment(
             {
                 "type": "comment_resolved",
                 "comment_id": comment_id,
+                "file_id": comment.file_id,
+                "column_id": comment.column_id,
                 "resolved_by": current_user.full_name,
+                "resolved_by_id": current_user.id,
             }
         )
         return {
@@ -1360,7 +1430,7 @@ async def unresolve_comment(
     current_user: User = Depends(get_current_user)
 ):
     """Mark a comment as unresolved"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         from app.services.cell_comment_service import CellCommentService
         comment_service = CellCommentService(db)
@@ -1376,6 +1446,8 @@ async def unresolve_comment(
             {
                 "type": "comment_unresolved",
                 "comment_id": comment_id,
+                "file_id": comment.file_id,
+                "column_id": comment.column_id,
             }
         )
         return {
@@ -1398,7 +1470,7 @@ async def get_review_queue(
     current_user: User = Depends(get_current_user)
 ):
     """Get review queue items for a tabular review"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_access(db, review_id, current_user.id)
     try:
         from app.services.review_queue_service import ReviewQueueService
         from app.models.tabular_review import ReviewQueueItem, TabularReview
@@ -1460,7 +1532,7 @@ async def rebuild_review_queue(
     current_user: User = Depends(get_current_user)
 ):
     """Rebuild review queue for a tabular review"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         from app.services.review_queue_service import ReviewQueueService
         from app.models.tabular_review import ReviewQueueItem, TabularReview
@@ -1520,7 +1592,7 @@ async def mark_queue_item_reviewed(
     current_user: User = Depends(get_current_user)
 ):
     """Mark a review queue item as reviewed"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         from app.models.tabular_review import ReviewQueueItem, TabularReview
         from datetime import datetime
@@ -1590,7 +1662,7 @@ async def resolve_conflict(
     current_user: User = Depends(get_current_user)
 ):
     """Resolve a conflict by selecting a candidate or marking as N/A"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         from app.models.tabular_review import TabularCell
         from datetime import datetime
@@ -1615,9 +1687,10 @@ async def resolve_conflict(
         
         # Handle resolution
         if request.resolution_method == 'n_a':
-            # Mark as N/A
-            cell.cell_value = "N/A"
-            cell.normalized_value = None
+            # Mark as «—» (fragment not found / not applicable)
+            cell.cell_value = TABULAR_NA_VALUE
+            cell.normalized_value = TABULAR_NA_VALUE
+            cell.reasoning = DEFAULT_NA_REASONING
             cell.status = "n_a"
             cell.conflict_resolution = {
                 "resolved_by": current_user.id,
@@ -1699,7 +1772,7 @@ async def export_csv(
     current_user: User = Depends(get_current_user)
 ):
     """Export tabular review to CSV (UTF-8 BOM)."""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_access(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         csv_content = service.export_to_csv(
@@ -1733,7 +1806,7 @@ async def export_excel(
     current_user: User = Depends(get_current_user)
 ):
     """Export tabular review to Excel (.xlsx)."""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_access(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         excel_content = service.export_to_excel(
@@ -1772,7 +1845,7 @@ async def export_word(
     current_user: User = Depends(get_current_user)
 ):
     """Export tabular review to Word (.docx)."""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_access(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         word_content = service.export_to_word(
@@ -1811,31 +1884,24 @@ async def list_reviews(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get list of tabular reviews for current user, optionally filtered by case_id"""
+    """Get list of tabular reviews for accessible cases, optionally filtered by case_id"""
     try:
         from app.models.tabular_review import TabularReview
         from sqlalchemy import desc
-        
-        # Build query
-        query = db.query(TabularReview).filter(
-            TabularReview.user_id == current_user.id
-        )
-        
-        # Filter by case_id if provided
+        from app.services.case_sharing_service import accessible_case_ids_subquery
+        from app.utils.authorization import require_case_access
+
         if case_id:
-            query = query.filter(TabularReview.case_id == case_id)
-        
-        # Get reviews ordered by updated_at desc
+            require_case_access(db, case_id, current_user.id)
+            query = db.query(TabularReview).filter(TabularReview.case_id == case_id)
+        else:
+            query = db.query(TabularReview).filter(
+                TabularReview.case_id.in_(accessible_case_ids_subquery(db, current_user.id))
+            )
+
         reviews = query.order_by(desc(TabularReview.updated_at)).offset(skip).limit(limit).all()
-        
-        # Count total
-        count_query = db.query(TabularReview).filter(
-            TabularReview.user_id == current_user.id
-        )
-        if case_id:
-            count_query = count_query.filter(TabularReview.case_id == case_id)
-        total = count_query.count()
-        
+        total = query.count()
+
         return {
             "reviews": [
                 {
@@ -1853,6 +1919,8 @@ async def list_reviews(
             "skip": skip,
             "limit": limit,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error listing tabular reviews: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to list tabular reviews")
@@ -1866,7 +1934,7 @@ async def apply_template(
     current_user: User = Depends(get_current_user)
 ):
     """Apply a template to a tabular review - adds all columns from template"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         # #region agent log
         logger.debug(f"[DEBUG HYPOTHESIS H] [API apply_template] Template application called: review_id={review_id}, template_id={template_id}, user_id={current_user.id}")
@@ -1946,7 +2014,8 @@ async def apply_template(
                 column_label=col_def.get("column_label", f"Column {idx + 1}"),
                 column_type=col_def.get("column_type", "text"),
                 prompt=col_def.get("prompt", ""),
-                user_id=current_user.id
+                user_id=current_user.id,
+                column_config=col_def.get("column_config"),
             )
             added_columns.append({
                 "id": column.id,
@@ -2022,7 +2091,7 @@ async def update_selected_files(
     current_user: User = Depends(get_current_user)
 ):
     """Update selected files for a tabular review"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         service = TabularReviewService(db)
         review = service.update_selected_files(
@@ -2049,7 +2118,7 @@ async def get_available_files(
     current_user: User = Depends(get_current_user)
 ):
     """Get all available files for a case (for selecting files for tabular review)"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_access(db, review_id, current_user.id)
     try:
         from app.models.case import Case, File as FileModel
         from sqlalchemy import and_
@@ -2099,7 +2168,7 @@ async def get_tabular_chat_history(
     current_user: User = Depends(get_current_user),
 ):
     """Load persisted tabular review chat history for this table."""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_access(db, review_id, current_user.id)
     try:
         from app.services.tabular_chat_service import TabularChatService
 
@@ -2121,7 +2190,7 @@ async def chat_over_table(
     current_user: User = Depends(get_current_user)
 ):
     """Chat over table - ask questions about table data (non-streaming fallback)."""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         from app.services.tabular_chat_service import TabularChatService
         
@@ -2147,7 +2216,7 @@ async def chat_over_table_stream(
     current_user: User = Depends(get_current_user),
 ):
     """SSE stream for tabular review chat — tokens as they arrive."""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     from fastapi.responses import StreamingResponse
 
     from app.services.chat.events import SSESerializer
@@ -2223,15 +2292,8 @@ async def create_from_description(
 
     case_id = request.case_id
 
-    # Проверяем, что дело принадлежит пользователю
-    from app.models.case import Case
-
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id,
-    ).first()
-    if not case:
-        raise HTTPException(status_code=404, detail="Дело не найдено или нет доступа")
+    # Проверяем доступ на запись к делу
+    require_case_write(db, case_id, current_user.id)
 
     try:
         # Импортируем сервисы здесь, чтобы избежать циклических импортов
@@ -2413,7 +2475,7 @@ async def generate_columns_from_questions(
     current_user: User = Depends(get_current_user)
 ):
     """Generate column suggestions from a block of questions text (no DB write)."""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         from app.services.smart_column_service import SmartColumnService
         from app.models.tabular_review import TabularReview
@@ -2444,6 +2506,64 @@ async def generate_columns_from_questions(
         raise HTTPException(status_code=500, detail="Failed to generate columns from questions")
 
 
+@router.post("/{review_id}/columns/import-checklist")
+async def import_checklist_file(
+    review_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Parse a diligence checklist file into proposed columns (no DB write).
+
+    Supports .txt / .md / .csv / .docx. Returns parsed items, numbered questions_text,
+    and AI column suggestions ready for bulk add.
+    """
+    require_review_write(db, review_id, current_user.id)
+    try:
+        from app.services.tabular_checklist_import import (
+            parse_checklist_file,
+            questions_text_from_items,
+            supported_checklist_extensions,
+        )
+        from app.services.smart_column_service import SmartColumnService
+        from app.models.tabular_review import TabularReview
+
+        review = db.query(TabularReview).filter(
+            and_(TabularReview.id == review_id, TabularReview.user_id == current_user.id)
+        ).first()
+        if not review:
+            raise HTTPException(status_code=404, detail="Tabular review not found or access denied")
+
+        filename = file.filename or "checklist.txt"
+        data = await file.read()
+        items = parse_checklist_file(filename=filename, data=data)
+        questions_text = questions_text_from_items(items)
+
+        service = SmartColumnService(db)
+        columns = await service.generate_columns_from_questions(questions_text)
+        return {
+            "filename": filename,
+            "item_count": len(items),
+            "items": items,
+            "questions_text": questions_text,
+            "supported_extensions": list(supported_checklist_extensions()),
+            "columns": [
+                {
+                    "column_label": c.column_label,
+                    "column_type": c.column_type,
+                    "prompt": c.prompt,
+                    "column_config": c.column_config,
+                }
+                for c in columns
+            ],
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error importing checklist: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to import checklist")
+
+
 @router.post("/{review_id}/columns/smart-from-description")
 async def create_column_from_description(
     review_id: str,
@@ -2452,7 +2572,7 @@ async def create_column_from_description(
     current_user: User = Depends(get_current_user)
 ):
     """Create a column from natural language description"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         from app.services.smart_column_service import SmartColumnService
         
@@ -2491,7 +2611,7 @@ async def create_column_from_examples(
     current_user: User = Depends(get_current_user)
 ):
     """Create a column from examples (few-shot learning)"""
-    require_owned_review(db, review_id, current_user.id)
+    require_review_write(db, review_id, current_user.id)
     try:
         from app.services.smart_column_service import SmartColumnService, Example
         

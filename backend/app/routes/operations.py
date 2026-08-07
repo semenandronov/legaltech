@@ -58,6 +58,7 @@ from app.services.operations_session_service import (
 from app.utils.auth import get_current_user
 from app.utils.content_disposition import content_disposition_attachment
 from app.utils.database import SessionLocal, get_db
+from app.utils.authorization import require_case_access, require_case_write
 
 logger = logging.getLogger(__name__)
 
@@ -70,14 +71,11 @@ def _require_feature() -> None:
 
 
 def _get_user_case(db: Session, case_id: str, user_id: str) -> Case:
-    case = (
-        db.query(Case)
-        .filter(Case.id == case_id, Case.user_id == user_id)
-        .first()
-    )
-    if not case:
-        raise HTTPException(status_code=404, detail="Дело не найдено")
-    return case
+    return require_case_access(db, case_id, user_id)
+
+
+def _get_user_case_write(db: Session, case_id: str, user_id: str) -> Case:
+    return require_case_write(db, case_id, user_id)
 
 
 def _parse_decimal(value: Optional[str]) -> Optional[Decimal]:
@@ -351,7 +349,7 @@ async def export_transactions_post(
 ):
     """WYSIWYG export: when transaction_ids is set, export exactly the filtered UI rows."""
     _require_feature()
-    case = _get_user_case(db, case_id, str(current_user.id))
+    case = _get_user_case_write(db, case_id, str(current_user.id))
     resolved_file_id = resolve_statement_file_id(db, case_id=case_id, file_id=body.file_id)
 
     ids = [str(x).strip() for x in (body.transaction_ids or []) if str(x).strip()]
@@ -510,7 +508,7 @@ async def save_operations_session(
     current_user: User = Depends(get_current_user),
 ):
     _require_feature()
-    _get_user_case(db, case_id, str(current_user.id))
+    _get_user_case_write(db, case_id, str(current_user.id))
     resolved_file_id = resolve_statement_file_id(db, case_id=case_id, file_id=body.file_id)
     ui_payload = {
         "value_filters": body.ui_state.value_filters,
@@ -541,7 +539,7 @@ async def touch_operations_session(
     current_user: User = Depends(get_current_user),
 ):
     _require_feature()
-    _get_user_case(db, case_id, str(current_user.id))
+    _get_user_case_write(db, case_id, str(current_user.id))
     resolved_file_id = resolve_statement_file_id(db, case_id=case_id, file_id=file_id)
     row = touch_session(
         db,
@@ -578,7 +576,7 @@ async def operations_chat_stream(
     current_user: User = Depends(get_current_user),
 ):
     _require_feature()
-    _get_user_case(db, case_id, str(current_user.id))
+    _get_user_case_write(db, case_id, str(current_user.id))
     question = (request.question or "").strip()
     if not question:
         raise HTTPException(status_code=400, detail="question is required")

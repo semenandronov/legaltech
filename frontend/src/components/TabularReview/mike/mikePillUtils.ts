@@ -29,10 +29,8 @@ const MIKE_CURRENCY_COLORS: Record<string, string> = {
 
 /** Mike getPillClass — адаптирован под TabularColumn. */
 export function getMikePillClass(content: string, column?: Pick<TabularColumn, 'column_type' | 'column_config'>): string {
+  // yes_no: no semantic colors — user applies cell flags when needed
   if (column?.column_type === 'yes_no') {
-    const lower = content.toLowerCase()
-    if (lower === 'yes' || lower === 'да') return 'bg-green-100 text-green-700'
-    if (lower === 'no' || lower === 'нет') return 'bg-red-100 text-red-700'
     return 'bg-gray-100 text-gray-700'
   }
   if (column?.column_type === 'currency') {

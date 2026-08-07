@@ -2,7 +2,8 @@
 
 import { forwardRef, useCallback, useImperativeHandle, useRef, useState } from 'react'
 import { Loader2, Plus, Table2, Upload, LayoutTemplate } from 'lucide-react'
-import { MikeTabularCell, type MikeCellColumnMeta } from './MikeTabularCell'
+import type { UserFlagColor } from '@/services/tabularReviewApi'
+import { MikeTabularCell, type MikeCellColumnMeta, type MikeCellCommentEvent } from './MikeTabularCell'
 import type { MikeHighlightedCell, MikeTableColumnVM, MikeTableRowVM } from './types'
 import {
   COL_W,
@@ -49,6 +50,18 @@ export interface MikeTRTableProps {
   onDocumentClick?: (fileId: string, firstColumnId: string) => void
   onViewInDocument?: (fileId: string, columnId: string, citationIndex: number) => void
   onCellSave?: (fileId: string, columnId: string, value: string) => Promise<void>
+  onUserFlagChange?: (
+    fileId: string,
+    columnId: string,
+    flag: UserFlagColor | null,
+  ) => Promise<void>
+  onCommentCountsChange?: (
+    fileId: string,
+    columnId: string,
+    counts: { comment_count: number; unresolved_comment_count: number },
+  ) => void
+  commentEvent?: MikeCellCommentEvent | null
+  readOnly?: boolean
   scrollRef?: (node: HTMLDivElement | null) => void
   virtualTopSpacer?: number
   virtualBottomSpacer?: number
@@ -85,6 +98,10 @@ export const MikeTRTable = forwardRef<MikeTRTableHandle, MikeTRTableProps>(funct
     onDocumentClick,
     onViewInDocument,
     onCellSave,
+    onUserFlagChange,
+    onCommentCountsChange,
+    commentEvent = null,
+    readOnly = false,
     scrollRef,
     virtualTopSpacer = 0,
     virtualBottomSpacer = 0,
@@ -431,6 +448,20 @@ export const MikeTRTable = forwardRef<MikeTRTableHandle, MikeTRTableProps>(funct
                           await onCellSave?.(row.fileId, column.id, value)
                           setEditingCellKey(null)
                         }}
+                        onUserFlagChange={
+                          onUserFlagChange
+                            ? (flag) => onUserFlagChange(row.fileId, column.id, flag)
+                            : undefined
+                        }
+                        onCommentCountsChange={onCommentCountsChange}
+                        commentEvent={
+                          commentEvent &&
+                          commentEvent.fileId === row.fileId &&
+                          commentEvent.columnId === column.id
+                            ? commentEvent
+                            : null
+                        }
+                        readOnly={readOnly}
                       />
                     )}
                   </div>

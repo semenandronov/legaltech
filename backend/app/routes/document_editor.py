@@ -9,6 +9,7 @@ from typing import List, Optional, Dict
 from datetime import datetime
 from app.utils.database import get_db, SessionLocal
 from app.utils.auth import get_current_user
+from app.utils.authorization import require_case_access, require_case_write
 from app.models.user import User
 from app.models.case import Case, File as FileModel
 from app.services.document_editor_service import DocumentEditorService
@@ -192,10 +193,7 @@ async def create_document(
     try:
         logger.info(f"Creating document: case_id={request.case_id}, user_id={current_user.id}, title={request.title}")
         # Verify case exists and user has access
-        case = db.query(Case).filter(
-            Case.id == request.case_id,
-            Case.user_id == current_user.id
-        ).first()
+        case = require_case_write(db, case_id, current_user.id)
         
         if not case:
             raise HTTPException(status_code=404, detail="Дело не найдено или доступ запрещен")
@@ -257,10 +255,7 @@ async def create_document_from_file(
     """
     try:
         # Verify case exists and user has access
-        case = db.query(Case).filter(
-            Case.id == request.case_id,
-            Case.user_id == current_user.id
-        ).first()
+        case = require_case_write(db, case_id, current_user.id)
         
         if not case:
             raise HTTPException(status_code=404, detail="Дело не найдено или доступ запрещен")
@@ -507,10 +502,7 @@ async def list_documents(
     """
     try:
         # Verify case access
-        case = db.query(Case).filter(
-            Case.id == case_id,
-            Case.user_id == current_user.id
-        ).first()
+        case = require_case_access(db, case_id, current_user.id)
         
         if not case:
             raise HTTPException(status_code=404, detail="Дело не найдено")

@@ -13,27 +13,25 @@ import {
   SelectValue,
 } from "@/components/UI/Select"
 import { toast } from "sonner"
-import { Pencil, Trash2, Info } from "lucide-react"
+import { FileUp, Loader2, Pencil, Trash2, Info } from "lucide-react"
 import type { ProposedColumn, TabularColumn } from "@/services/tabularReviewApi"
 import { tabularReviewApi } from "@/services/tabularReviewApi"
 
 const COLUMN_TYPES = [
-  { value: "text", label: "Свободный ответ", icon: "≡" },
-  { value: "number", label: "Длительность", icon: "🕐" },
-  { value: "currency", label: "Валюта", icon: "$" },
-  { value: "yes_no", label: "Классификация", icon: "☑" },
-  { value: "date", label: "Дата", icon: "📅" },
-  { value: "tag", label: "Тег", icon: "🏷️" },
-  { value: "verbatim", label: "Дословно", icon: "📄" },
-  { value: "manual_input", label: "Ручной ввод", icon: "✏️" },
+  { value: "text", label: "Текст" },
+  { value: "number", label: "Число" },
+  { value: "currency", label: "Валюта" },
+  { value: "yes_no", label: "Да/Нет" },
+  { value: "date", label: "Дата" },
+  { value: "tag", label: "Тег" },
+  { value: "verbatim", label: "Цитата" },
+  { value: "manual_input", label: "Ручной ввод" },
 ]
+
+const CHECKLIST_ACCEPT = ".txt,.md,.csv,.docx"
 
 function getColumnTypeLabel(value: string): string {
   return COLUMN_TYPES.find((t) => t.value === value)?.label ?? value
-}
-
-function getColumnTypeIcon(value: string): string {
-  return COLUMN_TYPES.find((t) => t.value === value)?.icon ?? "📝"
 }
 
 export interface BulkColumnBuilderProps {
@@ -56,12 +54,15 @@ export function BulkColumnBuilder({
   const [questionsText, setQuestionsText] = useState("")
   const [proposedColumns, setProposedColumns] = useState<ProposedColumn[]>([])
   const [generating, setGenerating] = useState(false)
+  const [importing, setImporting] = useState(false)
   const [adding, setAdding] = useState(false)
   const [editIndex, setEditIndex] = useState<number | null>(null)
   const [editLabel, setEditLabel] = useState("")
   const [editType, setEditType] = useState("text")
   const [editPrompt, setEditPrompt] = useState("")
   const [editClassifyOptions, setEditClassifyOptions] = useState<string[]>(["Да", "Нет"])
+  const [importedFileName, setImportedFileName] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Auto-fill and auto-generate when opened with an initial prompt from inline form
   const didAutoGenerate = useRef(false)
@@ -101,6 +102,29 @@ export function BulkColumnBuilder({
       toast.error(msg)
     } finally {
       setGenerating(false)
+    }
+  }
+
+  const handleChecklistFile = async (file: File | null) => {
+    if (!file) return
+    setImporting(true)
+    try {
+      const result = await tabularReviewApi.importChecklistFile(reviewId, file)
+      setQuestionsText(result.questions_text)
+      setProposedColumns(result.columns)
+      setImportedFileName(result.filename)
+      toast.success(
+        `Импортировано пунктов: ${result.item_count}` +
+          (result.columns.length ? `, колонок: ${result.columns.length}` : ""),
+      )
+      if (result.columns.length === 0) {
+        toast.info("Пункты распознаны, но колонки не сгенерированы. Нажмите «Сгенерировать столбцы».")
+      }
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Не удалось импортировать чек-лист")
+    } finally {
+      setImporting(false)
+      if (fileInputRef.current) fileInputRef.current.value = ""
     }
   }
 
@@ -170,6 +194,7 @@ export function BulkColumnBuilder({
       onClose()
       setQuestionsText("")
       setProposedColumns([])
+      setImportedFileName(null)
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Ошибка добавления колонок"
       toast.error(msg)
@@ -182,48 +207,92 @@ export function BulkColumnBuilder({
     setEditIndex(null)
     setQuestionsText("")
     setProposedColumns([])
+    setImportedFileName(null)
     onClose()
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title="Column builder" size="lg">
+    <Modal isOpen={isOpen} onClose={handleClose} title="Импорт чек-листа" size="lg">
       <div className="space-y-4">
         <p className="text-sm text-muted-foreground">
-          Попросите ИИ сгенерировать несколько столбцов на основе вашего запроса.
+          Загрузите файл с вопросами due diligence (.txt, .md, .csv, .docx) или вставьте список вручную.
+          ИИ превратит пункты в колонки таблицы — проверьте и нажмите «Добавить столбцы».
         </p>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={CHECKLIST_ACCEPT}
+            className="hidden"
+            onChange={(e) => void handleChecklistFile(e.target.files?.[0] ?? null)}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            disabled={generating || importing || adding}
+            onClick={() => fileInputRef.current?.click()}
+            className="border-border bg-background"
+          >
+            <FileUp className="h-4 w-4 mr-1.5" aria-hidden />
+            {importing ? "Импорт…" : "Импорт чек-листа"}
+          </Button>
+          {importedFileName && (
+            <span className="text-xs text-muted-foreground truncate max-w-[240px]" title={importedFileName}>
+              {importedFileName}
+            </span>
+          )}
+        </div>
+
         <Textarea
           value={questionsText}
           onChange={(e) => setQuestionsText(e.target.value)}
-          placeholder="Есть ли положение о непереманивании? Кто стороны соглашения? Какая дата подписания? Каков срок действия соглашения? Каково точное определение конфиденциальной информации? Является ли соглашение взаимным? Какое применимое право? Допускается ли раскрытие конфиденциальной информации источникам финансирования? Есть ли положение о запрете контактов? Какова длительность положения о непереманивании? Каково точное положение о непереманивании? Есть ли положение о стоп-периоде?"
+          placeholder="Есть ли положение о непереманивании? Кто стороны соглашения? Какая дата подписания? Каков срок действия соглашения?"
           rows={6}
           className="resize-none w-full rounded-lg border border-input bg-background"
-          disabled={generating}
+          disabled={generating || importing}
         />
         <div className="flex items-center justify-between gap-4">
-          <p className="text-sm text-muted-foreground flex-1">
+          <p className="text-sm text-muted-foreground flex-1 min-w-0">
             Формулируйте конкретные вопросы по тексту файла (даты, стороны, тип документа, суммы).
-            Для категории документа используйте тип колонки «Тип документа».
           </p>
-          <Button
-            onClick={handleGenerate}
-            disabled={!questionsText.trim() || generating}
+          <button
+            type="button"
+            onClick={() => void handleGenerate()}
+            disabled={!questionsText.trim() || generating || importing}
             aria-label="Сгенерировать столбцы"
-            className="shrink-0 bg-[#374151] hover:bg-[#4B5563] text-white"
+            className="inline-flex h-10 min-w-[12.5rem] shrink-0 items-center justify-center gap-2 rounded-md bg-[#374151] px-4 text-sm font-medium text-white transition-colors hover:bg-[#4B5563] focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 disabled:cursor-not-allowed disabled:bg-[#9CA3AF] disabled:hover:bg-[#9CA3AF]"
           >
-            {generating ? "Генерация…" : "Сгенерировать столбцы"}
-          </Button>
+            {generating ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                Генерация…
+              </>
+            ) : (
+              "Сгенерировать столбцы"
+            )}
+          </button>
         </div>
 
         {proposedColumns.length > 0 && (
-          <div className="border border-border rounded-lg overflow-hidden">
+          <div className="border border-border rounded-lg overflow-hidden bg-white">
             <div className="overflow-x-auto max-h-[320px] overflow-y-auto">
               <table className="w-full text-sm border-collapse">
-                <thead className="bg-muted/40 sticky top-0 z-10">
+                <thead>
                   <tr>
-                    <th className="text-left p-3 font-medium w-[140px]">Тип</th>
-                    <th className="text-left p-3 font-medium">Название</th>
-                    <th className="text-left p-3 font-medium min-w-[220px]">Запрос</th>
-                    <th className="w-[72px]" aria-label="Действия" />
+                    <th className="sticky top-0 z-10 bg-white text-left p-3 font-medium w-[140px] border-b border-border shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
+                      Тип
+                    </th>
+                    <th className="sticky top-0 z-10 bg-white text-left p-3 font-medium border-b border-border shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
+                      Название
+                    </th>
+                    <th className="sticky top-0 z-10 bg-white text-left p-3 font-medium min-w-[220px] border-b border-border shadow-[0_1px_0_0_rgba(0,0,0,0.06)]">
+                      Запрос
+                    </th>
+                    <th
+                      className="sticky top-0 z-10 bg-white w-[72px] border-b border-border shadow-[0_1px_0_0_rgba(0,0,0,0.06)]"
+                      aria-label="Действия"
+                    />
                   </tr>
                 </thead>
                 <tbody>
@@ -239,10 +308,7 @@ export function BulkColumnBuilder({
                               <SelectContent>
                                 {COLUMN_TYPES.map((t) => (
                                   <SelectItem key={t.value} value={t.value}>
-                                    <span className="flex items-center gap-2">
-                                      <span>{t.icon}</span>
-                                      <span>{t.label}</span>
-                                    </span>
+                                    {t.label}
                                   </SelectItem>
                                 ))}
                               </SelectContent>
@@ -306,12 +372,7 @@ export function BulkColumnBuilder({
                         </>
                       ) : (
                         <>
-                          <td className="p-3">
-                            <span className="flex items-center gap-2">
-                              <span className="text-base">{getColumnTypeIcon(col.column_type)}</span>
-                              <span>{getColumnTypeLabel(col.column_type)}</span>
-                            </span>
-                          </td>
+                          <td className="p-3">{getColumnTypeLabel(col.column_type)}</td>
                           <td className="p-3">{col.column_label}</td>
                           <td className="p-3 text-muted-foreground max-w-[300px] truncate" title={col.prompt}>
                             {col.prompt}
@@ -355,14 +416,22 @@ export function BulkColumnBuilder({
           >
             Отмена
           </Button>
-          <Button
-            onClick={handleAddColumns}
+          <button
+            type="button"
+            onClick={() => void handleAddColumns()}
             disabled={proposedColumns.length === 0 || adding}
             aria-label="Добавить столбцы"
-            className="bg-[#374151] hover:bg-[#4B5563] text-white"
+            className="inline-flex h-10 min-w-[10rem] items-center justify-center gap-2 rounded-md bg-[#374151] px-4 text-sm font-medium text-white transition-colors hover:bg-[#4B5563] focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 disabled:cursor-not-allowed disabled:bg-[#9CA3AF] disabled:hover:bg-[#9CA3AF]"
           >
-            {adding ? "Добавление…" : "Добавить столбцы"}
-          </Button>
+            {adding ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                Добавление…
+              </>
+            ) : (
+              "Добавить столбцы"
+            )}
+          </button>
         </div>
       </div>
     </Modal>

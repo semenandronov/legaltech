@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { tabularReviewApi } from '../services/tabularReviewApi'
+import type { CellComment } from '../services/tabularReviewApi'
 import type { TabularCellRealtimeUpdate } from '../utils/tabularTableState'
+import type { MikeCellCommentEvent } from '../components/TabularReview/mike/MikeTabularCell'
 
 interface TabularReviewWebSocketMessage {
   type:
@@ -13,9 +15,19 @@ interface TabularReviewWebSocketMessage {
     | 'column_extraction_completed'
     | 'error'
     | 'table_created'
+    | 'comment_added'
+    | 'comment_updated'
+    | 'comment_deleted'
+    | 'comment_resolved'
+    | 'comment_unresolved'
   cell_id?: string
   file_id?: string
   column_id?: string
+  comment_id?: string
+  was_resolved?: boolean
+  resolved_by?: string
+  resolved_by_id?: string
+  comment?: Partial<CellComment> & { id?: string }
   cell_value?: string | null
   normalized_value?: string | null
   verbatim_extract?: string | null
@@ -89,6 +101,7 @@ interface UseTabularReviewWebSocketOptions {
     message?: string
   }) => void
   onTableCreated?: (table: NonNullable<TabularReviewWebSocketMessage['table']>) => void
+  onCommentEvent?: (event: MikeCellCommentEvent) => void
   onError?: (error: string) => void
 }
 
@@ -111,6 +124,42 @@ function parseCellUpdatedMessage(data: TabularReviewWebSocketMessage): TabularCe
     source_section: data.source_section ?? undefined,
     source_references: data.source_references,
     status: (data.status ?? data.cell?.status ?? 'completed') as TabularCellRealtimeUpdate['status'],
+  }
+}
+
+function parseCommentEvent(data: TabularReviewWebSocketMessage): MikeCellCommentEvent | null {
+  if (
+    data.type !== 'comment_added' &&
+    data.type !== 'comment_updated' &&
+    data.type !== 'comment_deleted' &&
+    data.type !== 'comment_resolved' &&
+    data.type !== 'comment_unresolved'
+  ) {
+    return null
+  }
+  if (!data.file_id || !data.column_id) return null
+  const commentId = data.comment_id || data.comment?.id
+  if (!commentId) return null
+  return {
+    type: data.type,
+    fileId: data.file_id,
+    columnId: data.column_id,
+    commentId,
+    comment: data.comment
+      ? {
+          id: data.comment.id || commentId,
+          comment_text: data.comment.comment_text || '',
+          created_by: data.comment.created_by || 'Пользователь',
+          created_by_id: data.comment.created_by_id ?? null,
+          created_at: data.comment.created_at ?? null,
+          updated_at: data.comment.updated_at ?? null,
+          is_resolved: Boolean(data.comment.is_resolved),
+          resolved_by: data.resolved_by ?? data.comment.resolved_by ?? null,
+        }
+      : data.type === 'comment_resolved'
+        ? { id: commentId, comment_text: '', created_by: '', is_resolved: true, resolved_by: data.resolved_by }
+        : null,
+    wasResolved: data.was_resolved,
   }
 }
 
@@ -137,6 +186,7 @@ export const useTabularReviewWebSocket = ({
   onExtractionProgress,
   onColumnExtractionCompleted,
   onTableCreated,
+  onCommentEvent,
   onError,
 }: UseTabularReviewWebSocketOptions) => {
   const [isConnected, setIsConnected] = useState(false)
@@ -155,6 +205,7 @@ export const useTabularReviewWebSocket = ({
     onExtractionProgress,
     onColumnExtractionCompleted,
     onTableCreated,
+    onCommentEvent,
     onError,
   })
   callbacksRef.current = {
@@ -165,6 +216,7 @@ export const useTabularReviewWebSocket = ({
     onExtractionProgress,
     onColumnExtractionCompleted,
     onTableCreated,
+    onCommentEvent,
     onError,
   }
 
@@ -281,6 +333,18 @@ export const useTabularReviewWebSocket = ({
                 callbacks.onTableCreated(data.table)
               }
               break
+
+            case 'comment_added':
+            case 'comment_updated':
+            case 'comment_deleted':
+            case 'comment_resolved':
+            case 'comment_unresolved': {
+              const event = parseCommentEvent(data)
+              if (event && callbacks.onCommentEvent) {
+                callbacks.onCommentEvent(event)
+              }
+              break
+            }
 
             case 'error':
               if (callbacks.onError) {

@@ -9,6 +9,7 @@ from app.services.tabular_column_type_contract import (
     is_blank_placeholder,
     strict_normalize_cell_value,
 )
+from app.services.tabular_extraction_policy import TABULAR_NA_VALUE, is_na_cell_value
 
 logger = logging.getLogger(__name__)
 
@@ -192,20 +193,22 @@ class TabularCellExtractionModel(BaseModel):
     def validate_cell_value(cls, v: str, info) -> str:
         """Basic validation - just trim whitespace and handle empty values"""
         if not v or v.strip() == "":
-            return "N/A"
+            return TABULAR_NA_VALUE
+        if is_na_cell_value(v):
+            return TABULAR_NA_VALUE
         return v.strip()
     
     @model_validator(mode='after')
     def validate_by_column_type(self):
         """Validate and normalize cell_value based on column_type after model creation."""
         if not self.column_type:
-            if not self.normalized_value and self.cell_value and self.cell_value != "N/A":
+            if not self.normalized_value and self.cell_value and not is_na_cell_value(self.cell_value):
                 self.normalized_value = self.cell_value.strip().lower()
             return self
 
         if is_blank_placeholder(self.cell_value or ""):
-            self.cell_value = "N/A"
-            self.normalized_value = "N/A"
+            self.cell_value = TABULAR_NA_VALUE
+            self.normalized_value = TABULAR_NA_VALUE
             return self
 
         cell_value, norm_value, _rejection = strict_normalize_cell_value(
@@ -219,7 +222,7 @@ class TabularCellExtractionModel(BaseModel):
     @model_validator(mode='after')
     def set_normalized_value(self):
         """Set normalized_value if not already set (fallback)"""
-        if not self.normalized_value and self.cell_value and self.cell_value != "N/A":
+        if not self.normalized_value and self.cell_value and not is_na_cell_value(self.cell_value):
             # If not set by validate_by_column_type, set it here
             if self.column_type not in ['date', 'number', 'currency', 'yes_no']:
                 self.normalized_value = self.cell_value.lower()

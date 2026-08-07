@@ -16,6 +16,7 @@ from app.utils.auth import (
     get_current_user
 )
 from app.utils.authorization import require_owned_case, require_owned_review
+from app.models.case_sharing import normalize_email
 from app.models.user import User, UserSession
 from app.config import config
 
@@ -153,9 +154,11 @@ async def register(
         )
 
     logger.info(f"Registration attempt for email: {request.email}")
+
+    email_n = normalize_email(request.email)
     
     # Check if user already exists
-    existing_user = db.query(User).filter(User.email == request.email).first()
+    existing_user = db.query(User).filter(User.email == email_n).first()
     if existing_user:
         logger.warning(f"Registration failed: email {request.email} already exists")
         raise HTTPException(
@@ -180,7 +183,7 @@ async def register(
     try:
         # Create user - используем поля, которые есть в БД
         user = User(
-            email=request.email,
+            email=email_n,
             password=get_password_hash(request.password),  # Используем password, не password_hash
             name=request.full_name,  # Используем name, не full_name
             role="USER"  # Используем "USER" вместо "user" для соответствия enum в БД
@@ -259,8 +262,12 @@ async def login(
                 detail="Password is required"
             )
         
-        # Find user
-        user = db.query(User).filter(User.email == request.email).first()
+        # Find user (email normalized)
+        email_n = normalize_email(request.email)
+        user = db.query(User).filter(User.email == email_n).first()
+        if not user:
+            # Legacy accounts may have mixed-case email
+            user = db.query(User).filter(User.email == request.email).first()
         if not user:
             logger.warning(f"Login failed: user not found for email {request.email}")
             raise HTTPException(

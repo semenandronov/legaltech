@@ -65,15 +65,42 @@ export interface TabularReview {
   created_at: string
 }
 
+export interface ColumnRunCondition {
+  source_column_id: string
+  operator:
+    | 'equals'
+    | 'not_equals'
+    | 'is_yes'
+    | 'is_no'
+    | 'is_empty'
+    | 'is_not_empty'
+    | 'contains'
+  value?: string | null
+}
+
+export type UserFlagColor = 'red' | 'orange' | 'yellow' | 'green'
+
+export interface ColumnFlagRule {
+  flag: UserFlagColor
+  match: {
+    operator: ColumnRunCondition['operator']
+    value?: string | null
+  }
+}
+
+export interface TabularColumnConfig {
+  options?: Array<{ label: string; color: string }>
+  allow_custom?: boolean
+  run_condition?: ColumnRunCondition | null
+  flag_rules?: ColumnFlagRule[]
+}
+
 export interface TabularColumn {
   id: string
   column_label: string
   column_type: 'text' | 'number' | 'currency' | 'yes_no' | 'date' | 'tag' | 'verbatim' | 'manual_input'
   prompt: string
-  column_config?: {
-    options?: Array<{ label: string; color: string }>
-    allow_custom?: boolean
-  }
+  column_config?: TabularColumnConfig
   is_pinned?: boolean
   order_index: number
 }
@@ -83,10 +110,7 @@ export interface ProposedColumn {
   column_label: string
   column_type: string
   prompt: string
-  column_config?: {
-    options?: Array<{ label: string; color: string }>
-    allow_custom?: boolean
-  }
+  column_config?: TabularColumnConfig
 }
 
 export interface SourceReference {
@@ -130,7 +154,7 @@ export interface TabularCell {
   confidence_score?: number | null
   source_page?: number | null
   source_section?: string | null
-  status: 'pending' | 'processing' | 'completed' | 'reviewed' | 'conflict' | 'empty' | 'n_a'
+  status: 'pending' | 'processing' | 'completed' | 'reviewed' | 'conflict' | 'empty' | 'n_a' | 'skipped'
   candidates?: Candidate[]
   conflict_resolution?: {
     resolved_by?: string
@@ -143,6 +167,25 @@ export interface TabularCell {
   primary_source_char_start?: number | null
   primary_source_char_end?: number | null
   verified_flag?: boolean | null
+  /** Lawyer triage color flag */
+  user_flag?: UserFlagColor | null
+  /** Total comments on this cell (open + resolved) */
+  comment_count?: number
+  /** Open (unresolved) comments — drives cell badge */
+  unresolved_comment_count?: number
+}
+
+export interface CellComment {
+  id: string
+  comment_text: string
+  created_by: string
+  created_by_id?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+  is_resolved: boolean
+  resolved_at?: string | null
+  resolved_by?: string | null
+  resolved_by_id?: string | null
 }
 
 export interface TabularRow {
@@ -165,6 +208,8 @@ export interface TableData {
   }
   columns: TabularColumn[]
   rows: TabularRow[]
+  my_role?: string | null
+  can_write?: boolean
 }
 
 export interface CellDetails {
@@ -193,6 +238,7 @@ export interface CellDetails {
   primary_source_char_start?: number | null
   primary_source_char_end?: number | null
   verified_flag?: boolean | null
+  user_flag?: UserFlagColor | null
 }
 
 export interface CreateFromDescriptionPayload {
@@ -331,10 +377,7 @@ export const tabularReviewApi = {
     columnLabel: string,
     columnType: string,
     prompt: string,
-    columnConfig?: {
-      options?: Array<{ label: string; color: string }>
-      allow_custom?: boolean
-    }
+    columnConfig?: TabularColumnConfig
   ): Promise<TabularColumn> {
     try {
       const response = await apiClient.post(`/api/tabular-review/${reviewId}/columns`, {
@@ -358,6 +401,31 @@ export const tabularReviewApi = {
       const response = await apiClient.post(
         `/api/tabular-review/${reviewId}/columns/generate-from-questions`,
         { questions_text: questionsText }
+      )
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  /** Parse checklist file (.txt/.md/.csv/.docx) into proposed columns */
+  async importChecklistFile(
+    reviewId: string,
+    file: File,
+  ): Promise<{
+    filename: string
+    item_count: number
+    items: string[]
+    questions_text: string
+    supported_extensions: string[]
+    columns: ProposedColumn[]
+  }> {
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      const response = await apiClient.post(
+        `/api/tabular-review/${reviewId}/columns/import-checklist`,
+        form,
       )
       return response.data
     } catch (error) {
@@ -518,6 +586,114 @@ export const tabularReviewApi = {
           cell_value: cellValue,
           is_manual_override: isManualOverride,
         }
+      )
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  /** Set or clear multi-color triage flag on a cell */
+  async updateCellFlag(
+    reviewId: string,
+    fileId: string,
+    columnId: string,
+    userFlag: UserFlagColor | null,
+  ): Promise<{ id: string; user_flag: UserFlagColor | null; status: string; updated_at?: string }> {
+    try {
+      const response = await apiClient.patch(
+        `/api/tabular-review/${reviewId}/cells/${fileId}/${columnId}/flag`,
+        { user_flag: userFlag },
+      )
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  async listComments(
+    reviewId: string,
+    fileId: string,
+    columnId: string,
+    includeResolved = true,
+  ): Promise<CellComment[]> {
+    try {
+      const response = await apiClient.get(
+        `/api/tabular-review/${reviewId}/cells/${fileId}/${columnId}/comments`,
+        { params: { include_resolved: includeResolved } },
+      )
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  async createComment(
+    reviewId: string,
+    fileId: string,
+    columnId: string,
+    commentText: string,
+  ): Promise<CellComment> {
+    try {
+      const response = await apiClient.post(
+        `/api/tabular-review/${reviewId}/cells/${fileId}/${columnId}/comments`,
+        { comment_text: commentText },
+      )
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  async updateComment(
+    reviewId: string,
+    commentId: string,
+    commentText: string,
+  ): Promise<{ id: string; comment_text: string; updated_at?: string }> {
+    try {
+      const response = await apiClient.patch(`/api/tabular-review/${reviewId}/comments/${commentId}`, {
+        comment_text: commentText,
+      })
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  async deleteComment(reviewId: string, commentId: string): Promise<void> {
+    try {
+      await apiClient.delete(`/api/tabular-review/${reviewId}/comments/${commentId}`)
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  async resolveComment(
+    reviewId: string,
+    commentId: string,
+  ): Promise<{
+    id: string
+    is_resolved: boolean
+    resolved_at?: string | null
+    resolved_by?: string | null
+  }> {
+    try {
+      const response = await apiClient.post(
+        `/api/tabular-review/${reviewId}/comments/${commentId}/resolve`,
+      )
+      return response.data
+    } catch (error) {
+      throw new Error(extractErrorMessage(error))
+    }
+  },
+
+  async unresolveComment(
+    reviewId: string,
+    commentId: string,
+  ): Promise<{ id: string; is_resolved: boolean }> {
+    try {
+      const response = await apiClient.post(
+        `/api/tabular-review/${reviewId}/comments/${commentId}/unresolve`,
       )
       return response.data
     } catch (error) {

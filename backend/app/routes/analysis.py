@@ -6,6 +6,7 @@ from typing import Dict, Any, List
 from datetime import datetime
 from app.utils.database import get_db
 from app.utils.auth import get_current_user
+from app.utils.authorization import require_case_access, require_case_write
 from app.models.case import Case, File
 from app.models.user import User
 from app.models.case import File as FileModel
@@ -56,10 +57,7 @@ async def start_analysis(
 ):
     """Start analysis for a case"""
     # Verify case ownership
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_write(db, case_id, current_user.id)
     
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
@@ -177,10 +175,7 @@ async def get_analysis_status(
 ):
     """Get analysis status for a case"""
     # Verify case ownership
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_access(db, case_id, current_user.id)
     
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
@@ -211,10 +206,7 @@ async def get_timeline(
 ):
     """Get timeline for a case"""
     # Verify case ownership
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_access(db, case_id, current_user.id)
     
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
@@ -250,10 +242,7 @@ async def get_discrepancies(
 ):
     """Get discrepancies for a case"""
     # Verify case ownership
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_access(db, case_id, current_user.id)
     
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
@@ -294,10 +283,7 @@ async def get_key_facts(
 ):
     """Get key facts for a case"""
     # Verify case ownership
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_access(db, case_id, current_user.id)
     
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
@@ -325,10 +311,7 @@ async def get_summary(
 ):
     """Get summary for a case"""
     # Verify case ownership
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_access(db, case_id, current_user.id)
     
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
@@ -358,10 +341,7 @@ async def get_risks(
 ):
     """Get risk analysis for a case"""
     # Verify case ownership
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_access(db, case_id, current_user.id)
     
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
@@ -391,10 +371,7 @@ async def get_relationship_graph(
 ):
     """Get relationship graph for a case"""
     # Verify case ownership
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_access(db, case_id, current_user.id)
     
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
@@ -457,10 +434,7 @@ async def classify_documents(
 ):
     """Classify documents in a case"""
     # Verify case ownership
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_write(db, case_id, current_user.id)
     
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
@@ -515,10 +489,7 @@ async def get_classifications(
 ):
     """Get document classifications for a case"""
     # Verify case ownership
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_access(db, case_id, current_user.id)
     
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
@@ -562,10 +533,7 @@ async def extract_entities(
 ):
     """Extract entities from documents in a case"""
     # Verify case ownership
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_write(db, case_id, current_user.id)
     
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
@@ -619,10 +587,7 @@ async def get_entities(
 ):
     """Get extracted entities for a case"""
     # Verify case ownership
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_access(db, case_id, current_user.id)
     
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
@@ -687,10 +652,7 @@ async def check_privilege(
 ):
     """Check privilege for a document (КРИТИЧНО для e-discovery!)"""
     # Verify case ownership
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_write(db, case_id, current_user.id)
     
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
@@ -771,10 +733,7 @@ async def get_privilege_checks(
 ):
     """Get privilege checks for a case"""
     # Verify case ownership
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_access(db, case_id, current_user.id)
     
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
@@ -814,10 +773,7 @@ async def run_full_analysis(
 ):
     """Run full analysis with all agents in correct order"""
     # Verify case ownership
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_write(db, case_id, current_user.id)
     
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
@@ -884,10 +840,7 @@ async def get_analysis_report(
     - 🗑️ Мусор (не релевантно)
     """
     # Verify case ownership
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_access(db, case_id, current_user.id)
     
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
@@ -1050,10 +1003,7 @@ async def batch_confirm(
 ):
     """Batch confirm documents (mark as relevant/confirmed)"""
     # Verify case ownership
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_write(db, case_id, current_user.id)
     
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
@@ -1108,10 +1058,7 @@ async def batch_reject(
 ):
     """Batch reject documents (mark as not relevant)"""
     # Verify case ownership
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_write(db, case_id, current_user.id)
     
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
@@ -1164,10 +1111,7 @@ async def batch_withhold(
 ):
     """Batch withhold documents (mark as privileged/withheld)"""
     # Verify case ownership
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_write(db, case_id, current_user.id)
     
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
@@ -1221,10 +1165,7 @@ async def get_related_documents(
 ):
     """Get related documents based on shared entities and topics"""
     # Verify case ownership
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_access(db, case_id, current_user.id)
     
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
@@ -1373,10 +1314,7 @@ async def get_cost_statistics(
     и общую стоимость анализа.
     """
     # Verify case ownership
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_access(db, case_id, current_user.id)
     
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")

@@ -30,9 +30,7 @@ export function getTabularPillClass(content: string, column?: TabularColumn): st
   const columnType = column?.column_type
 
   if (columnType === 'yes_no') {
-    const lower = content.toLowerCase()
-    if (lower === 'yes' || lower === 'да') return 'ws-tabular-pill--green'
-    if (lower === 'no' || lower === 'нет') return 'ws-tabular-pill--red'
+    // No green/red semantics — triage color is set by the user via cell flags.
     return 'ws-tabular-pill--neutral'
   }
 
@@ -73,5 +71,6 @@ export function parseTabularPills(text: string): PillSegment[] {
 export function shouldRenderAsPill(column?: TabularColumn, value?: string): boolean {
   if (!value || value === '-' || value === '—') return false
   const type = column?.column_type
-  return type === 'yes_no' || type === 'tag' || type === 'currency'
+  // yes_no is plain text — color comes only from user cell flags
+  return type === 'tag' || type === 'currency'
 }

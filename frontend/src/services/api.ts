@@ -451,6 +451,9 @@ export interface CaseListItem {
   tabular_reviews_count?: number
   created_at: string
   updated_at: string
+  my_role?: string | null
+  is_shared?: boolean
+  owner_name?: string | null
 }
 
 export interface CasesListResponse {
@@ -1557,6 +1560,55 @@ export const deleteAdminDraftTemplate = async (templateId: string): Promise<void
     getApiUrl(`/api/v2/admin/draft-templates/${encodeURIComponent(templateId)}`),
     { timeout: 45000 }
   )
+}
+
+// Case sharing / members
+export type CaseMemberRole = 'owner' | 'editor' | 'viewer'
+
+export interface CaseMemberItem {
+  user_id: string
+  email: string
+  full_name?: string | null
+  role: CaseMemberRole | string
+  added_by?: string | null
+  created_at?: string | null
+}
+
+export interface CaseMembersResponse {
+  members: CaseMemberItem[]
+  my_role?: string | null
+}
+
+export const getCaseMembers = async (caseId: string): Promise<CaseMembersResponse> => {
+  const response = await apiClient.get(getApiUrl(`/api/cases/${caseId}/members`))
+  return response.data
+}
+
+export const inviteCaseMember = async (
+  caseId: string,
+  email: string,
+  role: 'editor' | 'viewer',
+): Promise<{ status: 'added'; member?: CaseMemberItem }> => {
+  const response = await apiClient.post(getApiUrl(`/api/cases/${caseId}/members/invite`), {
+    email,
+    role,
+  })
+  return response.data
+}
+
+export const updateCaseMemberRole = async (
+  caseId: string,
+  userId: string,
+  role: 'editor' | 'viewer',
+): Promise<{ user_id: string; role: string }> => {
+  const response = await apiClient.patch(getApiUrl(`/api/cases/${caseId}/members/${userId}`), {
+    role,
+  })
+  return response.data
+}
+
+export const removeCaseMember = async (caseId: string, userId: string): Promise<void> => {
+  await apiClient.delete(getApiUrl(`/api/cases/${caseId}/members/${userId}`))
 }
 
 // Default export for convenience

@@ -147,6 +147,13 @@ class File(Base):
     summary_content_hash = Column(String(64), nullable=True)
     # Grounded header/preamble facts (party roles, doc number, …) with char spans.
     front_matter_facts = Column(JSON, nullable=True)
+    # DD taxonomy (lease_commercial / supply / …) — separate from DocumentClassification
+    # which stores litigation/passport types for the case assistant.
+    dd_doc_type = Column(String(64), nullable=True, index=True)
+    dd_doc_type_confidence = Column(String(16), nullable=True)
+    dd_doc_type_source = Column(String(32), nullable=True)
+    # Schema-first contract facts (phase 3): {schema_version, fields: {field_id: {...}}}
+    contract_facts = Column(JSON, nullable=True)
     # metadata удалено - не существует в БД, используем другие поля для хранения метаданных
     created_at = Column(DateTime, default=datetime.utcnow)
 

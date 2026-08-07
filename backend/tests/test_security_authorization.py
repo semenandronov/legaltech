@@ -15,9 +15,15 @@ from app.utils.auth import (
     create_websocket_ticket,
     decode_websocket_ticket,
 )
-from app.utils.authorization import require_owned_case, require_owned_review
+from app.utils.authorization import (
+    require_case_access,
+    require_case_manage,
+    require_case_write,
+    require_review_write,
+)
 from app.utils.auth import get_current_user
 from app.utils.database import get_db
+from app.models.case_sharing import CASE_ROLE_EDITOR, CASE_ROLE_OWNER, CASE_ROLE_VIEWER
 
 
 def test_websocket_ticket_is_short_lived_and_resource_scoped():
@@ -58,25 +64,115 @@ def test_access_token_cannot_be_used_as_websocket_ticket():
     ) is None
 
 
-@pytest.mark.parametrize("guard", [require_owned_case, require_owned_review])
-def test_ownership_guard_hides_missing_or_foreign_resources(guard):
+def _mock_db_for_case(*, case=None, membership=None):
+    """Build a db mock for case ACL helpers (Case then CaseMember queries)."""
     db = Mock()
-    db.query.return_value.filter.return_value.first.return_value = None
 
+    def query(model):
+        q = Mock()
+        name = getattr(model, "__name__", str(model))
+        if name == "Case" or getattr(model, "__tablename__", None) == "cases":
+            q.filter.return_value.first.return_value = case
+        elif name == "CaseMember" or getattr(model, "__tablename__", None) == "case_members":
+            q.filter.return_value.first.return_value = membership
+        elif name == "TabularReview" or getattr(model, "__tablename__", None) == "tabular_reviews":
+            q.filter.return_value.first.return_value = None
+        else:
+            q.filter.return_value.first.return_value = None
+        return q
+
+    db.query.side_effect = query
+    return db
+
+
+def test_require_case_access_hides_foreign_case():
+    db = _mock_db_for_case(case=None, membership=None)
     with pytest.raises(HTTPException) as exc_info:
-        guard(db, "resource-1", "user-1")
-
+        require_case_access(db, "case-1", "user-1")
     assert exc_info.value.status_code == 404
-    assert exc_info.value.detail == "Resource not found"
 
 
-@pytest.mark.parametrize("guard", [require_owned_case, require_owned_review])
-def test_ownership_guard_returns_owned_resource(guard):
-    resource = SimpleNamespace(id="resource-1", user_id="user-1")
+def test_require_case_access_allows_member():
+    case = SimpleNamespace(id="case-1", user_id="owner-1")
+    membership = SimpleNamespace(role=CASE_ROLE_VIEWER, case_id="case-1", user_id="user-1")
+    db = _mock_db_for_case(case=case, membership=membership)
+    assert require_case_access(db, "case-1", "user-1") is case
+
+
+def test_require_case_write_forbids_viewer():
+    case = SimpleNamespace(id="case-1", user_id="owner-1")
+    membership = SimpleNamespace(role=CASE_ROLE_VIEWER, case_id="case-1", user_id="user-1")
+    db = _mock_db_for_case(case=case, membership=membership)
+    with pytest.raises(HTTPException) as exc_info:
+        require_case_write(db, "case-1", "user-1")
+    assert exc_info.value.status_code == 403
+
+
+def test_require_case_manage_requires_owner():
+    case = SimpleNamespace(id="case-1", user_id="owner-1")
+    membership = SimpleNamespace(role=CASE_ROLE_EDITOR, case_id="case-1", user_id="user-1")
+    db = _mock_db_for_case(case=case, membership=membership)
+    with pytest.raises(HTTPException) as exc_info:
+        require_case_manage(db, "case-1", "user-1")
+    assert exc_info.value.status_code == 403
+
+
+def test_legacy_owner_without_membership_row():
+    case = SimpleNamespace(id="case-1", user_id="user-1")
+    db = _mock_db_for_case(case=case, membership=None)
+    assert require_case_manage(db, "case-1", "user-1") is case
+
+
+def test_require_review_access_via_case():
+    review = SimpleNamespace(id="review-1", case_id="case-1", user_id="owner-1")
+    case = SimpleNamespace(id="case-1", user_id="owner-1")
+    membership = SimpleNamespace(role=CASE_ROLE_EDITOR, case_id="case-1", user_id="user-1")
+
     db = Mock()
-    db.query.return_value.filter.return_value.first.return_value = resource
 
-    assert guard(db, "resource-1", "user-1") is resource
+    def query(model):
+        q = Mock()
+        name = getattr(model, "__name__", str(model))
+        tablename = getattr(model, "__tablename__", None)
+        if name == "TabularReview" or tablename == "tabular_reviews":
+            q.filter.return_value.first.return_value = review
+        elif name == "Case" or tablename == "cases":
+            q.filter.return_value.first.return_value = case
+        elif name == "CaseMember" or tablename == "case_members":
+            q.filter.return_value.first.return_value = membership
+        else:
+            q.filter.return_value.first.return_value = None
+        return q
+
+    db.query.side_effect = query
+    assert require_review_write(db, "review-1", "user-1") is review
+
+
+def test_require_review_write_forbids_viewer():
+    review = SimpleNamespace(id="review-1", case_id="case-1", user_id="owner-1")
+    case = SimpleNamespace(id="case-1", user_id="owner-1")
+    membership = SimpleNamespace(role=CASE_ROLE_VIEWER, case_id="case-1", user_id="user-1")
+
+    db = Mock()
+
+    def query(model):
+        q = Mock()
+        name = getattr(model, "__name__", str(model))
+        tablename = getattr(model, "__tablename__", None)
+        if name == "TabularReview" or tablename == "tabular_reviews":
+            q.filter.return_value.first.return_value = review
+        elif name == "Case" or tablename == "cases":
+            q.filter.return_value.first.return_value = case
+        elif name == "CaseMember" or tablename == "case_members":
+            q.filter.return_value.first.return_value = membership
+        else:
+            q.filter.return_value.first.return_value = None
+        return q
+
+    db.query.side_effect = query
+    with pytest.raises(HTTPException) as exc_info:
+        require_review_write(db, "review-1", "user-1")
+    assert exc_info.value.status_code == 403
 
 
 def test_every_tabular_review_route_with_review_id_has_boundary_guard():
@@ -84,6 +180,11 @@ def test_every_tabular_review_route_with_review_id_has_boundary_guard():
     source = route_path.read_text(encoding="utf-8")
     tree = ast.parse(source)
     missing = []
+    allowed_guards = (
+        "require_owned_review(db, review_id, current_user.id)",
+        "require_review_access(db, review_id, current_user.id)",
+        "require_review_write(db, review_id, current_user.id)",
+    )
 
     for node in tree.body:
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -95,7 +196,7 @@ def test_every_tabular_review_route_with_review_id_has_boundary_guard():
         if "review_id" not in argument_names:
             continue
         function_source = ast.get_source_segment(source, node) or ""
-        if "require_owned_review(db, review_id, current_user.id)" not in function_source:
+        if not any(guard in function_source for guard in allowed_guards):
             missing.append(node.name)
 
     assert missing == []
@@ -104,11 +205,27 @@ def test_every_tabular_review_route_with_review_id_has_boundary_guard():
 def test_websocket_ticket_endpoint_checks_ownership():
     app = FastAPI()
     app.include_router(auth_router, prefix="/api/auth")
+    review = SimpleNamespace(id="review-1", case_id="case-1", user_id="user-1")
+    case = SimpleNamespace(id="case-1", user_id="user-1")
+    membership = SimpleNamespace(role=CASE_ROLE_OWNER, case_id="case-1", user_id="user-1")
+
     db = Mock()
-    db.query.return_value.filter.return_value.first.return_value = SimpleNamespace(
-        id="review-1",
-        user_id="user-1",
-    )
+
+    def query(model):
+        q = Mock()
+        name = getattr(model, "__name__", str(model))
+        tablename = getattr(model, "__tablename__", None)
+        if name == "TabularReview" or tablename == "tabular_reviews":
+            q.filter.return_value.first.return_value = review
+        elif name == "Case" or tablename == "cases":
+            q.filter.return_value.first.return_value = case
+        elif name == "CaseMember" or tablename == "case_members":
+            q.filter.return_value.first.return_value = membership
+        else:
+            q.filter.return_value.first.return_value = None
+        return q
+
+    db.query.side_effect = query
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id="user-1")
 
@@ -129,7 +246,13 @@ def test_websocket_ticket_endpoint_hides_foreign_review():
     app = FastAPI()
     app.include_router(auth_router, prefix="/api/auth")
     db = Mock()
-    db.query.return_value.filter.return_value.first.return_value = None
+
+    def query(model):
+        q = Mock()
+        q.filter.return_value.first.return_value = None
+        return q
+
+    db.query.side_effect = query
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id="user-1")
 
@@ -185,10 +308,9 @@ def test_comment_mutations_require_path_review_scope():
     ]
 
     with pytest.raises(ValueError, match="Comment comment-1 not found"):
-        service(db)._require_owned_comment(
+        service(db)._require_comment(
             review_id="review-1",
             comment_id="comment-1",
-            user_id="user-1",
         )
 
 

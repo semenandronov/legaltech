@@ -1,7 +1,9 @@
 /** Парсинг дат из ячеек таблицы (ISO, DD.MM.YYYY и др.) → timestamp ms или null */
+import { isExplicitTabularNaValue } from "./tabularCellDisplay"
+
 export function parseTabularDateMs(raw: string | null | undefined): number | null {
   const str = (raw ?? "").trim()
-  if (!str || str === "-" || str === "—" || str.toUpperCase() === "N/A") {
+  if (!str || str === "-" || str === "—" || isExplicitTabularNaValue(str)) {
     return null
   }
 
@@ -49,8 +51,7 @@ export function isDateColumn(columnType: string, columnLabel: string): boolean {
 export function isEmptySortValue(value: string | null | undefined): boolean {
   const str = (value ?? "").trim()
   if (!str) return true
-  const upper = str.toUpperCase()
-  return str === "-" || str === "—" || upper === "N/A"
+  return str === "-" || str === "—" || isExplicitTabularNaValue(str)
 }
 
 /** Сравнение значений ячеек для сортировки (−1 / 0 / 1), без учёта направления */

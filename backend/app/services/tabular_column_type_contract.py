@@ -4,7 +4,7 @@ Tabular column type contract — canonical types, inference, and strict normaliz
 Single source of truth for:
 - allowed column_type values
 - heuristic type inference at column creation
-- deterministic post-LLM value normalization (invalid → N/A)
+- deterministic post-LLM value normalization (invalid → «—»)
 """
 from __future__ import annotations
 
@@ -14,7 +14,14 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.date_validator import extract_parseable_date_from_text, parse_and_normalize_date
-from app.services.tabular_extraction_policy import coerce_source_references, is_na_cell_value
+from app.services.tabular_extraction_policy import (
+    TABULAR_NA_VALUE,
+    coerce_source_references,
+    compact_extraction_provenance,
+    ensure_na_reasoning,
+    is_explicit_na_token,
+    is_na_cell_value,
+)
 
 TABULAR_COLUMN_TYPES: Tuple[str, ...] = (
     "text",
@@ -104,6 +111,13 @@ def validate_column_config(column_type: str, column_config: Optional[Dict[str, A
             raise ValueError(
                 f"Invalid column_kind '{raw_kind}'. Allowed: {allowed}"
             )
+
+    # Structural validation only (source existence / cycles checked in service layer).
+    from app.services.tabular_column_condition import parse_run_condition
+    from app.services.tabular_cell_flags import parse_flag_rules
+
+    parse_run_condition(cfg)
+    parse_flag_rules(cfg)
 
 
 def _combined_text(label: str, prompt: str) -> str:
@@ -278,13 +292,17 @@ def strict_normalize_cell_value(
     Normalize a single cell_value for column_type.
 
     Returns (cell_value, normalized_value, rejection_reason).
-    rejection_reason is set when value is coerced to N/A.
+    rejection_reason is set when value is coerced to «—».
     """
     column_type = validate_column_type(column_type)
     value = (raw_value or "").strip()
 
+    # Explicit «—» / legacy N/A — canonicalize without a validation rejection.
+    if is_explicit_na_token(value):
+        return TABULAR_NA_VALUE, TABULAR_NA_VALUE, None
+
     if is_blank_placeholder(value):
-        return "N/A", "N/A", "blank or placeholder value"
+        return TABULAR_NA_VALUE, TABULAR_NA_VALUE, "blank or placeholder value"
 
     if column_type == "date":
         extracted = extract_parseable_date_from_text(value)
@@ -295,7 +313,7 @@ def strict_normalize_cell_value(
             datetime.strptime(normalized, "%Y-%m-%d")
             return normalized, normalized, None
         except Exception:
-            return "N/A", "N/A", f"invalid date format: {value!r}"
+            return TABULAR_NA_VALUE, TABULAR_NA_VALUE, f"invalid date format: {value!r}"
 
     if column_type == "number":
         from app.services.tabular_review_models import validate_number
@@ -304,7 +322,7 @@ def strict_normalize_cell_value(
             normalized = validate_number(value)
             return normalized, normalized, None
         except ValueError:
-            return "N/A", "N/A", f"invalid number: {value!r}"
+            return TABULAR_NA_VALUE, TABULAR_NA_VALUE, f"invalid number: {value!r}"
 
     if column_type == "currency":
         from app.services.ru_contract_value_normalize import normalize_ru_money_amount
@@ -315,7 +333,7 @@ def strict_normalize_cell_value(
             display = normalize_ru_money_amount(value) or value
             return display, normalized_num, None
         except ValueError:
-            return "N/A", "N/A", f"invalid currency: {value!r}"
+            return TABULAR_NA_VALUE, TABULAR_NA_VALUE, f"invalid currency: {value!r}"
 
     if column_type == "yes_no":
         from app.services.tabular_review_models import (
@@ -326,7 +344,7 @@ def strict_normalize_cell_value(
 
         validated = validate_yes_no(value)
         if validated == YES_NO_UNKNOWN:
-            return "N/A", "N/A", f"ambiguous yes/no answer: {value!r}"
+            return TABULAR_NA_VALUE, TABULAR_NA_VALUE, f"ambiguous yes/no answer: {value!r}"
         norm_key = yes_no_normalized_key(validated)
         return validated, norm_key, None
 
@@ -342,7 +360,7 @@ def strict_normalize_cell_value(
             return value, value.lower(), None
         matched = _match_tag_option(value, labels)
         if matched is None:
-            return "N/A", "N/A", f"value not in tag options: {value!r}"
+            return TABULAR_NA_VALUE, TABULAR_NA_VALUE, f"value not in tag options: {value!r}"
         return matched, matched.lower(), None
 
     # text, verbatim, manual_input
@@ -396,17 +414,23 @@ def finalize_extraction_dict(
         column_config=column_config,
     )
 
+    if is_na_cell_value(cell_value):
+        cell_value = TABULAR_NA_VALUE
+        norm_value = TABULAR_NA_VALUE
+        normalized["reasoning"] = ensure_na_reasoning(
+            normalized.get("reasoning") if isinstance(normalized.get("reasoning"), str) else None,
+            rejection=rejection,
+        )
+
     normalized["cell_value"] = cell_value
     normalized["normalized_value"] = norm_value
     normalized["column_type"] = column_type
     normalized["source_references"] = coerce_source_references(normalized.get("source_references"))
+    normalized = compact_extraction_provenance(normalized)
 
-    if rejection and cell_value == "N/A":
-        base_reason = (normalized.get("reasoning") or "").strip()
-        rejection_note = f"Значение отклонено: {rejection}."
-        normalized["reasoning"] = f"{rejection_note} {base_reason}".strip()
-
-    if column_type == "verbatim" and not normalized.get("verbatim_extract") and cell_value != "N/A":
+    if column_type == "verbatim" and not normalized.get("verbatim_extract") and not is_na_cell_value(
+        cell_value
+    ):
         normalized["verbatim_extract"] = cell_value
 
     normalized.setdefault("confidence", 0.8)

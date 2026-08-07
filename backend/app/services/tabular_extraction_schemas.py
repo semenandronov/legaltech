@@ -39,41 +39,41 @@ class TextCellExtraction(_ExtractionProvenance):
     cell_value: str = Field(
         description=(
             "Краткий ответ (обычно фраза или предложение) строго по подтверждающей цитате, "
-            "или ровно N/A. Не пиши длинное эссе."
+            "или ровно «—». Не пиши длинное эссе."
         ),
     )
 
 
 class VerbatimCellExtraction(_ExtractionProvenance):
     cell_value: str = Field(
-        description="Точная цитата из документа как в тексте, или ровно N/A",
+        description="Точная цитата из документа как в тексте, или ровно «—»",
     )
     verbatim_extract: str = Field(
-        description="Та же дословная цитата, что и cell_value (обязательно при не-N/A)",
+        description="Та же дословная цитата, что и cell_value (обязательно, если не «—»)",
     )
 
 
 class DateCellExtraction(_ExtractionProvenance):
     cell_value: str = Field(
-        description="Дата строго в формате YYYY-MM-DD, или ровно N/A если дата не найдена",
+        description="Дата строго в формате YYYY-MM-DD, или ровно «—» если дата не найдена",
     )
 
 
 class NumberCellExtraction(_ExtractionProvenance):
     cell_value: str = Field(
-        description="Числовое значение (Arabic digits, точка как десятичный разделитель), или N/A",
+        description="Числовое значение (Arabic digits, точка как десятичный разделитель), или «—»",
     )
 
 
 class CurrencyCellExtraction(_ExtractionProvenance):
     cell_value: str = Field(
-        description="Денежная сумма с валютой (например '150 000 руб.' или '1000 USD'), или N/A",
+        description="Денежная сумма с валютой (например '150 000 руб.' или '1000 USD'), или «—»",
     )
 
 
 class YesNoCellExtraction(_ExtractionProvenance):
     cell_value: str = Field(
-        description='Строго одно из: «Да», «Нет», N/A (если в документе нет основания для ответа)',
+        description='Строго одно из: «Да», «Нет», «—» (если в документе нет основания для ответа)',
     )
 
 
@@ -112,10 +112,10 @@ def extraction_schema_for_column(column: TabularColumn) -> Type[BaseModel]:
             options_text = ", ".join(labels)
             description = (
                 f"Ровно одно значение из списка: {options_text}. "
-                "Или ровно N/A, если ни один вариант не подходит."
+                "Или ровно «—», если ни один вариант не подходит."
             )
         else:
-            description = "Один тег из предопределённого списка, или N/A"
+            description = "Один тег из предопределённого списка, или «—»"
 
         return create_model(
             "TagCellExtraction",
@@ -132,7 +132,7 @@ def cell_value_field_description(column: TabularColumn) -> str:
     field = schema.model_fields.get("cell_value")
     if field and field.description:
         return str(field.description)
-    return "Значение ячейки или N/A"
+    return "Значение ячейки или «—»"
 
 
 def typed_extraction_to_cell_model(

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from typing import List, Dict, Any, Optional
 from app.utils.database import get_db
 from app.utils.auth import get_current_user
+from app.utils.authorization import require_case_access, require_case_write
 from app.models.case import Case, File
 from app.models.user import User
 from app.services.rag_service import RAGService
@@ -187,10 +188,7 @@ async def review_table_query(
     
     try:
         # Verify case exists and belongs to user
-        case = db.query(Case).filter(
-            Case.id == request.case_id,
-            Case.user_id == current_user.id
-        ).first()
+        case = require_case_write(db, case_id, current_user.id)
         
         if not case:
             raise HTTPException(

@@ -418,6 +418,67 @@ def _process_one_file_body(
             exc_info=True,
         )
 
+    try:
+        from app.services.dd_document_classifier import (
+            classify_dd_document,
+            save_dd_classification_on_file,
+        )
+
+        dd_cls = classify_dd_document(
+            text=text,
+            filename=filename,
+            title_hint=passport_doc_type,
+        )
+        save_dd_classification_on_file(file_model, dd_cls)
+        logger.info(
+            "DD classification for %s: type=%s confidence=%s",
+            filename,
+            dd_cls.doc_type,
+            dd_cls.confidence,
+        )
+    except Exception as dd_exc:
+        logger.warning(
+            "DD classification skipped for %s (%s): %s",
+            filename,
+            file_id,
+            dd_exc,
+            exc_info=True,
+        )
+
+    try:
+        from app.services.contract_facts_service import (
+            build_contract_facts_payload,
+            contract_facts_enabled,
+            save_contract_facts_on_file,
+        )
+        from app.services.dd_document_classifier import get_file_dd_doc_type
+
+        if contract_facts_enabled():
+            _report_stage(stage="contract_facts", percent=28, message="Структурные факты договора")
+            dd_type = get_file_dd_doc_type(file_model) or "unknown"
+            cf_payload = build_contract_facts_payload(
+                text=text,
+                filename=filename,
+                dd_doc_type=dd_type,
+                allow_llm=True,
+            )
+            save_contract_facts_on_file(file_model, cf_payload)
+            logger.info(
+                "Contract facts for %s: fields=%s source=%s type=%s",
+                filename,
+                cf_payload.get("field_count"),
+                cf_payload.get("source"),
+                dd_type,
+            )
+    except Exception as cf_exc:
+        logger.warning(
+            "Contract facts skipped for %s (%s): %s",
+            filename,
+            file_id,
+            cf_exc,
+            exc_info=True,
+        )
+
     with case_metadata_lock(case_id):
         case_model = db.query(Case).filter(Case.id == case_id).first()
         if case_model:

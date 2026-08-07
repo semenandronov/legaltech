@@ -52,6 +52,17 @@ interface TabularReviewTableProps {
   onTableDataUpdate?: (updater: (prev: TabularReviewTableProps['tableData']) => TabularReviewTableProps['tableData']) => void
   onCellClick?: (fileId: string, columnId: string, cellData: TabularCellClickPayload) => void
   onCellSave?: (fileId: string, columnId: string, value: string) => Promise<void>
+  onUserFlagChange?: (
+    fileId: string,
+    columnId: string,
+    flag: import('@/services/tabularReviewApi').UserFlagColor | null,
+  ) => Promise<void>
+  onCommentCountsChange?: (
+    fileId: string,
+    columnId: string,
+    counts: { comment_count: number; unresolved_comment_count: number },
+  ) => void
+  commentEvent?: import('./mike/MikeTabularCell').MikeCellCommentEvent | null
   onRemoveDocument?: (fileId: string) => void
   onRunColumn?: (columnId: string) => void
   onColumnDelete?: (columnId: string) => void
@@ -68,9 +79,10 @@ interface TabularReviewTableProps {
   runningColumnIds?: Set<string>
   /** `${columnId}:${fileId}` — скелетон только в ячейках, которые ещё обрабатываются */
   processingCellKeys?: Set<string>
+  readOnly?: boolean
 }
 
-export const TabularReviewTable = React.memo(({ reviewId, tableData, documentSearch = '', onTableDataUpdate: _onTableDataUpdate, onCellClick, onCellSave, onRemoveDocument: _onRemoveDocument, onRunColumn, onColumnDelete, onOpenEditColumn, onAddColumnClick, onAddDocumentsClick, onOpenTemplatesClick, selectedDocIds, onSelectionChange, filterPopoverOpen, filterAnchorEl, onCloseFilterPopover, runningColumnIds, processingCellKeys }: TabularReviewTableProps) => {
+export const TabularReviewTable = React.memo(({ reviewId, tableData, documentSearch = '', onTableDataUpdate: _onTableDataUpdate, onCellClick, onCellSave, onUserFlagChange, onCommentCountsChange, commentEvent = null, onRemoveDocument: _onRemoveDocument, onRunColumn, onColumnDelete, onOpenEditColumn, onAddColumnClick, onAddDocumentsClick, onOpenTemplatesClick, selectedDocIds, onSelectionChange, filterPopoverOpen, filterAnchorEl, onCloseFilterPopover, runningColumnIds, processingCellKeys, readOnly = false }: TabularReviewTableProps) => {
   const addColumnButtonRef = React.useRef<HTMLButtonElement>(null)
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
@@ -248,6 +260,18 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, documentSea
           return minMatch && maxMatch
         })
         conditions.push(hasMatchingConfidence)
+      }
+
+      if (filters.hasComments !== null) {
+        const hasAny = columns.some((col) => (row.cells[col.id]?.comment_count ?? 0) > 0)
+        conditions.push(filters.hasComments ? hasAny : !hasAny)
+      }
+
+      if (filters.hasUnresolvedComments !== null) {
+        const hasOpen = columns.some(
+          (col) => (row.cells[col.id]?.unresolved_comment_count ?? 0) > 0,
+        )
+        conditions.push(filters.hasUnresolvedComments ? hasOpen : !hasOpen)
       }
 
       // Column type filter
@@ -542,9 +566,9 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, documentSea
         editingCellKey={editingCellKey}
         onEditingCellKeyChange={setEditingCellKey}
         addColumnButtonRef={addColumnButtonRef}
-        onAddColumn={onAddColumnClick}
-        onAddDocuments={onAddDocumentsClick}
-        onOpenTemplates={onOpenTemplatesClick}
+        onAddColumn={readOnly ? undefined : onAddColumnClick}
+        onAddDocuments={readOnly ? undefined : onAddDocumentsClick}
+        onOpenTemplates={readOnly ? undefined : onOpenTemplatesClick}
         selectedDocIds={selectedDocIds}
         onSelectionChange={onSelectionChange}
         scrollRef={setScrollContainer}
@@ -554,7 +578,11 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, documentSea
         onViewInDocument={(fileId, columnId, citationIndex) => {
           void openCellSidePanel(fileId, columnId, citationIndex)
         }}
-        onCellSave={onCellSave}
+        onCellSave={readOnly ? undefined : onCellSave}
+        onUserFlagChange={readOnly ? undefined : onUserFlagChange}
+        onCommentCountsChange={onCommentCountsChange}
+        commentEvent={commentEvent}
+        readOnly={readOnly}
         onDocumentClick={(fileId, firstColumnId) => {
           onCellClick?.(fileId, firstColumnId, { highlightMode: 'none' })
         }}

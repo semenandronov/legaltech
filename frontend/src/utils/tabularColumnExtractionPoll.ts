@@ -1,10 +1,15 @@
 import type { TableData } from '../services/tabularReviewApi'
 
-/** Cells saved to DB during extraction are no longer `pending`. */
+/** In-flight extraction statuses — must not count as “resolved” for poll done-detection. */
+export function isInFlightColumnCellStatus(status: string | null | undefined): boolean {
+  return status === 'pending' || status === 'processing'
+}
+
+/** Cells saved to DB during extraction leave pending/processing. */
 export function countResolvedColumnCells(data: TableData, columnId: string): number {
   return data.rows.reduce((count, row) => {
     const cell = row.cells[columnId]
-    if (cell?.status && cell.status !== 'pending') {
+    if (cell?.status && !isInFlightColumnCellStatus(cell.status)) {
       return count + 1
     }
     return count
@@ -38,7 +43,7 @@ export interface ColumnExtractionPollOptions {
   maxAttempts?: number
 }
 
-/** Poll table-data until column cells leave `pending` (fallback when WebSocket is down). */
+/** Poll table-data until column cells leave pending/processing (fallback when WebSocket is down). */
 export function startColumnExtractionPoll(
   options: ColumnExtractionPollOptions,
 ): ColumnExtractionPollController {

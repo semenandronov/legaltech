@@ -113,7 +113,7 @@ def test_fact_column_without_evidence_forced_to_na(monkeypatch):
         included_docs=[],
     )
     assert outcome.forced_na
-    assert outcome.result.cell_value == "N/A"
+    assert outcome.result.cell_value == "—"
     assert "missing_evidence" in outcome.issues
 
 
@@ -136,7 +136,7 @@ def test_text_column_without_evidence_forced_to_na(monkeypatch):
         included_docs=[],
     )
     assert outcome.forced_na
-    assert outcome.result.cell_value == "N/A"
+    assert outcome.result.cell_value == "—"
     assert "missing_evidence" in outcome.issues
 
 
@@ -161,7 +161,7 @@ def test_yes_no_with_ungrounded_citation_forced_to_na(monkeypatch):
         included_docs=[],
     )
     assert outcome.forced_na
-    assert outcome.result.cell_value == "N/A"
+    assert outcome.result.cell_value == "—"
 
 
 def test_evidence_from_grounded_quote_passes_fact_column(monkeypatch):

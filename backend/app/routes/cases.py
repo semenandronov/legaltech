@@ -14,6 +14,12 @@ from typing import List, Optional
 from datetime import datetime
 from app.utils.database import get_db
 from app.utils.auth import get_current_user
+from app.utils.authorization import (
+    require_case_access,
+    require_case_write,
+    require_case_manage,
+)
+from app.services.case_sharing_service import CaseSharingService, accessible_case_ids_subquery
 from app.models.case import Case, File as FileModel
 from app.models.user import User
 from app.config import config
@@ -32,6 +38,15 @@ from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _parse_optional_float(value) -> Optional[float]:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _reconnect_db(db: Session) -> None:
@@ -218,11 +233,16 @@ async def get_cases(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get list of user's cases"""
-    cases = db.query(Case).filter(
-        Case.user_id == current_user.id
-    ).order_by(Case.created_at.desc()).offset(skip).limit(limit).all()
-    
+    """Get list of user's cases (owned + shared)."""
+    cases = (
+        db.query(Case)
+        .filter(Case.id.in_(accessible_case_ids_subquery(db, current_user.id)))
+        .order_by(Case.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
     return [
         CaseResponse(
             id=case.id,
@@ -233,7 +253,7 @@ async def get_cases(
             num_documents=case.num_documents or 0,
             file_names=case.file_names or [],
             created_at=case.created_at.isoformat() if case.created_at else datetime.utcnow().isoformat(),
-            updated_at=case.updated_at.isoformat() if case.updated_at else datetime.utcnow().isoformat()
+            updated_at=case.updated_at.isoformat() if case.updated_at else datetime.utcnow().isoformat(),
         )
         for case in cases
     ]
@@ -246,26 +266,7 @@ async def get_case(
     current_user: User = Depends(get_current_user)
 ):
     """Get case details"""
-    case = db.query(Case).options(
-        load_only(
-            Case.id,
-            Case.user_id,
-            Case.title,
-            Case.description,
-            Case.case_type,
-            Case.status,
-            Case.num_documents,
-            Case.file_names,
-            Case.created_at,
-            Case.updated_at,
-        )
-    ).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
-    
-    if not case:
-        raise HTTPException(status_code=404, detail="Дело не найдено")
+    case = require_case_access(db, case_id, current_user.id)
 
     try:
         from app.services.bm25_case_prewarm import schedule_bm25_prewarm
@@ -273,7 +274,7 @@ async def get_case(
         schedule_bm25_prewarm(case_id)
     except Exception:
         pass
-    
+
     return CaseResponse(
         id=case.id,
         title=case.title or None,
@@ -283,7 +284,7 @@ async def get_case(
         num_documents=case.num_documents or 0,
         file_names=case.file_names or [],
         created_at=case.created_at.isoformat() if case.created_at else datetime.utcnow().isoformat(),
-        updated_at=case.updated_at.isoformat() if case.updated_at else datetime.utcnow().isoformat()
+        updated_at=case.updated_at.isoformat() if case.updated_at else datetime.utcnow().isoformat(),
     )
 
 
@@ -311,6 +312,7 @@ async def create_case(
         db.add(case)
         db.commit()
         db.refresh(case)
+        CaseSharingService(db).ensure_owner_member(case, added_by=current_user.id)
     except Exception as e:
         db.rollback()
         import logging
@@ -339,13 +341,8 @@ async def update_case(
     current_user: User = Depends(get_current_user)
 ):
     """Update a case"""
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_write(db, case_id, current_user.id)
     
-    if not case:
-        raise HTTPException(status_code=404, detail="Дело не найдено")
     
     try:
         # Update fields
@@ -394,13 +391,8 @@ async def get_suggestions(
 ):
     """Получить умные подсказки для дела"""
     # Проверяем доступ к делу
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_access(db, case_id, current_user.id)
     
-    if not case:
-        raise HTTPException(status_code=404, detail="Дело не найдено")
     
     try:
         from app.services.suggestions_service import SuggestionsService
@@ -439,13 +431,8 @@ async def delete_case(
     
     Удаление происходит до удаления записи из БД, чтобы иметь доступ к ID.
     """
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_manage(db, case_id, current_user.id)
     
-    if not case:
-        raise HTTPException(status_code=404, detail="Дело не найдено")
     
     # Note: Yandex Index and Assistant resources are no longer used (migrated to pgvector)
     # If case has old yandex_index_id or yandex_assistant_id, they are left as-is for historical records
@@ -504,16 +491,9 @@ async def get_case_files(
 ):
     """Get list of files for a case with classifications"""
     from app.models.analysis import DocumentClassification
-    
-    # Verify case ownership
-    case = db.query(Case).options(load_only(Case.id, Case.user_id)).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
-    
-    if not case:
-        raise HTTPException(status_code=404, detail="Дело не найдено")
-    
+
+    require_case_access(db, case_id, current_user.id)
+
     from app.models.analysis import DocumentChunk
     from sqlalchemy import func
 
@@ -524,6 +504,9 @@ async def get_case_files(
         FileModel.file_type,
         FileModel.folder_id,
         FileModel.created_at,
+        FileModel.dd_doc_type,
+        FileModel.dd_doc_type_confidence,
+        FileModel.dd_doc_type_source,
         func.octet_length(FileModel.file_content).label("file_size"),
         func.length(FileModel.original_text).label("text_length"),
     ).filter(FileModel.case_id == case_id).all()
@@ -557,6 +540,9 @@ async def get_case_files(
                 "size": int(file.file_size) if file.file_size is not None else (int(file.text_length) if file.text_length is not None else None),
                 "page_count": page_count_map.get(file.id),
                 "doc_type": classification.doc_type if (classification := classification_map.get(file.id)) else None,
+                "dd_doc_type": file.dd_doc_type,
+                "dd_doc_type_confidence": _parse_optional_float(file.dd_doc_type_confidence),
+                "dd_doc_type_source": file.dd_doc_type_source,
                 "classification": {
                     "doc_type": classification.doc_type,
                     "relevance_score": classification.relevance_score,
@@ -584,12 +570,7 @@ async def get_file_indexed_chunks(
     """
     Все чанки файла из PGVector (как после Docling + индексации) + citation payload для превью в UI.
     """
-    case = db.query(Case).options(load_only(Case.id, Case.user_id)).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id,
-    ).first()
-    if not case:
-        raise HTTPException(status_code=404, detail="Дело не найдено")
+    require_case_access(db, case_id, current_user.id)
 
     file_row = (
         db.query(FileModel)
@@ -666,12 +647,7 @@ async def move_file_to_folder(
     current_user: User = Depends(get_current_user)
 ):
     """Move a file to a folder (or to root if folder_id is null)"""
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
-    if not case:
-        raise HTTPException(status_code=404, detail="Дело не найдено")
+    case = require_case_write(db, case_id, current_user.id)
 
     file = db.query(FileModel).filter(
         FileModel.id == file_id,
@@ -718,13 +694,8 @@ async def add_files_to_case(
         raise HTTPException(status_code=400, detail="Не загружено ни одного файла")
 
     # Verify case exists and user has access
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_write(db, case_id, current_user.id)
 
-    if not case:
-        raise HTTPException(status_code=404, detail="Дело не найдено")
 
     allowed_extensions = [ext.replace(".", "") for ext in config.ALLOWED_EXTENSIONS]
     saved_file_paths: List[str] = []
@@ -900,12 +871,7 @@ async def import_files_from_google_drive(
             detail=f"Можно импортировать не более {max_files} файлов за раз",
         )
 
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id,
-    ).first()
-    if not case:
-        raise HTTPException(status_code=404, detail="Дело не найдено")
+    case = require_case_write(db, case_id, current_user.id)
 
     try:
         from app.services.google_drive_import_service import (
@@ -1054,12 +1020,7 @@ async def get_processing_status(
     current_user: User = Depends(get_current_user)
 ):
     """Return per-file processing status for a case."""
-    case = db.query(Case).options(load_only(Case.id, Case.user_id)).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
-    if not case:
-        raise HTTPException(status_code=404, detail="Дело не найдено")
+    require_case_access(db, case_id, current_user.id)
 
     files = db.query(
         FileModel.id,
@@ -1109,7 +1070,7 @@ async def cancel_file_processing(
     current_user: User = Depends(get_current_user)
 ):
     """Cancel processing of a pending or processing file."""
-    case = db.query(Case).filter(Case.id == case_id, Case.user_id == current_user.id).first()
+    case = require_case_write(db, case_id, current_user.id)
     if not case:
         raise HTTPException(status_code=404, detail="Дело не найдено")
     file = db.query(FileModel).filter(FileModel.id == file_id, FileModel.case_id == case_id).first()
@@ -1138,13 +1099,8 @@ async def delete_file_from_case(
     Only works for files that haven't been processed yet (not in PGVector).
     """
     # Verify case ownership
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_write(db, case_id, current_user.id)
     
-    if not case:
-        raise HTTPException(status_code=404, detail="Дело не найдено")
     
     # Get file
     file = db.query(FileModel).filter(
@@ -1241,13 +1197,8 @@ async def reindex_case_files(
     Useful for files that were added before automatic indexing was implemented.
     """
     # Verify case exists and user has access
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_write(db, case_id, current_user.id)
     
-    if not case:
-        raise HTTPException(status_code=404, detail="Дело не найдено")
     
     # Get all files for the case
     files = db.query(FileModel).filter(FileModel.case_id == case_id).all()
@@ -1361,7 +1312,7 @@ async def reindex_all_cases(
     This will reindex all files that are not yet in the vector store.
     """
     # Get all cases for the current user
-    cases = db.query(Case).filter(Case.user_id == current_user.id).all()
+    cases = db.query(Case).filter(Case.id.in_(accessible_case_ids_subquery(db, current_user.id))).all()
     
     if not cases:
         return {
@@ -1488,13 +1439,8 @@ async def process_case_files(
     Processing runs asynchronously in the background.
     """
     # Verify case exists and user has access
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_write(db, case_id, current_user.id)
     
-    if not case:
-        raise HTTPException(status_code=404, detail="Дело не найдено")
     
     # Get all files for the case
     files = db.query(FileModel).filter(FileModel.case_id == case_id).all()
@@ -1666,13 +1612,8 @@ async def view_document_fragment(
     Returns document fragment and metadata for citation deep links
     """
     # Verify case ownership
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_access(db, case_id, current_user.id)
     
-    if not case:
-        raise HTTPException(status_code=404, detail="Дело не найдено")
     
     # Find file by doc_id (doc_id is file_id for new documents)
     file = db.query(FileModel).filter(
@@ -1722,13 +1663,8 @@ async def get_file_content(
 ):
     """Get file content (PDF, DOCX, TXT, etc.)"""
     # Verify case ownership
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_access(db, case_id, current_user.id)
     
-    if not case:
-        raise HTTPException(status_code=404, detail="Дело не найдено")
     
     # Get file
     file = db.query(FileModel).filter(
@@ -1756,12 +1692,7 @@ async def update_case_file_text(
     current_user: User = Depends(get_current_user),
 ):
     """Update UTF-8 plain text stored on a case file (original_text)."""
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
-    if not case:
-        raise HTTPException(status_code=404, detail="Дело не найдено")
+    case = require_case_write(db, case_id, current_user.id)
 
     file = db.query(FileModel).filter(
         FileModel.id == file_id,
@@ -1790,12 +1721,7 @@ async def get_case_file_text(
     ВАЖНО: это не "скачивание оригинала". Для бинарника используйте /content.
     Этот endpoint нужен, чтобы offsets (char_start/char_end) совпадали с текстом в UI.
     """
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
-    if not case:
-        raise HTTPException(status_code=404, detail="Дело не найдено")
+    case = require_case_access(db, case_id, current_user.id)
 
     file = db.query(FileModel).filter(
         FileModel.id == file_id,
@@ -1840,13 +1766,8 @@ async def get_file_html(
         JSONResponse with HTML content and cache status
     """
     # Verify case ownership
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_access(db, case_id, current_user.id)
     
-    if not case:
-        raise HTTPException(status_code=404, detail="Дело не найдено")
     
     # Get file
     file = db.query(FileModel).filter(
@@ -1961,13 +1882,8 @@ async def download_file(
 ):
     """Download file in original format"""
     # Verify case ownership
-    case = db.query(Case).filter(
-        Case.id == case_id,
-        Case.user_id == current_user.id
-    ).first()
+    case = require_case_access(db, case_id, current_user.id)
     
-    if not case:
-        raise HTTPException(status_code=404, detail="Дело не найдено")
     
     # Get file
     file = db.query(FileModel).filter(

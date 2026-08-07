@@ -1,8 +1,46 @@
 import type { ReactNode } from 'react'
 import type { TabularCell, TabularColumn, TabularRow } from '@/services/tabularReviewApi'
-import { formatTabularCellValue } from '@/utils/tabularCellDisplay'
+import {
+  formatTabularCellValue,
+  getTabularCellAttention,
+  isExplicitTabularNaValue,
+  TABULAR_NA_DISPLAY,
+} from '@/utils/tabularCellDisplay'
 import type { MikeCellColumnMeta } from './MikeTabularCell'
 import type { MikeTableCellVM, MikeTableColumnVM, MikeTableRowVM } from './types'
+
+function buildMikeCellVM(
+  raw: TabularCell | undefined,
+  column: TabularColumn,
+  isProcessing: boolean,
+): MikeTableCellVM {
+  const displayValue = formatTabularCellValue(raw, column)
+  const userFlag = raw?.user_flag
+  const flag =
+    userFlag === 'red' ||
+    userFlag === 'orange' ||
+    userFlag === 'yellow' ||
+    userFlag === 'green'
+      ? userFlag
+      : raw?.status === 'reviewed'
+        ? 'reviewed'
+        : undefined
+  return {
+    displayValue,
+    rawValue: raw?.cell_value ?? '',
+    status: raw?.status ?? 'pending',
+    isProcessing,
+    flag,
+    isExplicitNa:
+      raw?.status === 'n_a' ||
+      displayValue === TABULAR_NA_DISPLAY ||
+      isExplicitTabularNaValue(raw?.cell_value),
+    attention: getTabularCellAttention(raw),
+    confidenceScore: raw?.confidence_score ?? null,
+    commentCount: raw?.comment_count ?? 0,
+    unresolvedCommentCount: raw?.unresolved_comment_count ?? 0,
+  }
+}
 
 export interface MikeGridRowInput {
   fileId: string
@@ -31,16 +69,8 @@ export function buildMikeRowsFromGrid(
 
     for (const column of columns) {
       const raw = row.cells[column.id]
-      const displayValue = formatTabularCellValue(raw, column)
       const isProcessing = processingCellKeys?.has(`${column.id}:${row.fileId}`) ?? false
-
-      cells[column.id] = {
-        displayValue,
-        rawValue: raw?.cell_value ?? '',
-        status: raw?.status ?? 'pending',
-        isProcessing,
-        flag: raw?.status === 'reviewed' ? 'reviewed' : undefined,
-      }
+      cells[column.id] = buildMikeCellVM(raw, column, isProcessing)
     }
 
     return {
@@ -63,16 +93,8 @@ export function buildMikeTableRows(
 
     for (const column of columns) {
       const raw = rowCells[column.id]
-      const displayValue = formatTabularCellValue(raw, column)
       const isProcessing = processingCellKeys?.has(`${column.id}:${row.file_id}`) ?? false
-
-      cells[column.id] = {
-        displayValue,
-        rawValue: raw?.cell_value ?? '',
-        status: raw?.status ?? 'pending',
-        isProcessing,
-        flag: raw?.status === 'reviewed' ? 'reviewed' : undefined,
-      }
+      cells[column.id] = buildMikeCellVM(raw, column, isProcessing)
     }
 
     return {

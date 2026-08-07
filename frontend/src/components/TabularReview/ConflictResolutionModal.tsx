@@ -64,7 +64,7 @@ export const ConflictResolutionModal: React.FC<ConflictResolutionModalProps> = (
           0, // Not used for N/A
           'n_a'
         )
-        toast.success("Conflict resolved: marked as N/A")
+        toast.success("Конфликт разрешён: отмечено прочерком")
         onResolved()
         onClose()
       } catch (error: any) {
@@ -149,7 +149,7 @@ export const ConflictResolutionModal: React.FC<ConflictResolutionModalProps> = (
               <FormControlLabel
                 value="n_a"
                 control={<Radio />}
-                label="Mark as N/A (not applicable)"
+                label="Отметить прочерком"
               />
             </RadioGroup>
           </FormControl>

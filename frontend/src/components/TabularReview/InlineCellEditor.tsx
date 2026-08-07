@@ -18,6 +18,7 @@ import {
   Close as CloseIcon,
 } from "@mui/icons-material"
 import { TabularCell, TabularColumn } from "@/services/tabularReviewApi"
+import { isExplicitTabularNaValue, TABULAR_NA_DISPLAY } from "@/utils/tabularCellDisplay"
 
 interface InlineCellEditorProps {
   cell: TabularCell
@@ -32,7 +33,7 @@ function normalizeYesNoEditorValue(raw: string): string {
   if (!v) return ""
   if (v === "Yes" || v.toLowerCase() === "yes") return "Да"
   if (v === "No" || v.toLowerCase() === "no") return "Нет"
-  if (v === "Unknown" || v.toUpperCase() === "N/A" || v === "Н/Д") return "N/A"
+  if (v === "Unknown" || isExplicitTabularNaValue(v)) return TABULAR_NA_DISPLAY
   return v
 }
 
@@ -160,7 +161,7 @@ export const InlineCellEditor: React.FC<InlineCellEditorProps> = ({
           >
             <ToggleButton value="Да">Да</ToggleButton>
             <ToggleButton value="Нет">Нет</ToggleButton>
-            <ToggleButton value="N/A">N/A</ToggleButton>
+            <ToggleButton value={TABULAR_NA_DISPLAY}>{TABULAR_NA_DISPLAY}</ToggleButton>
           </ToggleButtonGroup>
         )
 

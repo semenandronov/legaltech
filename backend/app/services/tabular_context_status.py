@@ -15,6 +15,9 @@ TabularContextOutcome = Literal[
 ]
 
 
+from app.services.tabular_extraction_policy import is_na_cell_value
+
+
 def classify_tabular_context_outcome(
     *,
     meta: Optional[Dict[str, Any]] = None,
@@ -39,8 +42,7 @@ def classify_tabular_context_outcome(
         return "weak_coverage"
     if escalated or m.get("escalation_round", 0):
         return "escalated"
-    cv = (cell_value or "").strip().upper()
-    if cv in ("N/A", "NA", ""):
+    if is_na_cell_value(cell_value):
         return "extract_na"
     return "ok"
 

@@ -425,6 +425,16 @@ def compile_tabular_cell_context(
         )
         return "", [], [], meta
 
+    if params.preferred_zones:
+        try:
+            from app.services.document_zones import prefer_zone_docs_for_prompt
+
+            recall_docs = prefer_zone_docs_for_prompt(
+                recall_docs, params.preferred_zones
+            )
+        except Exception:
+            pass
+
     ranked_docs, resolve_meta = rerank_and_resolve_documents(
         question=rerank_question,
         docs=recall_docs,
@@ -453,6 +463,18 @@ def compile_tabular_cell_context(
         ranked_docs = prefer_short_docs_for_prompt(ranked_docs)
     except Exception:
         pass
+
+    try:
+        from app.services.document_zones import prefer_zone_docs_for_prompt, zone_histogram
+
+        if params.preferred_zones:
+            ranked_docs = prefer_zone_docs_for_prompt(
+                ranked_docs, params.preferred_zones
+            )
+            meta["preferred_zones"] = list(params.preferred_zones)
+            meta["zone_histogram"] = zone_histogram(ranked_docs)
+    except Exception as zone_exc:
+        meta["zone_preference_error"] = str(zone_exc)[:200]
 
     assembled = assemble_rag_output(
         rag_service=rag_service,

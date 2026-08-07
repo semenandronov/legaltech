@@ -4,7 +4,6 @@ from __future__ import annotations
 from typing import Any, AsyncIterator, Dict, List, Literal, Optional, TypedDict
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
 from app.config import config
@@ -13,12 +12,10 @@ from app.services.chat.history_service import ChatHistoryService
 from app.services.chat.llm_streaming import async_iter_llm_text_chunks
 from app.services.chat.response_shape import case_assistant_readability_base
 from app.services.llm_factory import create_llm
-from app.services.tabular_review_service import TabularReviewService
+from app.services.tabular_extraction_policy import TABULAR_NA_VALUE, is_na_cell_value
 import logging
 
 logger = logging.getLogger(__name__)
-
-_EMPTY_CELL_MARKERS = frozenset({"", "-", "—", "n/a", "na", "н/д", "н/а"})
 
 
 def tabular_chat_session_id(review_id: str) -> str:
@@ -39,8 +36,8 @@ def format_cell_display(cell: Optional[Dict[str, Any]]) -> str:
             return "— (не заполнено)"
         return "— (пусто)"
     text = str(raw).strip()
-    if text.lower() in _EMPTY_CELL_MARKERS:
-        return "N/A (нет в документе)"
+    if is_na_cell_value(text):
+        return f"{TABULAR_NA_VALUE} (нет в документе)"
     return text
 
 
@@ -68,9 +65,10 @@ class TabularChatService:
             logger.warning("GigaChat not configured: %s, tabular chat will not work", e)
 
     def _get_review_for_user(self, review_id: str, user_id: str) -> TabularReview:
+        # user_id unused: case ACL is enforced at the route boundary.
         review = (
             self.db.query(TabularReview)
-            .filter(and_(TabularReview.id == review_id, TabularReview.user_id == user_id))
+            .filter(TabularReview.id == str(review_id))
             .first()
         )
         if not review:
@@ -170,7 +168,7 @@ class TabularChatService:
 Правила:
 1. Язык ответа — русский.
 2. Источник истины — значения ячеек таблицы ниже. Не выдумывай факты.
-3. «— (не заполнено)» / «— (пусто)» — ячейка не заполнена; «N/A» — в документе нет ответа на вопрос колонки.
+3. «— (не заполнено)» / «— (пусто)» — ячейка не заполнена; «—» — в документе нет ответа на вопрос колонки.
 4. Указывай конкретные документы (имена файлов) и значения из колонок.
 5. Учитывай предыдущие реплики диалога при уточняющих вопросах («а из них?», «покажи только эти»).
 6. Если данных недостаточно — скажи прямо.

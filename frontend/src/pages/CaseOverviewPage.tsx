@@ -618,6 +618,7 @@ const CaseOverviewPage = () => {
       <div className="ws-tabular-page flex min-h-0 flex-1 flex-col overflow-hidden">
         <CaseOverviewPageHeader
           loading={loadingCase}
+          caseId={caseId}
           caseTitle={caseData?.title}
           documentCountLabel={documentCountLabel}
           onNavigateCases={() => navigate('/cases')}

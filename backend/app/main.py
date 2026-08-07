@@ -138,7 +138,7 @@ except: pass
 # #endregion
 
 try:
-    from app.routes import upload, chat, auth, cases, dashboard, analysis, reports, settings, websocket, tabular_review, prompts, folders, review_table, assistant_chat_v2, legal_corpus, draft_admin_templates, plan_execution, metrics, document_editor, playbooks, agent_runs, case_workflows, health, operations
+    from app.routes import upload, chat, auth, cases, case_members, dashboard, analysis, reports, settings, websocket, tabular_review, prompts, folders, review_table, assistant_chat_v2, legal_corpus, draft_admin_templates, plan_execution, metrics, document_editor, playbooks, agent_runs, case_workflows, health, operations
     # #region agent log
     try:
         _debug_log("main.py:97", "Routes imported successfully", {"step": "routes_imported"})
@@ -544,6 +544,7 @@ async def add_csp_header(request: Request, call_next):
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
 app.include_router(cases.router, prefix="/api/cases", tags=["cases"])
+app.include_router(case_members.router, prefix="/api/cases", tags=["case-members"])
 app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 app.include_router(upload.router, prefix="/api/upload", tags=["upload"])
 app.include_router(websocket.tabular_router, tags=["websocket"])

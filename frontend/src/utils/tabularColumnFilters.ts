@@ -1,4 +1,5 @@
 import type { TabularColumn, TabularRow } from "@/services/tabularReviewApi"
+import { isExplicitTabularNaValue } from "./tabularCellDisplay"
 import { isDateColumn, parseTabularDateMs } from "./tabularDateUtils"
 import { isNumericColumn, parseFilterNumber, parseNumericCellValue } from "./tabularNumericUtils"
 
@@ -80,8 +81,8 @@ export function normalizeCellValue(val: string | null | undefined): string {
 export function isEmptyCellValue(val: string | null | undefined): boolean {
   const normalized = normalizeCellValue(val)
   if (normalized === EMPTY_VALUE_KEY) return true
-  const upper = normalized.toUpperCase()
-  return upper === "-" || upper === "—" || upper === "N/A"
+  if (normalized === "-" || normalized === "—") return true
+  return isExplicitTabularNaValue(normalized)
 }
 
 export function getOperatorsForColumn(column: TabularColumn | undefined): FilterOperatorOption[] {

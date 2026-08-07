@@ -36,6 +36,7 @@ from app.services.tabular_extraction_schemas import (
     extraction_schema_for_column,
     typed_extraction_to_cell_model,
 )
+from app.services.tabular_extraction_policy import TABULAR_NA_VALUE, ensure_na_reasoning
 from app.services.tabular_review_models import TabularCellExtractionModel
 
 logger = logging.getLogger(__name__)
@@ -74,6 +75,7 @@ class CellRetrievalParams:
     exact_literals: Tuple[str, ...] = ()
     search_queries: Tuple[str, ...] = ()
     file_context: Optional[Any] = None  # TabularFileContextPackage when DCP enabled
+    preferred_zones: Tuple[str, ...] = ()
 
 
 @dataclass
@@ -142,12 +144,12 @@ def tabular_recall_k() -> int:
 
 def tabular_final_k(column_type: str) -> int:
     if column_type in _SIMPLE_COLUMN_TYPES:
-        return max(2, int(getattr(config, "TABULAR_FINAL_K_SIMPLE", 3) or 3))
-    return max(3, int(getattr(config, "TABULAR_FINAL_K", 5) or 5))
+        return max(2, int(getattr(config, "TABULAR_FINAL_K_SIMPLE", 8) or 8))
+    return max(3, int(getattr(config, "TABULAR_FINAL_K", 8) or 8))
 
 
 def tabular_context_max_chars() -> int:
-    return max(2000, int(getattr(config, "TABULAR_CONTEXT_MAX_CHARS", 6000) or 6000))
+    return max(2000, int(getattr(config, "TABULAR_CONTEXT_MAX_CHARS", 12000) or 12000))
 
 
 def tabular_rerank_enabled() -> bool:
@@ -264,12 +266,14 @@ def cell_retrieval_params_from_models(
         column_source_query,
         rewrite_tabular_search_query,
     )
+    from app.services.tabular_zone_routing import resolve_preferred_zones_for_column
 
     run_ctx: Optional[TabularColumnRunContext] = column_run
     source_query = column_source_query(column)
     lexical_terms: Tuple[str, ...] = ()
     exact_literals: Tuple[str, ...] = ()
     search_queries: Tuple[str, ...] = ()
+    preferred_zones = resolve_preferred_zones_for_column(column)
     if run_ctx:
         search_query = run_ctx.search_query
         query_embedding = run_ctx.query_embedding
@@ -310,6 +314,7 @@ def cell_retrieval_params_from_models(
         exact_literals=exact_literals,
         search_queries=search_queries,
         file_context=file_context,
+        preferred_zones=preferred_zones,
     )
 
 
@@ -521,6 +526,16 @@ def retrieve_case_assistant_context_for_cell(
         meta["status"] = "no_recall_docs"
         return "", [], [], meta
 
+    if params.preferred_zones:
+        try:
+            from app.services.document_zones import prefer_zone_docs_for_prompt
+
+            recall_docs = prefer_zone_docs_for_prompt(
+                recall_docs, params.preferred_zones
+            )
+        except Exception:
+            pass
+
     ranked_docs, resolve_meta = rerank_and_resolve_documents(
         question=rerank_question,
         docs=recall_docs,
@@ -540,6 +555,18 @@ def retrieve_case_assistant_context_for_cell(
         ranked_docs = prefer_short_docs_for_prompt(ranked_docs)
     except Exception:
         pass
+
+    try:
+        from app.services.document_zones import prefer_zone_docs_for_prompt, zone_histogram
+
+        if params.preferred_zones:
+            ranked_docs = prefer_zone_docs_for_prompt(
+                ranked_docs, params.preferred_zones
+            )
+            meta["preferred_zones"] = list(params.preferred_zones)
+            meta["zone_histogram"] = zone_histogram(ranked_docs)
+    except Exception as zone_exc:
+        meta["zone_preference_error"] = str(zone_exc)[:200]
 
     assembled = assemble_rag_output(
         rag_service=rag_service,
@@ -566,8 +593,29 @@ def prepare_cell_retrieval_sync(
     Blocking case-assistant RAG for one cell (one file scope).
 
     Uses a dedicated DB session and plain-value params so parallel workers stay thread-safe.
+    Short documents skip chunk RAG and use full original_text (phase 2.4).
     """
+    from app.services.tabular_short_doc_policy import (
+        build_short_doc_cell_context,
+        should_use_short_doc_full_text,
+    )
     from app.utils.database import SessionLocal
+
+    if should_use_short_doc_full_text(params.original_text):
+        context_text, included_docs = build_short_doc_cell_context(
+            original_text=params.original_text,
+            file_id=params.file_id,
+            filename=params.filename,
+        )
+        return PreparedCellContext(
+            file_chunks=list(included_docs),
+            context_text=context_text,
+            included_docs=included_docs,
+            retrieval_meta={
+                "status": "short_doc_full_text",
+                "short_doc_chars": len(context_text),
+            },
+        )
 
     db = SessionLocal()
     try:
@@ -665,17 +713,17 @@ def _build_system_prompt_content(column: TabularColumn) -> str:
             "- Извлеки дату подписания или составления ЭТОГО документа из шапки, реквизитов, "
             "строки «г. …» или блока подписей\n"
             "- Не подставляй даты из приложений, ссылок на другие документы и исторических данных сторон\n"
-            "- cell_value — только YYYY-MM-DD или ровно N/A\n"
+            "- cell_value — только YYYY-MM-DD или ровно «—»\n"
         )
     yes_no_rules = ""
     if column.column_type == "yes_no":
         yes_no_rules = (
             "\nДля yes_no:\n"
-            '- cell_value — строго «Да», «Нет» или N/A\n'
+            '- cell_value — строго «Да», «Нет» или «—»\n'
             "- «Да» — в документе есть основание для положительного ответа на вопрос колонки\n"
             "- «Нет» — в документе явно следует отрицательный ответ\n"
-            "- N/A — в фрагментах нет данных для ответа (не выдумывай)\n"
-            "- Не используй Yes/No, true/false, 1/0\n"
+            "- «—» — в фрагментах нет данных для ответа (не выдумывай)\n"
+            "- Не используй Yes/No, true/false, 1/0, N/A\n"
         )
     return (
         "Ты эксперт по извлечению информации из юридических документов.\n"
@@ -685,13 +733,13 @@ def _build_system_prompt_content(column: TabularColumn) -> str:
         "ВАЖНО:\n"
         "- Указывай source_page только как целое число страницы; если неизвестно — не указывай поле\n"
         '- Указывай source_section при наличии (например, "Раздел 3.1")\n'
-        "- Для любого ответа кроме N/A обязательны: verbatim_extract (дословная цитата) "
+        "- Для любого ответа кроме «—» обязательны: verbatim_extract (дословная цитата) "
         "и source_references с полем text — цитата должна буквально встречаться во фрагментах\n"
         "- Сначала найди цитату-основание, затем выведи cell_value только из этой цитаты\n"
         "- Указывай source_references — массив цитат с полями text, page и при необходимости section\n"
         "- Указывай reasoning — как cell_value следует из цитаты\n"
         "- Указывай confidence (0.0–1.0)\n"
-        '- Если информации нет в фрагментах — cell_value = "N/A" (не выдумывай)\n'
+        '- Если информации нет в фрагментах — cell_value = "—" (не выдумывай)\n'
         "- Не отвечай без дословной опоры на приведённые фрагменты\n"
         "- Для tag используй только опции из списка выше"
     )
@@ -714,7 +762,7 @@ def build_extraction_prompt(column: TabularColumn) -> ChatPromptTemplate:
 {context}
 
 Сначала выбери дословную цитату-основание из фрагментов, затем извлеки значение
-для ячейки согласно типу {column_type}. Без цитаты во фрагментах — N/A.
+для ячейки согласно типу {column_type}. Без цитаты во фрагментах — «—».
 Если тип verbatim — cell_value и verbatim_extract совпадают.""",
             ),
         ]
@@ -791,8 +839,10 @@ async def _invoke_single_pass_cell_extraction(
 
     return typed_extraction_to_cell_model(
         {
-            "cell_value": "N/A",
-            "reasoning": f"Не удалось извлечь данные из документа '{file.filename}'",
+            "cell_value": TABULAR_NA_VALUE,
+            "reasoning": ensure_na_reasoning(
+                f"Не удалось извлечь данные из документа '{file.filename}'"
+            ),
             "extraction_method": "llm_rag",
         },
         column=column,
@@ -979,8 +1029,10 @@ def _build_sql_routed_failure_result(
     reason: str,
 ) -> TabularCellPipelineResult:
     extraction = TabularCellExtractionModel(
-        cell_value="N/A",
-        reasoning=f"SQL-запрос не выполнен для '{file.filename}': {reason}",
+        cell_value=TABULAR_NA_VALUE,
+        reasoning=ensure_na_reasoning(
+            f"SQL-запрос не выполнен для '{file.filename}': {reason}"
+        ),
         column_type=str(column.column_type or "text"),
         extraction_method="tabular_routed_sql",
     )
@@ -1154,8 +1206,101 @@ async def run_tabular_cell_extraction(
     file_context_packages: Optional[Dict[str, Any]] = None,
 ) -> TabularCellPipelineResult:
     """
-    One cell = routed SQL/RAG/hybrid (SQL-flagged files) or case-assistant RAG + typed extract.
+    One cell routed by ColumnKind:
+    manual → skip; risk_analysis → fixed graph; else schema-first → SQL/RAG.
     """
+    from app.services.contract_facts_service import try_extraction_from_contract_facts
+    from app.services.tabular_column_kind import resolve_column_kind
+    from app.services.tabular_extraction_schemas import typed_extraction_to_cell_model
+    from app.services.tabular_risk_analysis_graph import run_tabular_risk_analysis
+
+    kind = resolve_column_kind(column)
+
+    if kind == "manual":
+        extraction = typed_extraction_to_cell_model(
+            {
+                "cell_value": TABULAR_NA_VALUE,
+                "reasoning": "Колонка manual — без AI-извлечения",
+                "extraction_method": "manual",
+                "confidence": 0.0,
+            },
+            column=column,
+        )
+        prepared = PreparedCellContext(
+            file_chunks=[],
+            context_text="",
+            included_docs=[],
+            retrieval_meta={"status": "manual", "column_kind": kind},
+        )
+        verification = apply_evidence_first_policy(
+            extraction,
+            column=column,
+            file=file,
+            included_docs=[],
+        )
+        return TabularCellPipelineResult(
+            extraction=verification.result,
+            prepared=prepared,
+            verification=verification,
+        )
+
+    if kind == "risk_analysis":
+        file_ctx = None
+        if file_context_packages:
+            file_ctx = file_context_packages.get(str(file.id))
+        extraction, docs, risk_meta = await run_tabular_risk_analysis(
+            llm,
+            rag_service=rag_service,
+            file=file,
+            column=column,
+            normalize_fn=normalize_fn,
+            column_run=column_run,
+            file_context=file_ctx,
+        )
+        risk_meta = dict(risk_meta or {})
+        risk_meta["column_kind"] = kind
+        prepared = PreparedCellContext(
+            file_chunks=list(docs),
+            context_text=(extraction.verbatim_extract or extraction.cell_value or ""),
+            included_docs=list(docs),
+            retrieval_meta=risk_meta,
+        )
+        verification = apply_evidence_first_policy(
+            extraction,
+            column=column,
+            file=file,
+            included_docs=docs,
+        )
+        return TabularCellPipelineResult(
+            extraction=verification.result,
+            prepared=prepared,
+            verification=verification,
+        )
+
+    # fact / verbatim / summary → schema-first then RAG
+    schema_hit = try_extraction_from_contract_facts(file, column, allow_lazy=True)
+    if schema_hit is not None:
+        extraction, evidence_docs, schema_meta = schema_hit
+        schema_meta = dict(schema_meta or {})
+        schema_meta["column_kind"] = kind
+        prepared = PreparedCellContext(
+            file_chunks=list(evidence_docs),
+            context_text=(extraction.verbatim_extract or extraction.cell_value or ""),
+            included_docs=list(evidence_docs),
+            retrieval_meta=schema_meta,
+        )
+        verification = apply_evidence_first_policy(
+            extraction,
+            column=column,
+            file=file,
+            included_docs=evidence_docs,
+        )
+        return TabularCellPipelineResult(
+            extraction=verification.result,
+            prepared=prepared,
+            verification=verification,
+        )
+
     if db is not None:
         routed_result = await _run_routed_sql_flag_cell_extraction(
             llm,
@@ -1180,6 +1325,7 @@ async def run_tabular_cell_extraction(
         column_run=column_run,
         file_context=file_ctx,
     )
+    # Summary columns: prefer fuller short-doc / larger budget via column_type already
     prepared = await asyncio.to_thread(
         prepare_cell_retrieval_sync,
         rag_service,
@@ -1197,6 +1343,9 @@ async def run_tabular_cell_extraction(
         column_type=str(column.column_type or "text"),
         original_text=str(file.original_text or ""),
     )
+    if prepared.retrieval_meta is None:
+        prepared.retrieval_meta = {}
+    prepared.retrieval_meta["column_kind"] = kind
 
     extraction = try_extraction_from_front_matter(prepared.included_docs, column=column)
     if extraction is None:

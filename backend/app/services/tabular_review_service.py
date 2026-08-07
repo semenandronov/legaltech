@@ -19,14 +19,26 @@ from app.services.tabular_cell_pipeline import (
     TabularColumnExtractionOutcome,
 )
 from app.services.tabular_extraction_policy import (
+    TABULAR_NA_VALUE,
     coerce_source_references,
     count_nonempty_cells,
+    is_explicit_na_token,
 )
 from app.services.tabular_cell_payload import build_tabular_cell_db_payload
 from app.services.tabular_file_queries import (
     fetch_files_for_extraction,
     fetch_files_for_table,
     fetch_files_ids_only,
+)
+from app.services.tabular_column_condition import (
+    evaluate_run_condition,
+    parse_run_condition,
+    skipped_extraction_result,
+    validate_run_condition_graph,
+)
+from app.services.tabular_cell_flags import (
+    normalize_user_flag,
+    resolve_auto_user_flag,
 )
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
@@ -71,7 +83,18 @@ class TabularReviewService:
         except Exception as e:
             self.llm = None
             logger.warning(f"GigaChat not configured: {e}, extraction will not work")
-    
+
+    def _get_review(self, review_id: str) -> TabularReview:
+        """Load review by id. Case ACL is enforced at the route boundary."""
+        review = (
+            self.db.query(TabularReview)
+            .filter(TabularReview.id == str(review_id))
+            .first()
+        )
+        if not review:
+            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        return review
+
     def create_tabular_review(
         self, 
         case_id: str, 
@@ -81,11 +104,8 @@ class TabularReviewService:
         selected_file_ids: Optional[List[str]] = None
     ) -> TabularReview:
         """Create a new tabular review"""
-        # Verify case exists and belongs to user
-        case = self.db.query(Case).filter(
-            and_(Case.id == case_id, Case.user_id == user_id)
-        ).first()
-        
+        # Case write access is enforced at the route boundary.
+        case = self.db.query(Case).filter(Case.id == case_id).first()
         if not case:
             raise ValueError(f"Case {case_id} not found or access denied")
         
@@ -162,13 +182,7 @@ class TabularReviewService:
         user_id: str
     ) -> bool:
         """Delete a tabular review (cascade deletes all columns, cells, etc.)"""
-        # Verify review belongs to user
-        review = self.db.query(TabularReview).filter(
-            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
-        ).first()
-        
-        if not review:
-            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        review = self._get_review(review_id)
         
         # Delete review (cascade will delete all columns, cells, document_statuses, etc.)
         self.db.delete(review)
@@ -185,12 +199,7 @@ class TabularReviewService:
         description: Optional[str] = None
     ) -> TabularReview:
         """Update review name/description"""
-        review = self.db.query(TabularReview).filter(
-            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
-        ).first()
-
-        if not review:
-            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        review = self._get_review(review_id)
 
         if name is not None:
             review.name = name.strip()
@@ -212,13 +221,7 @@ class TabularReviewService:
         column_config: Optional[Dict[str, Any]] = None
     ) -> TabularColumn:
         """Add a column to tabular review"""
-        # Verify review belongs to user
-        review = self.db.query(TabularReview).filter(
-            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
-        ).first()
-        
-        if not review:
-            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        review = self._get_review(review_id)
 
         from app.services.tabular_column_type_contract import (
             validate_column_config,
@@ -227,6 +230,11 @@ class TabularReviewService:
 
         column_type = validate_column_type(column_type)
         validate_column_config(column_type, column_config)
+        self._validate_run_condition_for_review(
+            review_id=review_id,
+            column_id=None,
+            column_config=column_config,
+        )
         
         # Get max order_index
         max_order = self.db.query(TabularColumn.order_index).filter(
@@ -315,13 +323,7 @@ class TabularReviewService:
         column_config: Optional[Dict[str, Any]] = None
     ) -> TabularColumn:
         """Update a column (rename, type, prompt, config)"""
-        # Verify review belongs to user
-        review = self.db.query(TabularReview).filter(
-            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
-        ).first()
-        
-        if not review:
-            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        review = self._get_review(review_id)
         
         # Get the column
         column = self.db.query(TabularColumn).filter(
@@ -352,6 +354,15 @@ class TabularReviewService:
         if prompt is not None:
             column.prompt = prompt
         if column_config is not None:
+            from app.services.tabular_column_type_contract import validate_column_config
+
+            effective_type = column.column_type if column_type is None else column_type
+            validate_column_config(effective_type, column_config)
+            self._validate_run_condition_for_review(
+                review_id=review_id,
+                column_id=column_id,
+                column_config=column_config,
+            )
             column.column_config = column_config
         
         self.db.commit()
@@ -360,6 +371,130 @@ class TabularReviewService:
         logger.info(f"Updated column {column_id} in review {review_id}")
         return column
     
+    def _validate_run_condition_for_review(
+        self,
+        *,
+        review_id: str,
+        column_id: Optional[str],
+        column_config: Optional[Dict[str, Any]],
+    ) -> None:
+        condition = parse_run_condition(column_config)
+        if condition is None:
+            return
+        columns = self.db.query(TabularColumn).filter(
+            TabularColumn.tabular_review_id == review_id
+        ).all()
+        review_ids = {c.id for c in columns}
+        conditions_by_column = {
+            c.id: parse_run_condition(getattr(c, "column_config", None))
+            for c in columns
+        }
+        validate_run_condition_graph(
+            column_id=column_id,
+            column_config=column_config,
+            review_column_ids=review_ids,
+            conditions_by_column=conditions_by_column,
+        )
+
+    def _order_columns_for_extraction(
+        self,
+        columns: List[TabularColumn],
+    ) -> List[TabularColumn]:
+        """Topological order so condition sources run before dependents."""
+        by_id = {c.id: c for c in columns}
+        deps = {
+            c.id: (
+                parse_run_condition(getattr(c, "column_config", None)).source_column_id
+                if parse_run_condition(getattr(c, "column_config", None))
+                else None
+            )
+            for c in columns
+        }
+        visited = set()
+        ordered: List[TabularColumn] = []
+
+        def visit(cid: str) -> None:
+            if cid in visited or cid not in by_id:
+                return
+            visited.add(cid)
+            parent = deps.get(cid)
+            if parent:
+                visit(parent)
+            ordered.append(by_id[cid])
+
+        for column in sorted(columns, key=lambda c: c.order_index or 0):
+            visit(column.id)
+        return ordered
+
+    def _conditional_skip_result_if_needed(
+        self,
+        file: File,
+        column: TabularColumn,
+    ) -> Optional[Dict[str, Any]]:
+        condition = parse_run_condition(getattr(column, "column_config", None))
+        if condition is None:
+            return None
+        source_col = self.db.query(TabularColumn).filter(
+            TabularColumn.id == condition.source_column_id
+        ).first()
+        source_label = source_col.column_label if source_col else condition.source_column_id
+        source_cell = self.db.query(TabularCell).filter(
+            and_(
+                TabularCell.file_id == file.id,
+                TabularCell.column_id == condition.source_column_id,
+            )
+        ).first()
+        source_value = source_cell.cell_value if source_cell else None
+        source_norm = source_cell.normalized_value if source_cell else None
+        if evaluate_run_condition(
+            condition,
+            source_cell_value=source_value,
+            source_normalized_value=source_norm,
+        ):
+            return None
+        return skipped_extraction_result(
+            file_id=file.id,
+            column_id=column.id,
+            condition=condition,
+            source_label=source_label,
+        )
+
+    def update_cell_user_flag(
+        self,
+        review_id: str,
+        file_id: str,
+        column_id: str,
+        user_id: str,
+        user_flag: Optional[str],
+    ) -> TabularCell:
+        """Set or clear lawyer triage flag on a cell."""
+        review = self._get_review(review_id)
+
+        flag = normalize_user_flag(user_flag)
+        cell = self.db.query(TabularCell).filter(
+            and_(
+                TabularCell.tabular_review_id == review_id,
+                TabularCell.file_id == file_id,
+                TabularCell.column_id == column_id,
+            )
+        ).first()
+        if not cell:
+            cell = TabularCell(
+                tabular_review_id=review_id,
+                file_id=file_id,
+                column_id=column_id,
+                cell_value=None,
+                status="pending",
+                user_flag=flag,
+            )
+            self.db.add(cell)
+        else:
+            cell.user_flag = flag
+            cell.updated_at = datetime.utcnow()
+        self.db.commit()
+        self.db.refresh(cell)
+        return cell
+    
     def delete_column(
         self,
         review_id: str,
@@ -367,12 +502,7 @@ class TabularReviewService:
         user_id: str,
     ) -> Dict[str, Any]:
         """Delete a column and related rows in review queue; compact order_index."""
-        review = self.db.query(TabularReview).filter(
-            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
-        ).first()
-
-        if not review:
-            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        review = self._get_review(review_id)
 
         column = self.db.query(TabularColumn).filter(
             and_(
@@ -462,13 +592,7 @@ class TabularReviewService:
         user_id: str
     ) -> List[TabularColumn]:
         """Reorder columns by providing ordered list of column IDs"""
-        # Verify review belongs to user
-        review = self.db.query(TabularReview).filter(
-            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
-        ).first()
-        
-        if not review:
-            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        review = self._get_review(review_id)
         
         # Get all columns for this review
         columns = self.db.query(TabularColumn).filter(
@@ -508,13 +632,7 @@ class TabularReviewService:
         logger.debug(f"[DEBUG HYPOTHESIS J] [get_table_data] Called: review_id={review_id}, user_id={user_id}")
         # #endregion
         
-        # Verify review belongs to user
-        review = self.db.query(TabularReview).filter(
-            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
-        ).first()
-        
-        if not review:
-            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        review = self._get_review(review_id)
         
         # Metadata only — no file_content / html_content blobs
         file_ids = review.selected_file_ids if review.selected_file_ids else None
@@ -600,9 +718,9 @@ class TabularReviewService:
         ).all()
         
         # Get document statuses
+        # Statuses are shared for all case members (not per-viewer).
         statuses = self.db.query(TabularDocumentStatus).filter(
             TabularDocumentStatus.tabular_review_id == review_id,
-            TabularDocumentStatus.user_id == user_id
         ).all()
         
         # Build cell map for quick lookup
@@ -610,6 +728,10 @@ class TabularReviewService:
         for cell in cells:
             key = (cell.file_id, cell.column_id)
             cell_map[key] = cell
+
+        from app.services.cell_comment_service import CellCommentService
+
+        comment_counts = CellCommentService(self.db).comment_counts_by_cell(review_id)
         
         # Build status map
         status_map = {s.file_id: s for s in statuses}
@@ -654,6 +776,11 @@ class TabularReviewService:
                     "primary_source_char_start": getattr(cell, "primary_source_char_start", None) if cell else None,
                     "primary_source_char_end": getattr(cell, "primary_source_char_end", None) if cell else None,
                     "verified_flag": getattr(cell, "verified_flag", None) if cell else None,
+                    "user_flag": getattr(cell, "user_flag", None) if cell else None,
+                    "comment_count": comment_counts.get((file.id, column.id), {}).get("comment_count", 0),
+                    "unresolved_comment_count": comment_counts.get((file.id, column.id), {}).get(
+                        "unresolved_comment_count", 0
+                    ),
                 }
             
             table_rows.append(row)
@@ -794,10 +921,10 @@ class TabularReviewService:
 """,
                 "yes_no": """
 КРИТИЧЕСКИ ВАЖНО для типа yes_no:
-- cell_value ДОЛЖЕН быть ТОЛЬКО «Да», «Нет» или N/A
-- Положительный ответ по документу — «Да»; отрицательный — «Нет»; данных нет — N/A
-- Не используй Yes/No, true/false, 1/0, Unknown
-- Примеры ПРАВИЛЬНО: «Да», «Нет», N/A
+- cell_value ДОЛЖЕН быть ТОЛЬКО «Да», «Нет» или «—»
+- Положительный ответ по документу — «Да»; отрицательный — «Нет»; данных нет — «—»
+- Не используй Yes/No, true/false, 1/0, Unknown, N/A
+- Примеры ПРАВИЛЬНО: «Да», «Нет», «—»
 """,
                 "tag": """
 КРИТИЧЕСКИ ВАЖНО для типа tag:
@@ -817,12 +944,13 @@ class TabularReviewService:
 {format_instruction}
 
 ВАЖНО:
-1. Если информация не найдена, верни "N/A" для cell_value
+1. Если информация не найдена, верни "—" для cell_value
 2. СТРОГО соблюдай формат для типа {column.column_type} - это КРИТИЧЕСКИ ВАЖНО
-3. Для yes_no: только «Да», «Нет» или N/A
+3. Для yes_no: только «Да», «Нет» или «—»
 4. Для verbatim: приведи точную цитату из документа
 5. Для tag: используй ТОЛЬКО опции из списка выше
-6. ВСЕГДА указывай reasoning - подробное объяснение, откуда взялась информация
+6. ВСЕГДА указывай reasoning — подробное объяснение; если cell_value = «—»,
+   напиши, что чёткий ответ невозможен, потому что нужный фрагмент в документе не найден
 7. ВСЕГДА указывай source_references - конкретные места в документе (страницы, разделы, цитаты)
 8. ВСЕГДА указывай verbatim_extract - дословная цитата из документа (5-25 слов), которая БУКВАЛЬНО содержит ответ, без изменений и перефразирования
 
@@ -830,7 +958,7 @@ class TabularReviewService:
 {{
     "cell_value": "извлеченное значение (СТРОГО по формату типа {column.column_type})",
     "verbatim_extract": "дословная цитата из документа, буквально содержащая ответ (5-25 слов, точно как в тексте)",
-    "reasoning": "подробное объяснение, почему именно такой ответ, с указанием конкретных мест в документе",
+    "reasoning": "подробное объяснение ответа; при «—» — почему фрагмент не найден",
     "source_references": [
         {{"page": 1, "section": "Раздел 3.1", "text": "цитата из документа"}},
         {{"page": 2, "section": null, "text": "еще одна цитата"}}
@@ -1550,6 +1678,9 @@ class TabularReviewService:
         
         Determines optimal strategy and uses it for extraction
         """
+        skipped = self._conditional_skip_result_if_needed(file, column)
+        if skipped is not None:
+            return skipped
         strategy = self._determine_extraction_strategy(file, column)
         logger.debug(f"Using extraction strategy '{strategy}' for file {file.id}, column {column.id}")
         return await self.extract_cell_value_improved(
@@ -1611,9 +1742,33 @@ class TabularReviewService:
             existing_cell.primary_source_char_start = primary_source_char_start
             existing_cell.primary_source_char_end = primary_source_char_end
             existing_cell.verified_flag = verified_flag
+            if "user_flag" in result:
+                existing_cell.user_flag = result.get("user_flag")
+            elif result.get("status") != "skipped":
+                column = self.db.query(TabularColumn).filter(
+                    TabularColumn.id == result["column_id"]
+                ).first()
+                auto_flag = resolve_auto_user_flag(
+                    getattr(column, "column_config", None) if column else None,
+                    cell_value=result.get("cell_value"),
+                    normalized_value=result.get("normalized_value"),
+                )
+                if auto_flag is not None:
+                    existing_cell.user_flag = auto_flag
             existing_cell.status = result.get("status", "completed")
             existing_cell.updated_at = datetime.utcnow()
             return existing_cell
+
+        auto_flag = result.get("user_flag")
+        if auto_flag is None and result.get("status") != "skipped":
+            column = self.db.query(TabularColumn).filter(
+                TabularColumn.id == result["column_id"]
+            ).first()
+            auto_flag = resolve_auto_user_flag(
+                getattr(column, "column_config", None) if column else None,
+                cell_value=result.get("cell_value"),
+                normalized_value=result.get("normalized_value"),
+            )
 
         cell = TabularCell(
             tabular_review_id=review_id,
@@ -1633,6 +1788,7 @@ class TabularReviewService:
             primary_source_char_start=primary_source_char_start,
             primary_source_char_end=primary_source_char_end,
             verified_flag=verified_flag,
+            user_flag=auto_flag,
         )
         self.db.add(cell)
         return cell
@@ -1818,13 +1974,7 @@ class TabularReviewService:
     
     async def run_extraction(self, review_id: str, user_id: str) -> Dict[str, Any]:
         """Run parallel extraction for all documents and columns"""
-        # Verify review belongs to user
-        review = self.db.query(TabularReview).filter(
-            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
-        ).first()
-        
-        if not review:
-            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        review = self._get_review(review_id)
         
         # Update status
         review.status = "processing"
@@ -1834,11 +1984,11 @@ class TabularReviewService:
             file_ids = review.selected_file_ids if review.selected_file_ids else None
             files = fetch_files_for_extraction(self.db, review.case_id, file_ids)
 
-            # Get columns
+            # Get columns (condition sources before dependents)
             columns = self.db.query(TabularColumn).filter(
                 TabularColumn.tabular_review_id == review_id
             ).order_by(TabularColumn.order_index).all()
-            
+            columns = self._order_columns_for_extraction(columns) 
             if not files:
                 raise ValueError("No files found for this case")
             
@@ -1853,35 +2003,36 @@ class TabularReviewService:
             document_processor = get_document_processor()
             prepare_bm25_for_tabular_extraction(document_processor, review.case_id)
 
-            tasks = [
-                self.extract_cell_value_smart(file, column, rag_service=rag_service)
-                for file in files
-                for column in columns
-            ]
-            
-            # Execute tasks in parallel
-            logger.info(f"Starting parallel extraction: {len(tasks)} tasks")
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            # Save results to database
             saved_count = 0
             error_count = 0
-            
-            for result in results:
-                if isinstance(result, Exception):
-                    error_count += 1
-                    logger.error(f"Extraction task failed: {result}")
-                    continue
-                
-                if result.get("error"):
-                    error_count += 1
-                    continue
+            total_tasks = 0
 
-                # Canonical persistence path (keeps deep-link + provenance fields consistent).
-                self.upsert_tabular_cell_from_extraction(review_id, result)
-                saved_count += 1
-            
-            self.db.commit()
+            # Column-by-column so run_condition sources are committed before dependents.
+            for column in columns:
+                if column.column_type == "manual_input":
+                    continue
+                tasks = [
+                    self.extract_cell_value_smart(file, column, rag_service=rag_service)
+                    for file in files
+                ]
+                total_tasks += len(tasks)
+                logger.info(
+                    "Starting extraction for column %s: %s tasks",
+                    column.id,
+                    len(tasks),
+                )
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                for result in results:
+                    if isinstance(result, Exception):
+                        error_count += 1
+                        logger.error(f"Extraction task failed: {result}")
+                        continue
+                    if result.get("error"):
+                        error_count += 1
+                        continue
+                    self.upsert_tabular_cell_from_extraction(review_id, result)
+                    saved_count += 1
+                self.db.commit()
 
             try:
                 self._refresh_review_queue(review_id)
@@ -1904,7 +2055,7 @@ class TabularReviewService:
                 "status": "completed",
                 "saved_count": saved_count,
                 "error_count": error_count,
-                "total_tasks": len(tasks)
+                "total_tasks": total_tasks,
             }
             
         except Exception as e:
@@ -1951,12 +2102,7 @@ class TabularReviewService:
         user_id: str,
     ) -> Dict[str, Any]:
         """Validate column run and return metadata (no LLM work)."""
-        review = self.db.query(TabularReview).filter(
-            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
-        ).first()
-
-        if not review:
-            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        review = self._get_review(review_id)
 
         column = self.db.query(TabularColumn).filter(
             and_(
@@ -1987,6 +2133,71 @@ class TabularReviewService:
             "case_id": review.case_id,
         }
 
+    def mark_column_cells_processing(
+        self,
+        review_id: str,
+        column_id: str,
+    ) -> int:
+        """Reset column cells to processing so re-runs clear stale answers for UI/poll.
+
+        Must run before background extraction starts (and before clients poll table-data),
+        otherwise completed cells look "done" and the poll exits immediately.
+        """
+        review = self._get_review(review_id)
+        file_ids = review.selected_file_ids if review.selected_file_ids else None
+        files = fetch_files_for_extraction(self.db, review.case_id, file_ids)
+        if not files:
+            return 0
+
+        file_id_list = [str(f.id) for f in files]
+        existing = (
+            self.db.query(TabularCell)
+            .filter(
+                and_(
+                    TabularCell.tabular_review_id == review_id,
+                    TabularCell.column_id == column_id,
+                    TabularCell.file_id.in_(file_id_list),
+                )
+            )
+            .all()
+        )
+        by_file = {str(cell.file_id): cell for cell in existing}
+        now = datetime.utcnow()
+
+        for file_id in file_id_list:
+            cell = by_file.get(file_id)
+            if cell is None:
+                self.db.add(
+                    TabularCell(
+                        tabular_review_id=review_id,
+                        file_id=file_id,
+                        column_id=column_id,
+                        status="processing",
+                    )
+                )
+                continue
+
+            cell.cell_value = None
+            cell.normalized_value = None
+            cell.verbatim_extract = None
+            cell.reasoning = None
+            cell.source_references = None
+            cell.confidence_score = None
+            cell.source_page = None
+            cell.source_section = None
+            cell.candidates = None
+            cell.conflict_resolution = None
+            cell.primary_source_doc_id = None
+            cell.primary_source_char_start = None
+            cell.primary_source_char_end = None
+            cell.verified_flag = None
+            cell.user_flag = None
+            cell.status = "processing"
+            cell.updated_at = now
+
+        self.db.commit()
+        return len(file_id_list)
+
     async def _extract_single_column_cell_with_slot(
         self,
         file: File,
@@ -2013,12 +2224,7 @@ class TabularReviewService:
         user_id: str,
     ) -> Dict[str, Any]:
         """Run extraction for one column (bounded parallelism, WS updates)."""
-        review = self.db.query(TabularReview).filter(
-            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
-        ).first()
-
-        if not review:
-            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        review = self._get_review(review_id)
 
         column = self.db.query(TabularColumn).filter(
             and_(
@@ -2054,6 +2260,9 @@ class TabularReviewService:
         files = fetch_files_for_extraction(self.db, review.case_id, file_ids)
         if not files:
             raise ValueError("No files found for this case")
+
+        # Idempotent for API path (already marked on 202) and required for sync callers.
+        self.mark_column_cells_processing(review_id, column_id)
 
         from app.services.rag_service import get_rag_service
         from app.services.document_processor import get_document_processor
@@ -2197,13 +2406,7 @@ class TabularReviewService:
         user_id: str
     ) -> TabularReview:
         """Update selected files for a tabular review"""
-        # Verify review belongs to user
-        review = self.db.query(TabularReview).filter(
-            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
-        ).first()
-        
-        if not review:
-            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        review = self._get_review(review_id)
         
         # Verify files belong to the case
         if file_ids:
@@ -2227,13 +2430,7 @@ class TabularReviewService:
         status: str
     ) -> TabularDocumentStatus:
         """Mark document as reviewed"""
-        # Verify review belongs to user
-        review = self.db.query(TabularReview).filter(
-            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
-        ).first()
-        
-        if not review:
-            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        review = self._get_review(review_id)
         
         # Get or create status
         doc_status = self.db.query(TabularDocumentStatus).filter(
@@ -2271,13 +2468,7 @@ class TabularReviewService:
         is_manual_override: bool = True
     ) -> TabularCell:
         """Update a cell value (manual edit) by file_id and column_id"""
-        # Verify review belongs to user
-        review = self.db.query(TabularReview).filter(
-            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
-        ).first()
-        
-        if not review:
-            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        review = self._get_review(review_id)
         
         # Get or create the cell with atomic locking (SELECT FOR UPDATE)
         # Это предотвращает race conditions при одновременном редактировании
@@ -2373,13 +2564,7 @@ class TabularReviewService:
         user_id: str
     ) -> int:
         """Bulk update document status for multiple files"""
-        # Verify review belongs to user
-        review = self.db.query(TabularReview).filter(
-            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
-        ).first()
-        
-        if not review:
-            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        review = self._get_review(review_id)
         
         files = fetch_files_ids_only(self.db, review.case_id, file_ids)
         if len(files) != len(file_ids):
@@ -2422,13 +2607,7 @@ class TabularReviewService:
         user_id: str
     ) -> Dict[str, Any]:
         """Bulk run extraction for specific files and columns"""
-        # Verify review belongs to user
-        review = self.db.query(TabularReview).filter(
-            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
-        ).first()
-        
-        if not review:
-            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        review = self._get_review(review_id)
         
         files = fetch_files_for_extraction(self.db, review.case_id, file_ids)
         if len(files) != len(file_ids):
@@ -2444,6 +2623,7 @@ class TabularReviewService:
         
         if len(columns) != len(column_ids):
             raise ValueError("Some columns do not belong to this review")
+        columns = self._order_columns_for_extraction(columns)
 
         from app.services.rag_service import get_rag_service
         from app.services.document_processor import get_document_processor
@@ -2453,35 +2633,32 @@ class TabularReviewService:
         document_processor = get_document_processor()
         prepare_bm25_for_tabular_extraction(document_processor, review.case_id)
 
-        # Create tasks for parallel processing
-        tasks = [
-            self.extract_cell_value_smart(file, column, rag_service=rag_service)
-            for file in files
-            for column in columns
-        ]
-        
-        # Execute tasks in parallel
-        logger.info(f"Starting bulk extraction: {len(tasks)} tasks for {len(file_ids)} files, {len(column_ids)} columns")
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Save results to database
+        # Sequential by column groups would be ideal; keep gather but ordered deps first
+        # so when tasks for source finish and commit... actually gather runs parallel!
+        # For conditional correctness in bulk, process column-by-column.
         saved_count = 0
         error_count = 0
-        
-        for result in results:
-            if isinstance(result, Exception):
-                error_count += 1
-                logger.error(f"Extraction task failed: {result}")
-                continue
-            
-            if result.get("error"):
-                error_count += 1
-                continue
+        total_tasks = len(files) * len(columns)
 
-            self.upsert_tabular_cell_from_extraction(review_id, result)
-            saved_count += 1
-        
-        self.db.commit()
+        for column in columns:
+            if column.column_type == "manual_input":
+                continue
+            tasks = [
+                self.extract_cell_value_smart(file, column, rag_service=rag_service)
+                for file in files
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, Exception):
+                    error_count += 1
+                    logger.error(f"Extraction task failed: {result}")
+                    continue
+                if result.get("error"):
+                    error_count += 1
+                    continue
+                self.upsert_tabular_cell_from_extraction(review_id, result)
+                saved_count += 1
+            self.db.commit()
         
         logger.info(f"Bulk extraction completed: {saved_count} cells saved, {error_count} errors")
         
@@ -2489,7 +2666,7 @@ class TabularReviewService:
             "status": "completed",
             "saved_count": saved_count,
             "error_count": error_count,
-            "total_tasks": len(tasks),
+            "total_tasks": total_tasks,
             "files_processed": len(file_ids),
             "columns_processed": len(column_ids)
         }
@@ -2501,13 +2678,7 @@ class TabularReviewService:
         user_id: str
     ) -> int:
         """Bulk delete rows (remove files from selected_file_ids)"""
-        # Verify review belongs to user
-        review = self.db.query(TabularReview).filter(
-            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
-        ).first()
-        
-        if not review:
-            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        review = self._get_review(review_id)
         
         # Update selected_file_ids to remove deleted files
         if review.selected_file_ids:
@@ -2559,11 +2730,14 @@ class TabularReviewService:
             except Exception:
                 m = re.search(r'"cell_value"\s*:\s*"([^"]*)"', v)
                 v = m.group(1) if m else ""
-        # Normalize blanks
+        # Explicit not-found → прочерк; pending hyphen blank → empty.
         stripped = v.strip()
-        if not stripped or stripped.upper() in ("N/A", "НЕТ ДАННЫХ", "ОТСУТСТВУЕТ", "НЕ УКАЗАНО", "-", "—", "–"):
+        if not stripped:
             return ""
-        if re.match(r'^[_\-\.\s]+$', stripped):
+        if is_explicit_na_token(stripped):
+            return TABULAR_NA_VALUE
+        upper = stripped.upper()
+        if upper in ("-", "–") or re.match(r'^[_\-\.\s]+$', stripped):
             return ""
         if re.search(r'_{2,}', stripped):   # unfilled template blanks like «___» ____20__г.
             return ""
@@ -3393,13 +3567,7 @@ class TabularReviewService:
         lock_duration_seconds: int = 300  # Default 5 minutes
     ) -> TabularCell:
         """Lock a cell for editing by a specific user"""
-        # Verify review belongs to user
-        review = self.db.query(TabularReview).filter(
-            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
-        ).first()
-        
-        if not review:
-            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        review = self._get_review(review_id)
         
         # Get or create the cell
         cell = self.db.query(TabularCell).filter(
@@ -3454,13 +3622,7 @@ class TabularReviewService:
         user_id: str
     ) -> TabularCell:
         """Unlock a cell"""
-        # Verify review belongs to user
-        review = self.db.query(TabularReview).filter(
-            and_(TabularReview.id == review_id, TabularReview.user_id == user_id)
-        ).first()
-        
-        if not review:
-            raise ValueError(f"Tabular review {review_id} not found or access denied")
+        review = self._get_review(review_id)
         
         # Get the cell
         cell = self.db.query(TabularCell).filter(
@@ -3479,9 +3641,7 @@ class TabularReviewService:
             # Already unlocked
             return cell
         
-        # Check if user can unlock (must be the one who locked it or review owner)
-        if cell.locked_by != user_id and review.user_id != user_id:
-            raise ValueError("You don't have permission to unlock this cell")
+        # Route already enforced write access; collaborators may release locks.
         
         # Unlock the cell
         cell.locked_by = None

@@ -87,6 +87,9 @@ export function MikeCasesOverview({
     return cases.filter((item) => (item.title ?? '').toLowerCase().includes(q))
   }, [cases, search])
 
+  const ownedCases = useMemo(() => filtered.filter((c) => !c.is_shared), [filtered])
+  const sharedCases = useMemo(() => filtered.filter((c) => !!c.is_shared), [filtered])
+
   const allSelected = filtered.length > 0 && filtered.every((item) => selectedIds.includes(item.id))
   const someSelected = !allSelected && filtered.some((item) => selectedIds.includes(item.id))
 
@@ -257,7 +260,11 @@ export function MikeCasesOverview({
                       bgClassName={rowBg}
                       selected={selectedIds.includes(caseItem.id)}
                       onSelectionChange={() => toggleOne(caseItem.id)}
-                      label={caseItem.title || 'Без названия'}
+                      label={
+                        caseItem.is_shared
+                          ? `${caseItem.title || 'Без названия'} · доступно мне`
+                          : caseItem.title || 'Без названия'
+                      }
                     />
                     <MikeTableCell className="ml-auto w-24">{caseItem.num_documents}</MikeTableCell>
                     <MikeTableCell className="w-36">
@@ -268,7 +275,9 @@ export function MikeCasesOverview({
                       className="flex w-8 items-center justify-center"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      {onDeleteCase && <MikeRowActions onDelete={() => onDeleteCase(caseItem.id)} />}
+                      {onDeleteCase && !caseItem.is_shared && (
+                        <MikeRowActions onDelete={() => onDeleteCase(caseItem.id)} />
+                      )}
                     </MikeTableCell>
                   </MikeTableRow>
                 )
@@ -295,31 +304,51 @@ export function MikeCasesOverview({
           ) : filtered.length === 0 ? (
             emptyState
           ) : (
-            <div className="grid grid-cols-3 gap-3">
-              <button
-                type="button"
-                onClick={() => navigate('/cases/new')}
-                className="flex min-h-[196px] flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-gray-300 bg-white/60 p-4 transition-colors hover:border-gray-400 hover:bg-[#fafbfc]"
-              >
-                <span className="flex h-9 w-9 items-center justify-center rounded-full bg-gray-100 text-gray-500">
-                  <Plus className="h-4 w-4" />
-                </span>
-                <div className="px-4 text-center">
-                  <p className="text-sm font-medium text-gray-800">Новое дело</p>
-                  <p className="mt-1 text-xs leading-relaxed text-gray-400">
-                    До 10 000 файлов в деле
-                  </p>
-                </div>
-              </button>
+            <div className="space-y-8">
+              <div>
+                <h2 className="mb-3 text-xs font-medium text-gray-500">Мои</h2>
+                <div className="grid grid-cols-3 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => navigate('/cases/new')}
+                    className="flex min-h-[196px] flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-gray-300 bg-white/60 p-4 transition-colors hover:border-gray-400 hover:bg-[#fafbfc]"
+                  >
+                    <span className="flex h-9 w-9 items-center justify-center rounded-full bg-gray-100 text-gray-500">
+                      <Plus className="h-4 w-4" />
+                    </span>
+                    <div className="px-4 text-center">
+                      <p className="text-sm font-medium text-gray-800">Новое дело</p>
+                      <p className="mt-1 text-xs leading-relaxed text-gray-400">
+                        До 10 000 файлов в деле
+                      </p>
+                    </div>
+                  </button>
 
-              {filtered.map((caseItem) => (
-                <CaseCard
-                  key={caseItem.id}
-                  caseItem={caseItem}
-                  onDelete={onDeleteCase}
-                  reviewCount={reviewCounts?.[caseItem.id] ?? caseItem.tabular_reviews_count ?? 0}
-                />
-              ))}
+                  {ownedCases.map((caseItem) => (
+                    <CaseCard
+                      key={caseItem.id}
+                      caseItem={caseItem}
+                      onDelete={onDeleteCase}
+                      reviewCount={reviewCounts?.[caseItem.id] ?? caseItem.tabular_reviews_count ?? 0}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              {sharedCases.length > 0 ? (
+                <div>
+                  <h2 className="mb-3 text-xs font-medium text-gray-500">Доступные мне</h2>
+                  <div className="grid grid-cols-3 gap-3">
+                    {sharedCases.map((caseItem) => (
+                      <CaseCard
+                        key={caseItem.id}
+                        caseItem={caseItem}
+                        reviewCount={reviewCounts?.[caseItem.id] ?? caseItem.tabular_reviews_count ?? 0}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
           )}
         </div>

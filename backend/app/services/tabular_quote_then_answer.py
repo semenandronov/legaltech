@@ -6,7 +6,7 @@ Architecture (not a special-case hack):
 2) Snap/accept the quote only if it is grounded in those fragments.
 3) Derive cell_value from the quote alone — the model cannot invent from the rest of the bag.
 
-If no grounded quote exists → N/A (caller may fall back to single-pass + evidence gate).
+If no grounded quote exists → «—» (caller may fall back to single-pass + evidence gate).
 """
 from __future__ import annotations
 
@@ -20,6 +20,10 @@ from pydantic import BaseModel, Field
 
 from app.models.case import File
 from app.models.tabular_review import TabularColumn
+from app.services.tabular_extraction_policy import (
+    TABULAR_NA_VALUE,
+    ensure_na_reasoning,
+)
 from app.services.tabular_extraction_schemas import (
     extraction_schema_for_column,
     typed_extraction_to_cell_model,
@@ -244,8 +248,8 @@ def _na_extraction(
 ) -> TabularCellExtractionModel:
     return typed_extraction_to_cell_model(
         {
-            "cell_value": "N/A",
-            "reasoning": reasoning,
+            "cell_value": TABULAR_NA_VALUE,
+            "reasoning": ensure_na_reasoning(reasoning),
             "confidence": 0.0,
             "extraction_method": "quote_then_answer",
             "verbatim_extract": None,
@@ -354,7 +358,7 @@ async def invoke_quote_then_answer_extraction(
                 column=column,
                 reasoning=(
                     (located.reasoning or "").strip()
-                    + " Нет подтверждающей цитаты во фрагментах — ответ N/A."
+                    + " Нет подтверждающей цитаты во фрагментах — ответ «—»."
                 ).strip(),
             ),
             "no_quote",
@@ -372,7 +376,8 @@ async def invoke_quote_then_answer_extraction(
             _na_extraction(
                 column=column,
                 reasoning=(
-                    "Предложенная цитата не найдена дословно во фрагментах контекста — ответ N/A. "
+                    "Предложенная цитата не найдена дословно во фрагментах контекста — "
+                    "ответ «—». "
                     + (located.reasoning or "")
                 ).strip(),
             ),

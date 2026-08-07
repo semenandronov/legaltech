@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import type { TabularCellAttention } from '@/utils/tabularCellDisplay'
 
 /** View-model колонки для Mike TRTable (только отображение). */
 export interface MikeTableColumnVM {
@@ -14,7 +15,13 @@ export interface MikeTableCellVM {
   rawValue: string
   status: string
   isProcessing: boolean
-  flag?: 'green' | 'grey' | 'yellow' | 'red' | 'reviewed'
+  flag?: 'green' | 'grey' | 'yellow' | 'red' | 'orange' | 'reviewed'
+  /** Explicit «—» (fragment missing) vs blank pending cell. */
+  isExplicitNa?: boolean
+  attention?: TabularCellAttention
+  confidenceScore?: number | null
+  commentCount?: number
+  unresolvedCommentCount?: number
 }
 
 /** View-model строки документа. */

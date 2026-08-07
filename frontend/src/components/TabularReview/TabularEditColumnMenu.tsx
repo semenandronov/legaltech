@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   ArrowDown,
   ArrowUp,
@@ -39,7 +39,36 @@ export function TabularEditColumnMenu({
   onClearSort,
 }: TabularEditColumnMenuProps) {
   const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
   const showSort = Boolean(onSortAsc || onSortDesc)
+
+  useEffect(() => {
+    if (!open) return
+
+    function handlePointerDown(event: MouseEvent) {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
+        setOpen(false)
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [open])
+
+  const runAndClose = (fn?: () => void) => {
+    setOpen(false)
+    fn?.()
+  }
 
   return (
     <div className="ws-mike-col-menu-actions">
@@ -63,7 +92,11 @@ export function TabularEditColumnMenu({
           )}
         </button>
       )}
-      <div className="ws-mike-col-menu" onClick={(event) => event.stopPropagation()}>
+      <div
+        ref={rootRef}
+        className="ws-mike-col-menu"
+        onClick={(event) => event.stopPropagation()}
+      >
         <button
           type="button"
           disabled={disabled}
@@ -85,10 +118,7 @@ export function TabularEditColumnMenu({
               <button
                 type="button"
                 className="ws-mike-col-menu-item"
-                onClick={() => {
-                  setOpen(false)
-                  onOpenEdit()
-                }}
+                onClick={() => runAndClose(onOpenEdit)}
               >
                 <Pencil className="h-3.5 w-3.5" aria-hidden />
                 Редактировать колонку
@@ -98,16 +128,28 @@ export function TabularEditColumnMenu({
             {showSort && (
               <>
                 {onOpenEdit && <div className="ws-mike-col-menu-divider" role="separator" />}
-                <button type="button" className="ws-mike-col-menu-item" onClick={onSortAsc}>
+                <button
+                  type="button"
+                  className="ws-mike-col-menu-item"
+                  onClick={() => runAndClose(onSortAsc)}
+                >
                   <ArrowUp className="h-3.5 w-3.5" aria-hidden />
                   По возрастанию
                 </button>
-                <button type="button" className="ws-mike-col-menu-item" onClick={onSortDesc}>
+                <button
+                  type="button"
+                  className="ws-mike-col-menu-item"
+                  onClick={() => runAndClose(onSortDesc)}
+                >
                   <ArrowDown className="h-3.5 w-3.5" aria-hidden />
                   По убыванию
                 </button>
                 {sortDirection && onClearSort && (
-                  <button type="button" className="ws-mike-col-menu-item" onClick={onClearSort}>
+                  <button
+                    type="button"
+                    className="ws-mike-col-menu-item"
+                    onClick={() => runAndClose(onClearSort)}
+                  >
                     <XCircle className="h-3.5 w-3.5" aria-hidden />
                     Сбросить сортировку
                   </button>
@@ -119,10 +161,7 @@ export function TabularEditColumnMenu({
             <button
               type="button"
               className="ws-mike-col-menu-item ws-mike-col-menu-item--danger"
-              onClick={() => {
-                setOpen(false)
-                onDelete()
-              }}
+              onClick={() => runAndClose(onDelete)}
             >
               <Trash2 className="h-3.5 w-3.5" aria-hidden />
               Удалить колонку

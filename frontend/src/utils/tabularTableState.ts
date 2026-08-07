@@ -14,6 +14,36 @@ export function buildProcessingCellKeys(columnId: string, fileIds: string[]): Se
   return new Set(fileIds.map((fileId) => processingCellKey(columnId, fileId)))
 }
 
+/** Optimistic UI: clear stale answers and show skeletons while a column re-runs. */
+export function markColumnCellsProcessing(prev: TableData, columnId: string): TableData {
+  return {
+    ...prev,
+    rows: prev.rows.map((row) => {
+      const existing = row.cells[columnId]
+      return {
+        ...row,
+        cells: {
+          ...row.cells,
+          [columnId]: {
+            ...(existing ?? emptyPendingCell()),
+            cell_value: null,
+            normalized_value: undefined,
+            verbatim_extract: undefined,
+            reasoning: undefined,
+            confidence_score: undefined,
+            source_page: undefined,
+            source_section: undefined,
+            source_references: undefined,
+            candidates: undefined,
+            user_flag: undefined,
+            status: 'processing',
+          },
+        },
+      }
+    }),
+  }
+}
+
 export function clearProcessingCellKey(
   keys: Set<string>,
   columnId: string,
