@@ -35,7 +35,7 @@ import {
 import { tabularReviewApi } from '@/services/tabularReviewApi'
 import {
   applyTabularTemplateToReview,
-  fetchBankruptcyTemplateCatalog,
+  fetchDdTemplateCatalog,
   getBuiltinTemplateById,
 } from '@/utils/tabularTemplateApply'
 import { toast } from 'sonner'
@@ -83,7 +83,6 @@ const CATEGORY_NAMES: Record<string, string> = {
   due_diligence: 'Due Diligence',
   research: 'Исследование',
   compliance: 'Compliance',
-  bankruptcy_rf: 'Банкротство (РФ)',
   custom: 'Прочее',
 }
 
@@ -110,42 +109,36 @@ export const TemplatesModal: React.FC<TemplatesModalProps> = ({
   const loadTemplates = async () => {
     setIsLoading(true)
     try {
-      const params: {
-        category?: string
-        featured?: boolean
-        search?: string
-      } = {}
-      
-      if (selectedCategory) params.category = selectedCategory
-      if (searchQuery) params.search = searchQuery
-      if (activeTab === 1) params.featured = true
-      
-      const data = await tabularReviewApi.getTemplates(params)
-      const bankruptcyCatalog = await fetchBankruptcyTemplateCatalog()
-      const builtinAsApi: TabularTemplate[] = bankruptcyCatalog
-        .filter((t) => t.source === 'builtin')
-        .map((t) => {
-          const builtin = getBuiltinTemplateById(t.id)
-          return {
-            id: t.id,
-            name: t.name,
-            description: t.description,
-            columns: builtin?.columns ?? [],
-            is_public: true,
-            is_system: true,
-            is_featured: t.featured,
-            category: t.category,
-            tags: t.tags,
-          }
-        })
-      // Банкротные пресеты — только встроенные три; старые API-шаблоны bankruptcy_rf скрываем
-      const nonBankruptcyApi = data.filter((t) => t.category !== 'bankruptcy_rf')
-      const builtinNames = new Set(builtinAsApi.map((t) => t.name.toLowerCase()))
-      const merged = [
-        ...builtinAsApi,
-        ...nonBankruptcyApi.filter((t) => !builtinNames.has(t.name.toLowerCase())),
-      ]
-      setTemplates(merged)
+      const ddCatalog = await fetchDdTemplateCatalog()
+      let builtinAsApi: TabularTemplate[] = ddCatalog.map((t) => {
+        const builtin = getBuiltinTemplateById(t.id)
+        return {
+          id: t.id,
+          name: t.name,
+          description: t.description,
+          columns: builtin?.columns ?? [],
+          is_public: true,
+          is_system: true,
+          is_featured: t.featured,
+          category: t.category,
+          tags: t.tags,
+        }
+      })
+
+      if (selectedCategory) {
+        builtinAsApi = builtinAsApi.filter((t) => t.category === selectedCategory)
+      }
+      if (searchQuery.trim()) {
+        const q = searchQuery.trim().toLowerCase()
+        builtinAsApi = builtinAsApi.filter(
+          (t) =>
+            t.name.toLowerCase().includes(q) ||
+            (t.description || '').toLowerCase().includes(q) ||
+            (t.tags || []).some((tag) => tag.toLowerCase().includes(q)),
+        )
+      }
+
+      setTemplates(builtinAsApi)
     } catch (error: any) {
       console.error('Error loading templates:', error)
       toast.error('Ошибка при загрузке шаблонов')

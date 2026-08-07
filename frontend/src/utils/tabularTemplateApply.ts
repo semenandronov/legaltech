@@ -1,6 +1,8 @@
 import { tabularReviewApi } from '../services/tabularReviewApi'
-import type { BuiltinTabularTemplate } from '../data/bankruptcyTabularTemplates'
-import { BANKRUPTCY_RF_TABULAR_TEMPLATES } from '../data/bankruptcyTabularTemplates'
+import type { BuiltinTabularTemplate } from '../data/ddTabularTemplates'
+import { DD_RF_TABULAR_TEMPLATES } from '../data/ddTabularTemplates'
+
+export type { BuiltinTabularTemplate }
 
 export type TabularTemplateCatalogItem = {
   id: string
@@ -16,8 +18,13 @@ export type TabularTemplateCatalogItem = {
   columnsCount: number
 }
 
+export function listBuiltinDdTemplates(): BuiltinTabularTemplate[] {
+  return DD_RF_TABULAR_TEMPLATES
+}
+
+/** @deprecated Use listBuiltinDdTemplates */
 export function listBuiltinBankruptcyTemplates(): BuiltinTabularTemplate[] {
-  return BANKRUPTCY_RF_TABULAR_TEMPLATES
+  return listBuiltinDdTemplates()
 }
 
 function mapBuiltinToCatalogItem(t: BuiltinTabularTemplate): TabularTemplateCatalogItem {
@@ -36,9 +43,14 @@ function mapBuiltinToCatalogItem(t: BuiltinTabularTemplate): TabularTemplateCata
   }
 }
 
-/** Каталог для хаба дела: только три встроенных пресета банкротства. */
+/** Каталог для хаба дела: три встроенных DD-пресета. */
+export async function fetchDdTemplateCatalog(): Promise<TabularTemplateCatalogItem[]> {
+  return DD_RF_TABULAR_TEMPLATES.map(mapBuiltinToCatalogItem)
+}
+
+/** @deprecated Use fetchDdTemplateCatalog */
 export async function fetchBankruptcyTemplateCatalog(): Promise<TabularTemplateCatalogItem[]> {
-  return BANKRUPTCY_RF_TABULAR_TEMPLATES.map(mapBuiltinToCatalogItem)
+  return fetchDdTemplateCatalog()
 }
 
 export async function applyTabularTemplateToReview(
@@ -50,7 +62,7 @@ export async function applyTabularTemplateToReview(
     await tabularReviewApi.applyTemplate(reviewId, templateId)
     return
   }
-  const builtin = BANKRUPTCY_RF_TABULAR_TEMPLATES.find((t) => t.id === templateId)
+  const builtin = DD_RF_TABULAR_TEMPLATES.find((t) => t.id === templateId)
   if (!builtin) {
     throw new Error('Шаблон не найден')
   }
@@ -58,5 +70,5 @@ export async function applyTabularTemplateToReview(
 }
 
 export function getBuiltinTemplateById(templateId: string): BuiltinTabularTemplate | undefined {
-  return BANKRUPTCY_RF_TABULAR_TEMPLATES.find((t) => t.id === templateId)
+  return DD_RF_TABULAR_TEMPLATES.find((t) => t.id === templateId)
 }

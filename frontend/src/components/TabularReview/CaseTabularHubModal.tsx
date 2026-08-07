@@ -15,7 +15,7 @@ import { toast } from 'sonner'
 import { tabularReviewApi } from '@/services/tabularReviewApi'
 import {
   applyTabularTemplateToReview,
-  fetchBankruptcyTemplateCatalog,
+  fetchDdTemplateCatalog,
   type TabularTemplateCatalogItem,
 } from '@/utils/tabularTemplateApply'
 
@@ -79,7 +79,7 @@ export function CaseTabularHubModal({
       return
     }
     setLoadingTemplates(true)
-    fetchBankruptcyTemplateCatalog()
+    fetchDdTemplateCatalog()
       .then(setTemplates)
       .catch(() => setTemplates([]))
       .finally(() => setLoadingTemplates(false))
@@ -198,7 +198,7 @@ export function CaseTabularHubModal({
             <div className="min-w-0">
               <h2 className="text-base font-semibold truncate" style={{ color: 'var(--color-text-primary)' }}>
                 {step === 'list' && 'Таблицы по делу'}
-                {step === 'templates' && 'Шаблоны банкротства'}
+                {step === 'templates' && 'Шаблоны due diligence'}
                 {step === 'files' && (selectedTemplate ? 'Документы для шаблона' : 'Новая таблица')}
               </h2>
               {step === 'list' && (
@@ -244,7 +244,7 @@ export function CaseTabularHubModal({
                     Таблиц в этом деле пока нет
                   </p>
                   <p className="text-sm mb-6 max-w-sm mx-auto leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>
-                    Возьмите шаблон: оспаривание сделок, проверка требований кредиторов или аудит под субсидиарку —
+                    Возьмите шаблон DD: коммерческая аренда, поставка или услуги/подряд —
                     либо создайте пустую таблицу.
                   </p>
                   <div className="flex flex-col sm:flex-row gap-2.5 justify-center">
@@ -461,7 +461,7 @@ export function CaseTabularHubModal({
                     backgroundColor: 'var(--color-bg-primary)',
                     color: 'var(--color-text-primary)',
                   }}
-                  placeholder="Например: Оспаривание сделок — договоры 2022–2024"
+                  placeholder="Например: DD аренда — договоры 2022–2024"
                 />
               </label>
               {selectedTemplate && (

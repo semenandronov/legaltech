@@ -224,10 +224,13 @@ RU_DD_RISK_COLUMN: Dict[str, Any] = {
 
 # Seed templates for add_tabular_templates / product catalog.
 RU_DD_LEASE_TEMPLATE: Dict[str, Any] = {
-    "name": "Аренда РФ (schema)",
-    "description": "Due diligence коммерческой аренды — поля из contract_facts (schema-first).",
+    "name": "DD: коммерческая аренда",
+    "description": (
+        "Карточка договора аренды для due diligence: стороны, объект, плата, "
+        "срок, выкуп, неустойка, расторжение и риски."
+    ),
     "category": "due_diligence",
-    "tags": ["RU", "lease", "schema"],
+    "tags": ["DD", "аренда", "lease", "RU"],
     "is_system": True,
     "is_public": True,
     "is_featured": True,
@@ -242,17 +245,38 @@ RU_DD_LEASE_TEMPLATE: Dict[str, Any] = {
             "contract_term",
             "buyout_right",
             "penalty",
-            "governing_law",
         ]
     )
-    + [RU_DD_RISK_COLUMN],
+    + [
+        {
+            "column_label": "Расторжение / отказ",
+            "column_type": "text",
+            "prompt": (
+                "Как можно расторгнуть договор или отказаться от исполнения? "
+                "Укажи основания, сроки уведомления и последствия. Если не указано — «не указано»."
+            ),
+        },
+        {
+            "column_label": "Ответственность",
+            "column_type": "text",
+            "prompt": (
+                "Какова ответственность сторон: неустойка, ограничение убытков, "
+                "исключение упущенной выгоды? Кратко по пунктам. Если не указано — «не указано»."
+            ),
+        },
+        *build_template_columns(["governing_law"]),
+        RU_DD_RISK_COLUMN,
+    ],
 }
 
 RU_DD_SUPPLY_TEMPLATE: Dict[str, Any] = {
-    "name": "Поставка РФ (schema)",
-    "description": "Due diligence договора поставки — schema-first поля.",
+    "name": "DD: поставка",
+    "description": (
+        "Карточка договора поставки: стороны, товар, цена, сроки поставки, "
+        "неустойка, расторжение и риски."
+    ),
     "category": "due_diligence",
-    "tags": ["RU", "supply", "schema"],
+    "tags": ["DD", "поставка", "supply", "RU"],
     "is_system": True,
     "is_public": True,
     "is_featured": True,
@@ -266,17 +290,38 @@ RU_DD_SUPPLY_TEMPLATE: Dict[str, Any] = {
             "price_total",
             "delivery_term",
             "penalty",
-            "governing_law",
         ]
     )
-    + [RU_DD_RISK_COLUMN],
+    + [
+        {
+            "column_label": "Расторжение / отказ",
+            "column_type": "text",
+            "prompt": (
+                "Как можно расторгнуть договор или отказаться от исполнения? "
+                "Укажи основания, сроки уведомления и последствия. Если не указано — «не указано»."
+            ),
+        },
+        {
+            "column_label": "Ответственность",
+            "column_type": "text",
+            "prompt": (
+                "Какова ответственность сторон: неустойка, ограничение убытков, "
+                "исключение упущенной выгоды? Кратко по пунктам. Если не указано — «не указано»."
+            ),
+        },
+        *build_template_columns(["governing_law"]),
+        RU_DD_RISK_COLUMN,
+    ],
 }
 
 RU_DD_SERVICES_WORKS_TEMPLATE: Dict[str, Any] = {
-    "name": "Услуги / подряд РФ (schema)",
-    "description": "Due diligence услуг и подряда — schema-first поля.",
+    "name": "DD: услуги и подряд",
+    "description": (
+        "Карточка договора услуг или подряда: стороны, объём, цена, сроки/SLA, "
+        "неустойка, расторжение и риски."
+    ),
     "category": "due_diligence",
-    "tags": ["RU", "services", "works", "schema"],
+    "tags": ["DD", "услуги", "подряд", "services", "RU"],
     "is_system": True,
     "is_public": True,
     "is_featured": True,
@@ -290,10 +335,28 @@ RU_DD_SERVICES_WORKS_TEMPLATE: Dict[str, Any] = {
             "price_total",
             "sla_or_deadline",
             "penalty",
-            "governing_law",
         ]
     )
-    + [RU_DD_RISK_COLUMN],
+    + [
+        {
+            "column_label": "Расторжение / отказ",
+            "column_type": "text",
+            "prompt": (
+                "Как можно расторгнуть договор или отказаться от исполнения? "
+                "Укажи основания, сроки уведомления и последствия. Если не указано — «не указано»."
+            ),
+        },
+        {
+            "column_label": "Ответственность",
+            "column_type": "text",
+            "prompt": (
+                "Какова ответственность сторон: неустойка, ограничение убытков, "
+                "исключение упущенной выгоды? Кратко по пунктам. Если не указано — «не указано»."
+            ),
+        },
+        *build_template_columns(["governing_law"]),
+        RU_DD_RISK_COLUMN,
+    ],
 }
 
 RU_DD_SCHEMA_TEMPLATES: Tuple[Dict[str, Any], ...] = (

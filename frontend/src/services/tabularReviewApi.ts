@@ -93,6 +93,9 @@ export interface TabularColumnConfig {
   allow_custom?: boolean
   run_condition?: ColumnRunCondition | null
   flag_rules?: ColumnFlagRule[]
+  /** Maps column onto File.contract_facts field_id for schema-first extract */
+  field_id?: string
+  column_kind?: 'fact' | 'risk_analysis' | string
 }
 
 export interface TabularColumn {
