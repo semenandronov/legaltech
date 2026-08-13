@@ -158,7 +158,7 @@ jobs:
             rm -f /tmp/legal-ai.env /tmp/legal-ai.env.raw
 
       - name: Upload docker-compose.vm.yml
-        uses: appleboy/scp-action@v0.1.7
+        uses: appleboy/scp-action@v1.0.0
         with:
           host: ${{ secrets.VM_HOST }}
           username: ${{ secrets.VM_USER }}
