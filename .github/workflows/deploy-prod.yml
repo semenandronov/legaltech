@@ -61,6 +61,9 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: write
     outputs:
       image: ${{ steps.meta.outputs.image }}
       image_latest: ${{ steps.meta.outputs.image_latest }}
@@ -91,20 +94,24 @@ jobs:
         with:
           yc-sa-json-credentials: ${{ secrets.YC_SA_JSON_CREDENTIALS }}
 
+      # Yandex CR accepts Docker Schema 2 only. Default Buildx provenance/SBOM
+      # and registry cache are OCI indexes → "Cannot read manifest data".
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64
           push: true
+          provenance: false
+          sbom: false
           tags: |
             ${{ steps.meta.outputs.image }}
             ${{ steps.meta.outputs.image_latest }}
           build-args: |
             VITE_GOOGLE_CLIENT_ID=${{ secrets.VITE_GOOGLE_CLIENT_ID }}
             VITE_GOOGLE_API_KEY=${{ secrets.VITE_GOOGLE_API_KEY }}
-          cache-from: type=registry,ref=${{ env.REGISTRY_IMAGE }}:buildcache
-          cache-to: type=registry,ref=${{ env.REGISTRY_IMAGE }}:buildcache,mode=max
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Verify Google OAuth in bundle
         run: |
