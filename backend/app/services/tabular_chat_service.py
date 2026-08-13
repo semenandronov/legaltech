@@ -13,6 +13,7 @@ from app.services.chat.llm_streaming import async_iter_llm_text_chunks
 from app.services.chat.response_shape import case_assistant_readability_base
 from app.services.llm_factory import create_llm
 from app.services.tabular_extraction_policy import TABULAR_NA_VALUE, is_na_cell_value
+from app.services.tabular_review_service import TabularReviewService
 import logging
 
 logger = logging.getLogger(__name__)

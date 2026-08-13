@@ -11,8 +11,16 @@ import {
   getCase, getDocuments, getChatSessionsForCase, addFilesToCase, createFolder, getCaseFolders,
   moveFileToFolder, deleteFileFromCase, deleteFolder, renameFolder,
   cancelFileProcessing,
+  getDdDocTaxonomy, updateFileDdDocType, invalidateCaseLibraryCaches,
   CaseResponse, FolderItem, FilesResponse, UploadedFile,
 } from '../services/api'
+import { DdDocTypeBadge } from '../components/Documents/DdDocTypeBadge'
+import { DdDocTypeFilterBar } from '../components/Documents/DdDocTypeFilterBar'
+import {
+  DD_DOC_TYPE_SHORT_LABELS,
+  type DdTaxonomyType,
+  ddDocTypeShortLabel,
+} from '../lib/ddDocTypes'
 import { useCaseProcessingPoll } from '../hooks/useCaseProcessingPoll'
 import { useCaseStagedUpload } from '../hooks/useCaseStagedUpload'
 import { consumeCaseStagedUploadResult, clearCaseStagedUpload } from '../lib/caseStagedUploadCoordinator'
@@ -40,7 +48,13 @@ interface DocumentFile {
   file_type?: string
   folder_id?: string | null
   created_at?: string
+  /** Legacy litigation classifier — fallback only */
   doc_type?: string
+  dd_doc_type?: string | null
+  dd_doc_type_short_label?: string | null
+  dd_doc_type_confidence?: number | null
+  dd_doc_type_source?: string | null
+  dd_needs_review?: boolean
   classification?: any
   size?: number
   pages?: number
@@ -66,26 +80,6 @@ const estimateFileSecs = (filename: string, sizeBytes?: number): number => {
   return Math.max(15, Math.round(mb * secPerMb))
 }
 
-const DOC_TYPE_LABELS: Record<string, string> = {
-  contract: 'Договор',
-  power_of_attorney: 'Доверенность',
-  court_decision: 'Судебное решение',
-  claim: 'Претензия',
-  lawsuit: 'Исковое заявление',
-  invoice: 'Счёт',
-  act: 'Акт',
-  protocol: 'Протокол',
-  agreement: 'Соглашение',
-  admin_penalty_challenge: 'Жалоба',
-  nda: 'NDA',
-  other: 'Другой',
-}
-
-const formatDocType = (docType?: string) => {
-  if (!docType) return '—'
-  return DOC_TYPE_LABELS[docType] ?? docType
-}
-
 const mapCaseDocuments = (documents: any[]): DocumentFile[] =>
   documents.map((doc: any) => ({
     id: doc.id,
@@ -94,10 +88,23 @@ const mapCaseDocuments = (documents: any[]): DocumentFile[] =>
     folder_id: doc.folder_id ?? null,
     created_at: doc.created_at,
     doc_type: doc.doc_type || doc.classification?.doc_type,
+    dd_doc_type: doc.dd_doc_type ?? null,
+    dd_doc_type_short_label: doc.dd_doc_type_short_label ?? null,
+    dd_doc_type_confidence: doc.dd_doc_type_confidence ?? null,
+    dd_doc_type_source: doc.dd_doc_type_source ?? null,
+    dd_needs_review: Boolean(doc.dd_needs_review),
     classification: doc.classification,
     size: doc.size,
     pages: doc.pages ?? doc.page_count ?? doc.classification?.pages ?? doc.classification?.page_count,
   }))
+
+const FALLBACK_TAXONOMY: DdTaxonomyType[] = Object.entries(DD_DOC_TYPE_SHORT_LABELS).map(
+  ([id, short_label]) => ({
+    id,
+    short_label,
+    label: short_label,
+  }),
+)
 
 const PRESETS = [
   {
@@ -212,9 +219,34 @@ const CaseOverviewPage = () => {
   const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const processingStartedAtRef = useRef<number | null>(null)
 
+  const [ddTaxonomy, setDdTaxonomy] = useState<DdTaxonomyType[]>(FALLBACK_TAXONOMY)
+  const [ddTypeFilter, setDdTypeFilter] = useState<string | null>(null)
+  const [ddNeedsReviewOnly, setDdNeedsReviewOnly] = useState(false)
+  const [typeMenuFileId, setTypeMenuFileId] = useState<string | null>(null)
+  const [updatingDdTypeId, setUpdatingDdTypeId] = useState<string | null>(null)
+
   const reloadFiles = useCallback(() => {
     if (!caseId) return
+    invalidateCaseLibraryCaches(caseId)
     getDocuments(caseId).then((d) => setFiles(mapCaseDocuments(d.documents || [])))
+  }, [caseId])
+
+  const reloadFolders = useCallback(() => {
+    if (!caseId) return
+    invalidateCaseLibraryCaches(caseId)
+    getCaseFolders(caseId).then((d) => {
+      const list = d || []
+      setFolders(list)
+      setExpandedFolderIds((prev) => {
+        const next = new Set(prev)
+        for (const folder of list) {
+          if ((folder.file_count ?? 0) > 0 || folder.icon === 'dd_catalog') {
+            next.add(folder.id)
+          }
+        }
+        return next
+      })
+    })
   }, [caseId])
 
   // Реестр выписок оцифровывается асинхронно и появляется отдельно от документов,
@@ -230,11 +262,76 @@ const CaseOverviewPage = () => {
   }, [caseId])
 
   const { processingMap, ingestUploadResponse, fetchStatus } = useCaseProcessingPoll(caseId ?? null, {
+    onStatus: (statusFiles) => {
+      setFiles((prev) => {
+        if (prev.length === 0) return prev
+        const byId = new Map(statusFiles.map((s) => [s.id, s]))
+        let changed = false
+        const next = prev.map((file) => {
+          const st = byId.get(file.id)
+          if (!st) return file
+          const nextFolder = st.folder_id !== undefined ? st.folder_id : file.folder_id
+          const nextType = st.dd_doc_type ?? file.dd_doc_type
+          const nextName = st.filename || file.filename
+          if (
+            nextFolder === file.folder_id &&
+            nextType === file.dd_doc_type &&
+            nextName === file.filename &&
+            st.dd_doc_type_short_label === file.dd_doc_type_short_label &&
+            st.dd_needs_review === file.dd_needs_review
+          ) {
+            return file
+          }
+          changed = true
+          return {
+            ...file,
+            filename: nextName,
+            folder_id: nextFolder ?? null,
+            dd_doc_type: nextType ?? null,
+            dd_doc_type_short_label: st.dd_doc_type_short_label ?? file.dd_doc_type_short_label,
+            dd_doc_type_confidence:
+              st.dd_doc_type_confidence ?? file.dd_doc_type_confidence,
+            dd_doc_type_source: st.dd_doc_type_source ?? file.dd_doc_type_source,
+            dd_needs_review:
+              typeof st.dd_needs_review === 'boolean'
+                ? st.dd_needs_review
+                : file.dd_needs_review,
+          }
+        })
+        return changed ? next : prev
+      })
+    },
     onAllDone: () => {
       reloadFiles()
+      reloadFolders()
       void reloadOperationsRegistry()
     },
   })
+
+  // As soon as any processed file gets a catalog folder_id, refresh folder tree + expand.
+  useEffect(() => {
+    if (!caseId) return
+    const folderIds = new Set(
+      files.map((f) => f.folder_id).filter((id): id is string => Boolean(id)),
+    )
+    if (folderIds.size === 0) return
+    const missing = [...folderIds].some((id) => !folders.some((f) => f.id === id))
+    if (missing) {
+      reloadFolders()
+      return
+    }
+    setExpandedFolderIds((prev) => {
+      let changed = false
+      const next = new Set(prev)
+      for (const id of folderIds) {
+        if (!next.has(id)) {
+          next.add(id)
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [caseId, files, folders, reloadFolders])
 
   const [showAllActions, setShowAllActions] = useState(false)
 
@@ -334,7 +431,7 @@ const CaseOverviewPage = () => {
     setLoadingReviews(true)
     setLoadingOperationsSessions(true)
     try {
-      const [caseRes, docsRes, foldersRes, sessionsRes, reviewsRes, opsSessionsRes, opsFilesRes] = await Promise.allSettled([
+      const [caseRes, docsRes, foldersRes, sessionsRes, reviewsRes, opsSessionsRes, opsFilesRes, taxRes] = await Promise.allSettled([
         getCase(caseId),
         getDocuments(caseId),
         getCaseFolders(caseId),
@@ -342,6 +439,7 @@ const CaseOverviewPage = () => {
         tabularReviewApi.listReviews(caseId, 0, 100),
         operationsApi.listSessions(caseId),
         operationsApi.listAvailableFiles(caseId),
+        getDdDocTaxonomy(),
       ])
       if (caseRes.status === 'fulfilled') setCaseData(caseRes.value)
       if (docsRes.status === 'fulfilled') setFiles(mapCaseDocuments(docsRes.value.documents || []))
@@ -354,6 +452,9 @@ const CaseOverviewPage = () => {
       else setOperationsSessions([])
       if (opsFilesRes.status === 'fulfilled') setOperationsFiles(opsFilesRes.value)
       else setOperationsFiles([])
+      if (taxRes.status === 'fulfilled' && taxRes.value.types?.length) {
+        setDdTaxonomy(taxRes.value.types)
+      }
     } finally {
       setLoadingCase(false)
       setLoadingFiles(false)
@@ -582,9 +683,59 @@ const CaseOverviewPage = () => {
   const isFileListBusy = isStagedUploading || uploading
 
   // Root-level files only (no folder). When search is active, show all matching files regardless of folder.
-  const filteredFiles = files.filter(f =>
-    (fileSearch ? true : !f.folder_id) &&
-    f.filename.toLowerCase().includes(fileSearch.toLowerCase())
+  const ddTypeCounts = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const f of files) {
+      const key = (f.dd_doc_type || 'unknown').trim() || 'unknown'
+      counts[key] = (counts[key] || 0) + 1
+    }
+    return counts
+  }, [files])
+
+  const ddNeedsReviewCount = useMemo(
+    () => files.filter((f) => f.dd_needs_review).length,
+    [files],
+  )
+
+  const filteredFiles = files.filter((f) => {
+    const showOutsideFolders = Boolean(fileSearch || ddTypeFilter || ddNeedsReviewOnly)
+    if (!(showOutsideFolders ? true : !f.folder_id)) return false
+    if (!f.filename.toLowerCase().includes(fileSearch.toLowerCase())) return false
+    if (ddNeedsReviewOnly) return Boolean(f.dd_needs_review)
+    if (ddTypeFilter) return (f.dd_doc_type || 'unknown') === ddTypeFilter
+    return true
+  })
+
+  const handleSetDdDocType = useCallback(
+    async (fileId: string, nextType: string) => {
+      if (!caseId) return
+      setUpdatingDdTypeId(fileId)
+      try {
+        const updated = await updateFileDdDocType(caseId, fileId, nextType)
+        setFiles((prev) =>
+          prev.map((f) =>
+            f.id === fileId
+              ? {
+                  ...f,
+                  dd_doc_type: updated.dd_doc_type,
+                  dd_doc_type_short_label: updated.dd_doc_type_short_label,
+                  dd_doc_type_confidence: updated.dd_doc_type_confidence,
+                  dd_doc_type_source: updated.dd_doc_type_source,
+                  dd_needs_review: updated.dd_needs_review,
+                }
+              : f,
+          ),
+        )
+        toast.success('Тип документа обновлён')
+      } catch (err: any) {
+        toast.error(err?.message || 'Не удалось изменить тип')
+      } finally {
+        setUpdatingDdTypeId(null)
+        setTypeMenuFileId(null)
+        setActiveMenu(null)
+      }
+    },
+    [caseId],
   )
 
   const filteredPendingRows = allPendingRows.filter((row) =>
@@ -934,6 +1085,24 @@ const CaseOverviewPage = () => {
                 }
               />
 
+              {files.length > 0 && (
+                <DdDocTypeFilterBar
+                  types={ddTaxonomy}
+                  counts={ddTypeCounts}
+                  selected={ddTypeFilter}
+                  onSelect={(id) => {
+                    setDdNeedsReviewOnly(false)
+                    setDdTypeFilter(id)
+                  }}
+                  needsReviewCount={ddNeedsReviewCount}
+                  needsReviewSelected={ddNeedsReviewOnly}
+                  onToggleNeedsReview={() => {
+                    setDdTypeFilter(null)
+                    setDdNeedsReviewOnly((v) => !v)
+                  }}
+                />
+              )}
+
               {loadingFiles && !hasVisibleFileSection ? (
                 <div className="space-y-0 border-t border-gray-200">
                   {[...Array(4)].map((_, i) => (
@@ -982,7 +1151,7 @@ const CaseOverviewPage = () => {
                 <div className="overflow-hidden border-t border-gray-200 bg-white">
                   <div
                     className="grid h-8 items-center border-b border-gray-200 bg-[#fafbfc] px-2 text-xs font-medium text-gray-500"
-                    style={{ gridTemplateColumns: '28px 1fr 120px 100px 80px 32px' }}
+                    style={{ gridTemplateColumns: '28px 1fr 140px 100px 80px 32px' }}
                   >
                     <input
                       type="checkbox"
@@ -991,7 +1160,7 @@ const CaseOverviewPage = () => {
                       className={TABLE_CHECKBOX_CLASS}
                     />
                     <span className="pl-2">Название</span>
-                    <span>Тип документа</span>
+                    <span>Тип</span>
                     <span>Обновлено</span>
                     <span>Размер</span>
                     <span />
@@ -1011,7 +1180,7 @@ const CaseOverviewPage = () => {
                           className={`grid cursor-pointer items-center px-2 py-2.5 transition-colors hover:bg-gray-50 ${
                             isSelected ? 'bg-gray-50' : 'bg-white'
                           }`}
-                          style={{ gridTemplateColumns: '28px 1fr 120px 100px 80px 32px' }}
+                          style={{ gridTemplateColumns: '28px 1fr 140px 100px 80px 32px' }}
                           onClick={() => toggleFolderExpand(folder.id)}
                         >
                           <input
@@ -1108,7 +1277,7 @@ const CaseOverviewPage = () => {
                                   key={file.id}
                                   className="grid items-center py-2 transition-colors"
                                   style={{
-                                    gridTemplateColumns: '28px 1fr 120px 100px 80px 32px',
+                                    gridTemplateColumns: '28px 1fr 140px 100px 80px 32px',
                                     borderBottom: '1px solid var(--color-border)',
                                     backgroundColor: isFileSel ? 'var(--color-bg-hover)' : 'var(--color-bg-primary)',
                                     paddingLeft: '8px',
@@ -1131,7 +1300,15 @@ const CaseOverviewPage = () => {
                                       {file.filename}
                                     </span>
                                   </div>
-                                  <span className="text-xs text-gray-500">{file.doc_type || file.file_type || '—'}</span>
+                                  <span className="min-w-0 pr-1">
+                                    <DdDocTypeBadge
+                                      docType={file.dd_doc_type}
+                                      shortLabel={file.dd_doc_type_short_label}
+                                      confidence={file.dd_doc_type_confidence}
+                                      source={file.dd_doc_type_source}
+                                      needsReview={file.dd_needs_review}
+                                    />
+                                  </span>
                                   <span className="text-xs text-gray-500">{formatDate(file.created_at)}</span>
                                   <span className="text-xs text-gray-500">{formatSize(file.size)}</span>
                                   <div className="relative flex justify-center" onClick={e => e.stopPropagation()}>
@@ -1172,6 +1349,36 @@ const CaseOverviewPage = () => {
                                           <ArrowRight className="w-3.5 h-3.5 flex-shrink-0" />
                                           Переместить
                                         </button>
+                                        <button
+                                          onClick={() => setTypeMenuFileId(typeMenuFileId === file.id ? null : file.id)}
+                                          className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left transition-colors hover:bg-[var(--color-bg-hover)]"
+                                          style={{ color: 'var(--color-text-primary)' }}
+                                          disabled={updatingDdTypeId === file.id}
+                                        >
+                                          <Pencil className="w-3.5 h-3.5 flex-shrink-0" />
+                                          {updatingDdTypeId === file.id ? 'Сохранение…' : 'Изменить тип'}
+                                        </button>
+                                        {typeMenuFileId === file.id && (
+                                          <div className="max-h-48 overflow-y-auto border-y py-1" style={{ borderColor: 'var(--color-border)' }}>
+                                            {ddTaxonomy.map((t) => (
+                                              <button
+                                                key={t.id}
+                                                type="button"
+                                                onClick={() => void handleSetDdDocType(file.id, t.id)}
+                                                className="w-full px-3 py-1.5 text-left text-xs transition-colors hover:bg-[var(--color-bg-hover)]"
+                                                style={{
+                                                  color:
+                                                    file.dd_doc_type === t.id
+                                                      ? 'var(--color-text-primary)'
+                                                      : 'var(--color-text-secondary)',
+                                                  fontWeight: file.dd_doc_type === t.id ? 600 : 400,
+                                                }}
+                                              >
+                                                {t.short_label}
+                                              </button>
+                                            ))}
+                                          </div>
+                                        )}
                                         <div style={{ borderTop: '1px solid var(--color-border)' }} />
                                         <button
                                           onClick={() => handleDeleteFile(file.id)}
@@ -1266,7 +1473,7 @@ const CaseOverviewPage = () => {
                           isSelected ? 'bg-gray-50' : 'bg-white'
                         }`}
                         style={{
-                          gridTemplateColumns: '28px 1fr 120px 100px 80px 32px',
+                          gridTemplateColumns: '28px 1fr 140px 100px 80px 32px',
                           opacity: isProcessing ? 0.7 : 1,
                         }}
                       >
@@ -1302,8 +1509,18 @@ const CaseOverviewPage = () => {
                             </span>
                           )}
                         </div>
-                        <span className="text-xs text-gray-500">
-                          {isProcessing ? '—' : (file.doc_type ? formatDocType(file.doc_type) : file.file_type || '—')}
+                        <span className="min-w-0 pr-1">
+                          {isProcessing ? (
+                            <span className="text-xs text-gray-400">—</span>
+                          ) : (
+                            <DdDocTypeBadge
+                              docType={file.dd_doc_type}
+                              shortLabel={file.dd_doc_type_short_label}
+                              confidence={file.dd_doc_type_confidence}
+                              source={file.dd_doc_type_source}
+                              needsReview={file.dd_needs_review}
+                            />
+                          )}
                         </span>
                         <span className="text-xs text-gray-500">
                           {formatDate(file.created_at)}
@@ -1349,6 +1566,36 @@ const CaseOverviewPage = () => {
                                 <ArrowRight className="w-3.5 h-3.5 flex-shrink-0" />
                                 Переместить
                               </button>
+                              <button
+                                onClick={() => setTypeMenuFileId(typeMenuFileId === file.id ? null : file.id)}
+                                className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left transition-colors hover:bg-[var(--color-bg-hover)]"
+                                style={{ color: 'var(--color-text-primary)' }}
+                                disabled={updatingDdTypeId === file.id}
+                              >
+                                <Pencil className="w-3.5 h-3.5 flex-shrink-0" />
+                                {updatingDdTypeId === file.id ? 'Сохранение…' : 'Изменить тип'}
+                              </button>
+                              {typeMenuFileId === file.id && (
+                                <div className="max-h-48 overflow-y-auto border-y py-1" style={{ borderColor: 'var(--color-border)' }}>
+                                  {ddTaxonomy.map((t) => (
+                                    <button
+                                      key={t.id}
+                                      type="button"
+                                      onClick={() => void handleSetDdDocType(file.id, t.id)}
+                                      className="w-full px-3 py-1.5 text-left text-xs transition-colors hover:bg-[var(--color-bg-hover)]"
+                                      style={{
+                                        color:
+                                          file.dd_doc_type === t.id
+                                            ? 'var(--color-text-primary)'
+                                            : 'var(--color-text-secondary)',
+                                        fontWeight: file.dd_doc_type === t.id ? 600 : 400,
+                                      }}
+                                    >
+                                      {t.short_label}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
                               <div style={{ borderTop: '1px solid var(--color-border)' }} />
                               {isProcessing && (
                                 <button
@@ -1705,7 +1952,9 @@ const CaseOverviewPage = () => {
                         </span>
                       </div>
                       <span className="text-xs pr-4 truncate" style={{ color: 'var(--color-text-muted)' }}>
-                        {formatDocType(file.doc_type || file.file_type)}
+                        {file.dd_doc_type
+                          ? ddDocTypeShortLabel(file.dd_doc_type, ddTaxonomy)
+                          : file.file_type || '—'}
                       </span>
                       <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
                         {[formatSize(file.size), file.pages ? `${file.pages} стр.` : null].filter(Boolean).join(' · ')}
@@ -1904,7 +2153,14 @@ const CaseOverviewPage = () => {
           open={showTabularHub}
           onClose={() => setShowTabularHub(false)}
           caseId={caseId}
-          files={files.map((f) => ({ id: f.id, filename: f.filename }))}
+          files={files.map((f) => ({
+            id: f.id,
+            filename: f.filename,
+            folder_id: f.folder_id,
+            dd_doc_type: f.dd_doc_type,
+            dd_doc_type_short_label: f.dd_doc_type_short_label,
+          }))}
+          folders={folders}
           reviews={reviews}
           loadingReviews={loadingReviews}
           onReviewOpen={(reviewId) => navigate(`/cases/${caseId}/tabular-review/${reviewId}`)}

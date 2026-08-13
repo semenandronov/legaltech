@@ -32,8 +32,10 @@ from typing import AsyncGenerator, Optional, List, Dict, Any, Literal
 from sqlalchemy.orm import Session
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langgraph.types import Command
+from fastapi import HTTPException
 from app.services.rag_service import RAGService
 from app.services.document_processor import DocumentProcessor
+from app.utils.authorization import require_case_access
 from app.services.langchain_agents.graphs.chat_graph import (
     create_chat_graph,
     create_initial_chat_state,
@@ -204,6 +206,14 @@ class ChatGraphService:
     
     _graph_instance = None
     
+    def _require_case_for_user(self, case_id: str, user: User) -> Optional[Case]:
+        """Membership ACL for case chat graph paths."""
+        try:
+            return require_case_access(self.db, case_id, user.id)
+        except HTTPException:
+            return None
+
+
     def __init__(
         self,
         db: Session,
@@ -418,10 +428,7 @@ class ChatGraphService:
         Прогрев при открытии экрана чата по делу: компиляция/кэш графа + чтение чекпоинта.
         Снижает задержку первого сообщения без изменения ответов.
         """
-        case = self.db.query(Case).filter(
-            Case.id == case_id,
-            Case.user_id == user.id,
-        ).first()
+        case = self._require_case_for_user(case_id, user)
         if not case:
             return {"ok": False, "error": "case_not_found"}
 
@@ -476,10 +483,7 @@ class ChatGraphService:
             resolve_editor_chat_session_id,
         )
 
-        case = self.db.query(Case).filter(
-            Case.id == case_id,
-            Case.user_id == user.id,
-        ).first()
+        case = self._require_case_for_user(case_id, user)
         if not case:
             return {"ok": False, "error": "case_not_found"}
 
@@ -709,10 +713,7 @@ class ChatGraphService:
         logger.info(f"[ChatGraphService] Starting stream for case {case_id}, mode={self._determine_mode(deep_think, legal_research, draft_mode)}")
         
         # Проверяем доступ к делу
-        case = self.db.query(Case).filter(
-            Case.id == case_id,
-            Case.user_id == user.id
-        ).first()
+        case = self._require_case_for_user(case_id, user)
         
         if not case:
             yield f"data: {json.dumps({'error': 'Дело не найдено'})}\n\n"
@@ -1781,10 +1782,7 @@ class ChatGraphService:
         logger.info(f"[ChatGraphService] Starting token stream for case {case_id}")
         
         # Проверяем доступ к делу
-        case = self.db.query(Case).filter(
-            Case.id == case_id,
-            Case.user_id == user.id
-        ).first()
+        case = self._require_case_for_user(case_id, user)
         
         if not case:
             yield create_finish_event("error", "Дело не найдено")
@@ -2020,10 +2018,7 @@ class ChatGraphService:
         logger.info(f"[ChatGraphService] Starting stream with mode {stream_mode} for case {case_id}")
         
         # Проверяем доступ
-        case = self.db.query(Case).filter(
-            Case.id == case_id,
-            Case.user_id == user.id
-        ).first()
+        case = self._require_case_for_user(case_id, user)
         
         if not case:
             yield format_sse_event(StreamEvent(type="error", data={"error": "Дело не найдено"}))

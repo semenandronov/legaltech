@@ -3,6 +3,7 @@ import requests
 import logging
 from typing import List, Dict, Any, Optional
 from app.config import config as app_config
+from app.services.yandex_privacy import apply_data_logging_headers
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ class YandexAssistantService:
         if self.folder_id:
             headers["x-folder-id"] = self.folder_id
         
-        return headers
+        return apply_data_logging_headers(headers)
     
     def create_assistant(self, case_id: str, index_id: str, config: Dict[str, Any] = None) -> str:
         """

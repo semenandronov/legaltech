@@ -88,6 +88,18 @@ function invalidateCachedGet(prefix: string): void {
       sharedGetCache.delete(key)
     }
   }
+  for (const key of sharedGetInFlight.keys()) {
+    if (key.startsWith(prefix)) {
+      sharedGetInFlight.delete(key)
+    }
+  }
+}
+
+/** Bust short-lived caches after upload/catalog so the library UI sees new folders/types. */
+export function invalidateCaseLibraryCaches(caseId: string): void {
+  invalidateCachedGet(`case-folders:${caseId}`)
+  invalidateCachedGet(`case-documents:${caseId}`)
+  invalidateCachedGet(`case-files:${caseId}`)
 }
 
 // Request interceptor to add JWT token
@@ -614,6 +626,13 @@ export interface FileProcessingStatus {
   error?: string | null
   processing_started_at?: string | null
   progress?: FileProcessingProgress | null
+  folder_id?: string | null
+  dd_doc_type?: string | null
+  dd_doc_type_label?: string | null
+  dd_doc_type_short_label?: string | null
+  dd_doc_type_confidence?: number | null
+  dd_doc_type_source?: string | null
+  dd_needs_review?: boolean
 }
 
 export interface ProcessingStatusResponse {
@@ -668,6 +687,7 @@ export interface FolderItem {
   name: string
   parent_id: string | null
   file_count: number
+  order_index?: number
   color?: string
   icon?: string
   children?: FolderItem[]
@@ -998,6 +1018,17 @@ export interface DocumentItem {
   filename: string
   file_type: string
   created_at: string
+  folder_id?: string | null
+  size?: number | null
+  page_count?: number | null
+  doc_type?: string | null
+  dd_doc_type?: string | null
+  dd_doc_type_label?: string | null
+  dd_doc_type_short_label?: string | null
+  dd_doc_type_confidence?: number | null
+  dd_doc_type_source?: string | null
+  dd_needs_review?: boolean
+  classification?: DocumentClassification | null
 }
 
 export interface DocumentListResponse {
@@ -1010,6 +1041,65 @@ export const getDocuments = async (caseId: string): Promise<DocumentListResponse
     const response = await apiClient.get(getApiUrl(`/api/cases/${caseId}/files`))
     return response.data
   })
+}
+
+export type DdDocTaxonomyResponse = {
+  version: string
+  needs_review_confidence: number
+  classifier_head_chars?: number
+  types: Array<{ id: string; label: string; short_label: string }>
+  data_room?: {
+    marker_prefix: string
+    folders: Array<{ id: string; label: string }>
+  }
+}
+
+export const getDdDocTaxonomy = async (): Promise<DdDocTaxonomyResponse> => {
+  return cachedGet('dd-doc-taxonomy', 60_000, async () => {
+    const response = await apiClient.get(getApiUrl('/api/cases/dd-doc-taxonomy'))
+    return response.data
+  })
+}
+
+export type UpdateDdDocTypeResponse = {
+  id: string
+  dd_doc_type: string
+  dd_doc_type_label: string
+  dd_doc_type_short_label: string
+  dd_doc_type_confidence: number | null
+  dd_doc_type_source: string | null
+  dd_needs_review: boolean
+}
+
+export const updateFileDdDocType = async (
+  caseId: string,
+  fileId: string,
+  ddDocType: string,
+): Promise<UpdateDdDocTypeResponse> => {
+  const response = await apiClient.patch(
+    getApiUrl(`/api/cases/${caseId}/files/${fileId}/dd-doc-type`),
+    { dd_doc_type: ddDocType },
+  )
+  invalidateCaseLibraryCaches(caseId)
+  return response.data
+}
+
+export const reclassifyCaseDdDocTypes = async (
+  caseId: string,
+  onlyMissing: boolean = true,
+): Promise<{
+  updated: number
+  cataloged: number
+  pruned_legacy_folders: number
+  skipped_user: number
+}> => {
+  const response = await apiClient.post(
+    getApiUrl(`/api/cases/${caseId}/files/reclassify-dd`),
+    null,
+    { params: { only_missing: onlyMissing } },
+  )
+  invalidateCaseLibraryCaches(caseId)
+  return response.data
 }
 
 // Classification API

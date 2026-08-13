@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, List, Optional, Set
 
 from app.config import config
+from app.services.yandex_privacy import apply_data_logging_headers
 
 logger = logging.getLogger(__name__)
 
@@ -90,11 +91,13 @@ def _yandex_openai_compat_http_headers() -> dict[str, str]:
         authorization = f"Bearer {iam_token}"
     else:
         raise ValueError("Yandex embeddings HTTP: set YANDEX_API_KEY or YANDEX_IAM_TOKEN.")
-    return {
-        "Authorization": authorization,
-        "x-folder-id": folder,
-        "Content-Type": "application/json",
-    }
+    return apply_data_logging_headers(
+        {
+            "Authorization": authorization,
+            "x-folder-id": folder,
+            "Content-Type": "application/json",
+        }
+    )
 
 
 def _yandex_openai_compat_base_url() -> str:

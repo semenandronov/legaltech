@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from yandex_cloud_ml_sdk import YCloudML
 from yandex_cloud_ml_sdk.auth import APIKeyAuth
 from app.config import config
+from app.services.yandex_privacy import ycloud_ml_enable_server_data_logging
 import logging
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,11 @@ class YandexRAGDirect:
         
         # Инициализируем SDK
         auth = APIKeyAuth(self.api_key) if self.api_key else self.iam_token
-        self.sdk = YCloudML(folder_id=self.folder_id, auth=auth)
+        self.sdk = YCloudML(
+            folder_id=self.folder_id,
+            auth=auth,
+            enable_server_data_logging=ycloud_ml_enable_server_data_logging(),
+        )
         
         # Получаем модель URI
         self.model_uri = config.YANDEX_GPT_MODEL_URI or config.YANDEX_GPT_MODEL

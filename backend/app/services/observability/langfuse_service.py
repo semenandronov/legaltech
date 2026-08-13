@@ -15,6 +15,10 @@ import functools
 import inspect
 
 from app.config import config
+from app.security.sensitive_data import (
+    langfuse_capture_content_enabled,
+    redact_observability_value,
+)
 
 logger = logging.getLogger(__name__)
 _TRACE_ID_HEX_RE = re.compile(r"^[0-9a-f]{32}$")
@@ -154,9 +158,12 @@ def _safe_attribute_mapping(payload: Optional[Dict[str, Any]]) -> Optional[Dict[
 def _safe_event_payload(payload: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """
     Preserve nested JSON-safe payload for Langfuse event input/output/metadata.
-    Flattening to scalar strings reduces debugging value for complex agent traces.
+    When LANGFUSE_CAPTURE_CONTENT is false, legal content keys are redacted.
     """
-    return _safe_mapping(payload)
+    safe = _safe_mapping(payload)
+    if safe is None:
+        return None
+    return redact_observability_value(safe)  # type: ignore[return-value]
 
 
 def _merge_event_input_with_metadata(
@@ -556,10 +563,13 @@ def get_langchain_callbacks(
 ) -> List[Any]:
     """
     Build LangChain callbacks list with Langfuse CallbackHandler when available.
-    Nests generations under the active assistant trace / current span parent.
-    Returns an empty list when Langfuse is disabled/unavailable.
+
+    When ``LANGFUSE_CAPTURE_CONTENT`` is false, returns [] — the LangChain
+    handler would otherwise export full prompts/completions.
     """
     if not langfuse_enabled() or not LANGFUSE_LANGCHAIN_HANDLER_AVAILABLE:
+        return []
+    if not langfuse_capture_content_enabled():
         return []
     try:
         active = get_active_trace_context()

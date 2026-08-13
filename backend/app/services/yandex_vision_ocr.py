@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Literal, Sequence, Tuple
 import requests
 
 from app.config import config
+from app.services.yandex_privacy import apply_data_logging_headers
 
 logger = logging.getLogger(__name__)
 
@@ -238,12 +239,13 @@ def _call_batch_analyze_base64(
         ],
     }
     max_retries = max(1, int(getattr(config, "YANDEX_OCR_MAX_RETRIES", YANDEX_VISION_MAX_RETRIES) or YANDEX_VISION_MAX_RETRIES))
-    headers = {
-        "Authorization": f"Api-Key {config.YANDEX_API_KEY}",
-        "Content-Type": "application/json",
-        "x-client-request-id": str(uuid.uuid4()),
-        "x-data-logging-enabled": "true" if getattr(config, "YANDEX_OCR_DATA_LOGGING_ENABLED", True) else "false",
-    }
+    headers = apply_data_logging_headers(
+        {
+            "Authorization": f"Api-Key {config.YANDEX_API_KEY}",
+            "Content-Type": "application/json",
+            "x-client-request-id": str(uuid.uuid4()),
+        }
+    )
     last_err: str | None = None
     for attempt in range(1, max_retries + 1):
         _wait_rate_limit()
@@ -456,14 +458,13 @@ def _ocr_http_poll_timeout() -> Tuple[float, float]:
 
 def _new_ocr_headers() -> Dict[str, str]:
     # Api-Key: не передаём x-folder-id (каталог SA подставляется сервисом). См. Vision OCR docs.
-    return {
-        "Authorization": f"Api-Key {config.YANDEX_API_KEY}",
-        "Content-Type": "application/json",
-        "x-client-request-id": str(uuid.uuid4()),
-        "x-data-logging-enabled": (
-            "true" if getattr(config, "YANDEX_OCR_DATA_LOGGING_ENABLED", True) else "false"
-        ),
-    }
+    return apply_data_logging_headers(
+        {
+            "Authorization": f"Api-Key {config.YANDEX_API_KEY}",
+            "Content-Type": "application/json",
+            "x-client-request-id": str(uuid.uuid4()),
+        }
+    )
 
 
 def _yandex_api_error_fields(payload: Any) -> Dict[str, Any]:
@@ -514,14 +515,7 @@ def _log_yandex_ocr_api_error(
                 details_s = str(details)
             parts.append(f"details={details_s}")
     logger.error("Yandex OCR API error: %s", " ".join(parts))
-    if payload is not None:
-        try:
-            body = json.dumps(payload, ensure_ascii=False)
-        except (TypeError, ValueError):
-            body = str(payload)
-        logger.error("Yandex OCR API error payload: %s", body[:4000])
-    elif raw_text:
-        logger.error("Yandex OCR API error raw body: %s", raw_text[:4000])
+    # Do not log full OCR error payloads/bodies — they may include recognition text.
 
 
 def _raise_if_operation_start_failed(op_data: Dict[str, Any], *, model: str) -> None:

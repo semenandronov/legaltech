@@ -36,6 +36,8 @@ from app.services.rag_service import RAGService, get_rag_service
 from app.services.document_processor import DocumentProcessor, get_document_processor
 from app.models.case import Case, File as CaseFile
 from app.models.user import User
+from app.utils.authorization import require_case_access
+from fastapi import HTTPException
 from app.services.langchain_agents.chat_graph_service import get_chat_graph_service
 from app.services.observability.assistant_pipeline_langfuse_tracing import (
     assistant_step_span,
@@ -1504,20 +1506,20 @@ class ChatOrchestrator:
     @observe_span("case_chat_verify_case_access_internal")
     def _verify_case_access(self, case_id: str, user: User) -> Optional[Case]:
         """
-        Проверить доступ пользователя к делу
-        
+        Проверить доступ пользователя к делу (membership ACL).
+
         Returns:
             Case если доступ есть, None иначе
         """
-        case = self.db.query(Case).filter(
-            Case.id == case_id,
-            Case.user_id == user.id
-        ).first()
-        
-        if not case:
-            logger.warning(f"[ChatOrchestrator] Case not found: {case_id} for user {user.id}")
-        
-        return case
+        try:
+            return require_case_access(self.db, case_id, user.id)
+        except HTTPException:
+            logger.warning(
+                "[ChatOrchestrator] Case access denied: case_id=%s user_id=%s",
+                case_id,
+                user.id,
+            )
+            return None
     
     async def classify_request(self, question: str) -> ClassificationResult:
         """

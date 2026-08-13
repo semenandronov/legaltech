@@ -488,6 +488,9 @@ async def log_requests(request: Request, call_next):
 from app.middleware.metrics import MetricsMiddleware
 app.add_middleware(MetricsMiddleware)
 
+# HTTP rate limiting (abuse / scrape protection)
+app.add_middleware(RateLimitMiddleware)
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,

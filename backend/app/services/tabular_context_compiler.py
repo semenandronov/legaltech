@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import copy
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from langchain_core.documents import Document
 
@@ -23,11 +23,72 @@ from app.services.chat.retrieval_escalation import (
 from app.services.chat.retrieval_router import create_case_retrieval_router
 from app.services.tabular_context_status import classify_tabular_context_outcome, merge_context_meta
 from app.services.tabular_coverage_gate import evaluate_tabular_coverage
-from app.services.tabular_cross_ref_enrich import enrich_docs_with_cross_references
+from app.services.tabular_cross_ref_enrich import (
+    enrich_docs_with_cross_references,
+    order_docs_for_prompt,
+)
+from app.services.appendix_inventory_extract import appendix_follow_binding_instruction
 from app.services.tabular_document_context import TabularFileContextPackage
 from app.services.tabular_section_router import route_column_to_sections
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_required_cross_ref_in_context(
+    rag_service: Any,
+    *,
+    ranked_docs: Sequence[Document],
+    included_docs: List[Document],
+    context_text: str,
+    budget: Dict[str, Any],
+) -> Tuple[List[Document], str]:
+    """Guarantee query targets (+ their supplements) survive assemble cuts."""
+    must = [
+        d
+        for d in ranked_docs
+        if (d.metadata or {}).get("query_target")
+        or (d.metadata or {}).get("exact_clause_target")
+        or (d.metadata or {}).get("cross_ref_required")
+        or (d.metadata or {}).get("cross_ref_followed")
+    ]
+    if not must:
+        return included_docs, context_text
+
+    def _key(doc: Document) -> Tuple[str, str, str]:
+        md = doc.metadata or {}
+        return (
+            str(md.get("chunk_id") or md.get("id") or ""),
+            str(md.get("section_root_id") or ""),
+            (doc.page_content or "")[:80],
+        )
+
+    have = {_key(d) for d in included_docs}
+    missing_targets = [
+        d
+        for d in must
+        if _key(d) not in have
+        and (
+            (d.metadata or {}).get("query_target")
+            or (d.metadata or {}).get("exact_clause_target")
+            or (d.metadata or {}).get("cross_ref_required")
+        )
+    ]
+    if not missing_targets and any(
+        (d.metadata or {}).get("query_target")
+        or (d.metadata or {}).get("exact_clause_target")
+        for d in included_docs
+    ):
+        return included_docs, context_text
+
+    max_chars = max(int((budget or {}).get("max_context_chars") or 0), 10000)
+    ordered = order_docs_for_prompt(list(must) + list(included_docs))
+    rebuilt_ctx, rebuilt_docs = rag_service.format_sources_for_prompt_with_docs(
+        ordered,
+        max_context_chars=max_chars,
+    )
+    if rebuilt_ctx.strip():
+        return list(rebuilt_docs), str(rebuilt_ctx)
+    return included_docs, context_text
 
 
 def tabular_context_compiler_enabled() -> bool:
@@ -455,13 +516,45 @@ def compile_tabular_cell_context(
         vector_store=vector_store,
         case_id=params.case_id,
         file_id=params.file_id,
+        exact_query=exact_query,
     )
     meta["cross_ref"] = xref_meta
+    ranked_docs = order_docs_for_prompt(ranked_docs)
+
+    exact_follow = str(xref_meta.get("follow_mode") or "").startswith("exact_clause")
+    if xref_meta.get("cross_ref_enrich") and not exact_follow:
+        # Subject/inventory questions: reserve room for appendix table.
+        budget = dict(budget or {})
+        budget["max_context_chars"] = max(
+            int(budget.get("max_context_chars") or 0),
+            int(xref_meta.get("budget_chars") or 9000),
+            10000,
+        )
+        nav_extra = appendix_follow_binding_instruction()
+        if nav_extra:
+            navigation_context = (
+                f"{navigation_context}\n\n{nav_extra}".strip()
+                if navigation_context
+                else nav_extra
+            )
+    elif exact_query:
+        nav_extra = (
+            f"[Целевой пункт {exact_query}]\n"
+            f"Главное доказательство — текст пункта {exact_query}. "
+            "Перекрёстные приложения подтягиваются только если на них ссылается "
+            "этот пункт, и только как дополнение после него."
+        )
+        navigation_context = (
+            f"{navigation_context}\n\n{nav_extra}".strip()
+            if navigation_context
+            else nav_extra
+        )
 
     try:
         from app.services.retrieval_channels import prefer_short_docs_for_prompt
 
         ranked_docs = prefer_short_docs_for_prompt(ranked_docs)
+        ranked_docs = order_docs_for_prompt(ranked_docs)
     except Exception:
         pass
 
@@ -472,6 +565,7 @@ def compile_tabular_cell_context(
             ranked_docs = prefer_zone_docs_for_prompt(
                 ranked_docs, params.preferred_zones
             )
+            ranked_docs = order_docs_for_prompt(ranked_docs)
             meta["preferred_zones"] = list(params.preferred_zones)
             meta["zone_histogram"] = zone_histogram(ranked_docs)
     except Exception as zone_exc:
@@ -491,6 +585,15 @@ def compile_tabular_cell_context(
         original_text=params.original_text,
     )
     included_docs = documents_from_state_serializable(assembled.get("rag_documents"))
+    # Always re-pack so exact targets survive; supplements ride along after.
+    if exact_query or xref_meta.get("cross_ref_enrich"):
+        included_docs, context_text = _ensure_required_cross_ref_in_context(
+            rag_service,
+            ranked_docs=ranked_docs,
+            included_docs=included_docs,
+            context_text=context_text,
+            budget=budget,
+        )
     meta["docs"] = len(included_docs)
 
     if not context_text.strip() or not included_docs:

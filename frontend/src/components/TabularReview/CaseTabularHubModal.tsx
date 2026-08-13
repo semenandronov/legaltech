@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   X,
   Table,
@@ -18,6 +18,9 @@ import {
   fetchDdTemplateCatalog,
   type TabularTemplateCatalogItem,
 } from '@/utils/tabularTemplateApply'
+import type { FolderItem } from '@/services/api'
+import { FolderGroupedFilePicker } from '@/components/Documents/FolderGroupedFilePicker'
+import type { PickableCaseFile } from '@/utils/groupFilesByFolder'
 
 type HubStep = 'list' | 'templates' | 'files'
 
@@ -30,16 +33,12 @@ export interface CaseTabularReviewSummary {
   description?: string
 }
 
-interface CaseFileOption {
-  id: string
-  filename: string
-}
-
 interface CaseTabularHubModalProps {
   open: boolean
   onClose: () => void
   caseId: string
-  files: CaseFileOption[]
+  files: PickableCaseFile[]
+  folders: FolderItem[]
   reviews: CaseTabularReviewSummary[]
   loadingReviews?: boolean
   onReviewOpen: (reviewId: string) => void
@@ -51,6 +50,7 @@ export function CaseTabularHubModal({
   onClose,
   caseId,
   files,
+  folders,
   reviews,
   loadingReviews = false,
   onReviewOpen,
@@ -84,23 +84,6 @@ export function CaseTabularHubModal({
       .catch(() => setTemplates([]))
       .finally(() => setLoadingTemplates(false))
   }, [open, resetFlow])
-
-  const filteredFiles = useMemo(() => {
-    const q = fileSearch.trim().toLowerCase()
-    if (!q) return files
-    return files.filter((f) => f.filename.toLowerCase().includes(q))
-  }, [files, fileSearch])
-
-  const allFilesSelected =
-    filteredFiles.length > 0 && filteredFiles.every((f) => selectedFileIds.has(f.id))
-
-  const toggleAllFiles = () => {
-    if (allFilesSelected) {
-      setSelectedFileIds(new Set())
-    } else {
-      setSelectedFileIds(new Set(filteredFiles.map((f) => f.id)))
-    }
-  }
 
   const startBlankCreate = () => {
     setSelectedTemplate(null)
@@ -495,46 +478,14 @@ export function CaseTabularHubModal({
                   style={{ color: 'var(--color-text-primary)' }}
                 />
               </div>
-              <button
-                type="button"
-                onClick={toggleAllFiles}
-                className="text-xs mb-2 hover:underline"
-                style={{ color: 'var(--color-accent)' }}
-              >
-                {allFilesSelected ? 'Снять выделение' : 'Выбрать все'}
-              </button>
-              <ul
-                className="max-h-52 overflow-y-auto rounded-lg border divide-y"
-                style={{ borderColor: 'var(--color-border)' }}
-              >
-                {filteredFiles.map((file) => (
-                  <li key={file.id}>
-                    <label className="flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-[var(--color-bg-hover)]">
-                      <input
-                        type="checkbox"
-                        checked={selectedFileIds.has(file.id)}
-                        onChange={() => {
-                          setSelectedFileIds((prev) => {
-                            const next = new Set(prev)
-                            if (next.has(file.id)) next.delete(file.id)
-                            else next.add(file.id)
-                            return next
-                          })
-                        }}
-                        className="rounded"
-                      />
-                      <span className="text-sm truncate" style={{ color: 'var(--color-text-primary)' }}>
-                        {file.filename}
-                      </span>
-                    </label>
-                  </li>
-                ))}
-                {filteredFiles.length === 0 && (
-                  <li className="px-3 py-6 text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>
-                    Файлы не найдены
-                  </li>
-                )}
-              </ul>
+              <FolderGroupedFilePicker
+                files={files}
+                folders={folders}
+                selectedIds={selectedFileIds}
+                onSelectedIdsChange={setSelectedFileIds}
+                searchQuery={fileSearch}
+                listClassName="max-h-52"
+              />
             </>
           )}
         </div>

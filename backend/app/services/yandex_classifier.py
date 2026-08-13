@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from app.config import config
+from app.services.yandex_privacy import apply_data_logging_headers
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ class YandexDocumentClassifier:
         }
         if self.folder_id:
             h["x-folder-id"] = self.folder_id
-        return h
+        return apply_data_logging_headers(h)
 
     def _resolve_tuned_model_uri(self) -> str:
         if self.model_uri_override:

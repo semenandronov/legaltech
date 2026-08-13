@@ -38,6 +38,7 @@ from tenacity import (
 )
 
 from app.config import config
+from app.services.yandex_privacy import langchain_disable_request_logging
 
 logger = logging.getLogger(__name__)
 
@@ -270,6 +271,10 @@ class ChatYandexGPT(LangChainChatYandexGPT):
             if "/" in model_name:
                 model_name = model_name.split("/")[0]
             init_kwargs["model_name"] = model_name
+
+        # LangChain maps disable_request_logging=True → x-data-logging-enabled: false.
+        if "disable_request_logging" not in init_kwargs:
+            init_kwargs["disable_request_logging"] = langchain_disable_request_logging()
 
         super().__init__(**init_kwargs)
 

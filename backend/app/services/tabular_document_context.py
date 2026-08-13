@@ -12,6 +12,7 @@ from app.config import config
 from app.models.case import File
 from app.services.file_document_outline import (
     OutlineSectionEntry,
+    propagate_outline_appendix_containers,
     load_outline_from_vector_store,
     load_outline_payload_from_file,
     outline_payload_from_chunks,
@@ -65,7 +66,7 @@ def build_file_context_package(
     outline_payload: Dict[str, Any],
 ) -> TabularFileContextPackage:
     outline_raw = outline_payload.get("outline") or []
-    outline = tuple(
+    raw_entries = [
         OutlineSectionEntry.from_dict(x)
         for x in outline_raw
         if isinstance(x, dict)
@@ -74,7 +75,9 @@ def build_file_context_package(
             or str(x.get("section_number") or "").strip()
             or str(x.get("section_label") or "").strip()
         )
-    )
+    ]
+    # Re-propagate appendix containers for older payloads without section_kind.
+    outline = tuple(propagate_outline_appendix_containers(raw_entries))
     def_roots = tuple(
         str(x).strip()
         for x in (outline_payload.get("definition_section_roots") or [])

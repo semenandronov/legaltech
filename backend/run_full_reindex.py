@@ -62,11 +62,15 @@ def get_yandex_embeddings(texts):
     if not api_key:
         raise ValueError("YANDEX_API_KEY not found. Please set it in environment.")
     
-    headers = {
-        "Authorization": f"Api-Key {api_key}",
-        "Content-Type": "application/json",
-        "x-folder-id": YANDEX_FOLDER_ID
-    }
+    from app.services.yandex_privacy import apply_data_logging_headers
+
+    headers = apply_data_logging_headers(
+        {
+            "Authorization": f"Api-Key {api_key}",
+            "Content-Type": "application/json",
+            "x-folder-id": YANDEX_FOLDER_ID,
+        }
+    )
     
     embeddings = []
     

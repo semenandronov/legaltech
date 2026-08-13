@@ -10,6 +10,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from app.config import config
+from app.services.yandex_privacy import apply_data_logging_headers
 
 logger = logging.getLogger(__name__)
 
@@ -50,16 +51,22 @@ def yandex_openai_sdk_client():
     base_url = (getattr(config, "YANDEX_OPENAI_COMPAT_BASE_URL", None) or _DEFAULT_BASE_URL).strip()
     # Yandex OpenAI-compat layer requires folder in header.
     # Keep `project` for compatibility, but `x-folder-id` is the critical piece.
+    # Privacy: always set x-data-logging-enabled from the global policy.
+    default_headers = apply_data_logging_headers({"x-folder-id": folder})
     try:
         return OpenAI(
             api_key=api_key,
             base_url=base_url,
             project=folder,
-            default_headers={"x-folder-id": folder},
+            default_headers=default_headers,
         )
     except TypeError:
         # Older OpenAI SDK: no default_headers in constructor.
         # Fall back to project-only; embeddings may still fail without the header.
+        logger.warning(
+            "OpenAI SDK without default_headers support; "
+            "x-data-logging-enabled / x-folder-id may be missing on raw SDK calls"
+        )
         return OpenAI(api_key=api_key, base_url=base_url, project=folder)
 
 
@@ -121,7 +128,7 @@ def create_yandex_chat_openai_llm(
         "model": model_id,
         "openai_api_key": api_key,
         "openai_api_base": base_url,
-        "default_headers": {"x-folder-id": folder},
+        "default_headers": apply_data_logging_headers({"x-folder-id": folder}),
         "temperature": temperature,
         "model_kwargs": model_kwargs,
         **kw,

@@ -39,6 +39,10 @@ from app.services.tabular_extraction_schemas import (
 from app.services.tabular_extraction_policy import TABULAR_NA_VALUE, ensure_na_reasoning
 from app.services.tabular_review_models import TabularCellExtractionModel
 from app.services.document_date_resolver import select_document_date_zone
+from app.services.appendix_inventory_extract import (
+    column_requires_appendix_inventory,
+    try_inventory_extraction_from_docs,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1350,6 +1354,17 @@ async def run_tabular_cell_extraction(
     prepared.retrieval_meta["column_kind"] = kind
 
     extraction = try_extraction_from_front_matter(prepared.included_docs, column=column)
+    evidence_docs = list(prepared.included_docs or [])
+    if extraction is None:
+        if column_requires_appendix_inventory(column):
+            # Prefer recall pool too — followed macros may live there if assemble trimmed.
+            inv_docs = list(prepared.included_docs or []) + list(prepared.file_chunks or [])
+            extraction = try_inventory_extraction_from_docs(inv_docs)
+            if extraction is not None:
+                evidence_docs = inv_docs
+                if prepared.retrieval_meta is not None:
+                    prepared.retrieval_meta["appendix_inventory"] = True
+
     if extraction is None:
         extraction = await invoke_structured_cell_extraction(
             llm,
@@ -1364,7 +1379,7 @@ async def run_tabular_cell_extraction(
         extraction,
         column=column,
         file=file,
-        included_docs=prepared.included_docs,
+        included_docs=evidence_docs,
     )
     return TabularCellPipelineResult(
         extraction=verification.result,

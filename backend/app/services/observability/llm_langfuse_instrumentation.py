@@ -23,6 +23,7 @@ from app.services.observability.langfuse_service import (
     normalize_observability_metadata,
     trace_contract_event,
 )
+from app.security.sensitive_data import langfuse_capture_content_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -383,8 +384,9 @@ def traced_sync_llm_invoke(
         meta.setdefault("model", model)
     inp = {
         "messages_count": len(messages) if isinstance(messages, list) else None,
-        "prompt_preview": str(messages)[:input_preview_chars],
     }
+    if langfuse_capture_content_enabled():
+        inp["prompt_preview"] = str(messages)[:input_preview_chars]
 
     def _run() -> Any:
         t0 = time.monotonic()
@@ -461,9 +463,10 @@ def traced_collect_llm_stream_text(
         meta.setdefault("model", model)
     inp = {
         "messages_count": len(messages),
-        "prompt_preview": str(messages)[:input_preview_chars],
         "stream_to_client": writer is not None,
     }
+    if langfuse_capture_content_enabled():
+        inp["prompt_preview"] = str(messages)[:input_preview_chars]
 
     def _run() -> str:
         stream_metrics: Dict[str, Any] = {}
@@ -547,9 +550,10 @@ def traced_collect_structured_citation_stream(
     inp = {
         "messages_count": len(getattr(prepare, "messages", []) or []),
         "num_chunks": getattr(prepare, "num_chunks", None),
-        "prompt_preview": str(getattr(prepare, "messages", ""))[:input_preview_chars],
         "stream_to_client": writer is not None,
     }
+    if langfuse_capture_content_enabled():
+        inp["prompt_preview"] = str(getattr(prepare, "messages", ""))[:input_preview_chars]
 
     def _run() -> tuple[str, list[Any]]:
         stream_metrics: Dict[str, Any] = {}

@@ -4,6 +4,7 @@ import requests
 import logging
 from typing import Dict, Any, Optional
 from app.config import config
+from app.services.yandex_privacy import apply_data_logging_headers
 
 logger = logging.getLogger(__name__)
 
@@ -54,11 +55,13 @@ class SpeechKitService:
         
         # API endpoint для SpeechKit
         url = "https://stt.api.cloud.yandex.net/speech/v1/stt:recognize"
-        
-        headers = {
-            "Authorization": f"Bearer {self.iam_token}",
-            "x-folder-id": self.folder_id
-        }
+
+        headers = apply_data_logging_headers(
+            {
+                "Authorization": f"Bearer {self.iam_token}",
+                "x-folder-id": self.folder_id,
+            }
+        )
         
         # Параметры для распознавания
         params = {

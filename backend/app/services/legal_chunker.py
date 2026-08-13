@@ -197,6 +197,18 @@ _CLAUSE_KIND_MAP: Dict[str, str] = {
 }
 
 _CROSS_REF_PATTERNS: List[re.Pattern[str]] = [
+    # Appendix / schedule first (more specific).
+    re.compile(
+        r"\b(?:приложени[еюя]|спецификаци[яи]|appendix|exhibit|schedule|annex)"
+        r"\s*(?:№|N[oо]?\.?|#)?\s*(?:[0-9]+|[IVXLCDM]+|[A-Za-z])\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:п\.?\s*п\.?|пп\.?|пункт(?:а|ом|ы|ах|у)?)\s*\d+(?:[.,]\d+)*"
+        r"\s+(?:настоящего\s+)?(?:приложени[еюя]|appendix|exhibit|schedule|annex)"
+        r"\s*(?:№|N[oо]?\.?|#)?\s*(?:[0-9]+|[IVXLCDM]+|[A-Za-z])\b",
+        re.IGNORECASE,
+    ),
     re.compile(r"\bст\.?\s*\d+(?:[.,]\d+)*", re.IGNORECASE),
     re.compile(r"\bстат(?:ья|ьи|ье|ью|ьей|ей|ьми|ями)\s*\d+(?:[.,]\d+)*", re.IGNORECASE),
     re.compile(r"\bп\.?\s*\d+(?:[.,]\d+)*", re.IGNORECASE),
@@ -204,6 +216,7 @@ _CROSS_REF_PATTERNS: List[re.Pattern[str]] = [
     re.compile(r"\bч\.?\s*\d+(?:[.,]\d+)*", re.IGNORECASE),
     re.compile(r"\bчаст(?:ь|и|ью)\s*\d+(?:[.,]\d+)*", re.IGNORECASE),
     re.compile(r"\b§\s*\d+(?:[.,]\d+)*"),
+    re.compile(r"\b(?:section|article)\s*\d+(?:[.,]\d+)*", re.IGNORECASE),
 ]
 
 _DOCLING_SUPPORTED_EXTS = {".pdf", ".docx", ".html", ".htm", ".md", ".pptx"}

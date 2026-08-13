@@ -138,7 +138,6 @@ def _build_source_references(
     included_docs: Optional[List[Document]] = None,
 ) -> List[Dict[str, Any]]:
     from app.services.chat.citation_payload import resolve_citation_page_from_metadata
-    from app.services.rag_service import RAGService
 
     text_fallback = _clean_text(result.verbatim_extract or anchor_text or result.cell_value)[:240]
     base_refs: List[Dict[str, Any]] = []
@@ -206,29 +205,26 @@ def _build_source_references(
         elif page is None:
             page = source_page
 
-        # Pixel highlight: leaf chunks only (micro/row), never parent macro / LLM stamp.
-        from app.services.tabular_source_geometry import best_doc_for_geometry
-
-        geometry_doc = best_doc_for_geometry(
-            docs,
-            quote=ref_text,
-            char_start=char_start,
-            char_end=char_end,
-        )
-        geometry_meta = (getattr(geometry_doc, "metadata", None) or {}) if geometry_doc else {}
+        # Pixel highlight: quote span → overlapping leaf provenance (not one guessed chunk).
+        from app.services.tabular_source_geometry import extract_geometry_for_char_span
 
         bbox: Optional[Dict[str, float]] = None
         ref_page_bbox: Optional[Dict[str, float]] = None
-        if geometry_meta and char_start is not None and char_end is not None:
+        ref_bbox_regions: List[Dict[str, float]] = []
+        if char_start is not None and char_end is not None:
             try:
-                regions, matched_page_bbox = RAGService._extract_bbox_regions(
-                    geometry_meta,
-                    char_start=char_start,
-                    char_end=char_end,
+                regions, matched_page_bbox, geo_page = extract_geometry_for_char_span(
+                    docs,
+                    char_start=int(char_start),
+                    char_end=int(char_end),
                 )
                 if regions:
-                    bbox = _copy_bbox(regions[0])
+                    ref_bbox_regions = [_copy_bbox(r) for r in regions]
+                    ref_bbox_regions = [r for r in ref_bbox_regions if r is not None]
+                    bbox = ref_bbox_regions[0] if ref_bbox_regions else None
                     ref_page_bbox = _copy_page_bbox(matched_page_bbox)
+                    if geo_page is not None:
+                        page = geo_page
             except Exception:
                 pass
 
@@ -237,10 +233,12 @@ def _build_source_references(
             if not _quote_in_span(original_text, char_start, char_end, ref_text):
                 bbox = None
                 ref_page_bbox = None
+                ref_bbox_regions = []
         # If we never located the quote, do not keep an untrusted bbox from index/top-chunk.
         if bbox is not None and located is None and not matched_meta:
             bbox = None
             ref_page_bbox = None
+            ref_bbox_regions = []
 
         is_anchor_ref = _clean_text(ref_text).lower() == _clean_text(anchor_text).lower()
         merged: Dict[str, Any] = {
@@ -257,6 +255,8 @@ def _build_source_references(
         }
         if bbox is not None:
             merged["bbox"] = bbox
+            if ref_bbox_regions:
+                merged["bbox_regions"] = ref_bbox_regions
             if ref_page_bbox is not None:
                 merged["page_bbox"] = ref_page_bbox
         elif primary_bbox is not None and is_anchor_ref and located is not None and matched_meta:
@@ -298,11 +298,10 @@ def build_tabular_cell_db_payload(
     """
     from app.services.chat.citation_payload import resolve_citation_page_from_metadata
     from app.services.prov_span_utils import narrow_char_span_to_quote
-    from app.services.rag_service import RAGService
     from app.services.tabular_review_verifier import TabularReviewVerifier
     from app.services.tabular_source_geometry import (
-        best_doc_for_geometry,
         enrich_source_references_with_geometry,
+        extract_geometry_for_char_span,
         filter_docs_for_geometry,
     )
 
@@ -339,6 +338,11 @@ def build_tabular_cell_db_payload(
     top_doc = included_docs[0] if included_docs else None
     top_meta: Dict[str, Any] = (getattr(top_doc, "metadata", None) or {}) if top_doc else {}
     original_text = file.original_text or ""
+
+    # Persist OCR-exact quotes (model near-quotes are snapped before locate/geometry).
+    from app.services.tabular_quote_then_answer import canonicalize_extraction_quotes
+
+    result = canonicalize_extraction_quotes(result, original_text)
 
     anchor_text = (result.verbatim_extract or "").strip()
     if not anchor_text and result.source_references and isinstance(result.source_references, list):
@@ -425,19 +429,14 @@ def build_tabular_cell_db_payload(
     bbox_regions: List[Dict[str, float]] = []
     page_bbox: Optional[Dict[str, float]] = None
     try:
-        matched_for_bbox = best_doc_for_geometry(
-            leaf_docs,
-            quote=anchor_text,
-            char_start=primary_source_char_start,
-            char_end=primary_source_char_end,
-        )
-        if matched_for_bbox is not None:
-            bbox_meta = getattr(matched_for_bbox, "metadata", None) or {}
-            bbox_regions, page_bbox = RAGService._extract_bbox_regions(
-                bbox_meta,
-                char_start=primary_source_char_start,
-                char_end=primary_source_char_end,
+        if primary_source_char_start is not None and primary_source_char_end is not None:
+            bbox_regions, page_bbox, geo_page = extract_geometry_for_char_span(
+                leaf_docs if leaf_docs else match_docs,
+                char_start=int(primary_source_char_start),
+                char_end=int(primary_source_char_end),
             )
+            if geo_page is not None and source_page is None:
+                source_page = geo_page
         else:
             bbox_regions, page_bbox = [], None
     except Exception:
@@ -451,19 +450,20 @@ def build_tabular_cell_db_payload(
         verified_flag=verified_flag,
         source_page=source_page,
         source_section=source_section,
-        bbox_regions=bbox_regions[:1],
+        bbox_regions=bbox_regions,
         page_bbox=page_bbox if isinstance(page_bbox, dict) else None,
         anchor_text=anchor_text,
         original_text=original_text,
         included_docs=match_docs,
     )
 
-    # Second pass: leaf geometry only (never parent macro boxes).
-    if source_references and leaf_docs:
+    # Second pass: re-locate each quote and attach span-filtered leaf boxes.
+    if source_references and (leaf_docs or match_docs):
         source_references = enrich_source_references_with_geometry(
             refs=source_references,
-            docs=leaf_docs,
+            docs=leaf_docs if leaf_docs else match_docs,
             original_text=original_text,
+            quote_fallback=anchor_text,
         )
 
     if source_references:

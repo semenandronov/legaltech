@@ -3,12 +3,14 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
+from fastapi import HTTPException
 from app.models.playbook import Playbook, PlaybookRule, PlaybookCheck
 from app.models.case import File
 from app.models.document_editor import Document
 from app.services.clause_extractor import ClauseExtractor, ExtractedClause, ClauseExtractionResult
 from app.services.llm_factory import create_llm
 from app.services.pgvector_store import CaseVectorStore
+from app.utils.authorization import require_case_access
 from langchain_core.prompts import ChatPromptTemplate
 from datetime import datetime
 import logging
@@ -335,23 +337,25 @@ class PlaybookChecker:
         if not file and not editor_doc:
             raise ValueError(f"Document {document_id} not found")
 
-        # Determine effective case_id and check document access
+        # Determine effective case_id and check document access (membership ACL).
         effective_case_id = case_id
         if file:
-            if file.case_id:
-                from app.models.case import Case
-                case = self.db.query(Case).filter(Case.id == file.case_id).first()
-                if case and case.user_id != user_id:
-                    raise ValueError(f"Access denied to document {document_id}")
-                effective_case_id = effective_case_id or file.case_id
+            if not file.case_id:
+                raise ValueError(f"Access denied to document {document_id}")
+            try:
+                require_case_access(self.db, file.case_id, user_id)
+            except HTTPException as exc:
+                raise ValueError(f"Access denied to document {document_id}") from exc
+            effective_case_id = effective_case_id or file.case_id
             document_text = file.original_text or ""
             document_name = file.filename
         else:
-            # Editor document
-            from app.models.case import Case
-            case = self.db.query(Case).filter(Case.id == editor_doc.case_id).first()
-            if case and case.user_id != user_id:
+            if not editor_doc.case_id:
                 raise ValueError(f"Access denied to document {document_id}")
+            try:
+                require_case_access(self.db, editor_doc.case_id, user_id)
+            except HTTPException as exc:
+                raise ValueError(f"Access denied to document {document_id}") from exc
             effective_case_id = effective_case_id or editor_doc.case_id
             document_text = editor_doc.content_plain or ""
             if not document_text and editor_doc.content:

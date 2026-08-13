@@ -49,6 +49,39 @@ def _parse_optional_float(value) -> Optional[float]:
         return None
 
 
+def _dd_fields_from_row(
+    *,
+    dd_doc_type: Optional[str],
+    dd_doc_type_confidence: Optional[str],
+    dd_doc_type_source: Optional[str],
+) -> dict:
+    from app.services.dd_document_classifier import dd_classification_needs_review
+    from app.services.dd_document_taxonomy import dd_doc_type_label
+
+    doc_type = (dd_doc_type or "").strip() or "unknown"
+    confidence = _parse_optional_float(dd_doc_type_confidence)
+    source = (dd_doc_type_source or "").strip() or None
+    return {
+        "dd_doc_type": doc_type,
+        "dd_doc_type_label": dd_doc_type_label(doc_type),
+        "dd_doc_type_short_label": dd_doc_type_label(doc_type, short=True),
+        "dd_doc_type_confidence": confidence,
+        "dd_doc_type_source": source,
+        "dd_needs_review": dd_classification_needs_review(doc_type, confidence, source),
+    }
+
+
+@router.get("/dd-doc-taxonomy")
+async def get_dd_doc_taxonomy(
+    current_user: User = Depends(get_current_user),
+):
+    """DD document type catalog for case library filters and type picker."""
+    from app.services.dd_document_taxonomy import serialize_dd_taxonomy
+
+    _ = current_user
+    return serialize_dd_taxonomy()
+
+
 def _reconnect_db(db: Session) -> None:
     """
     Ensure the DB session has a live connection after a long operation (OCR, etc.).
@@ -540,9 +573,11 @@ async def get_case_files(
                 "size": int(file.file_size) if file.file_size is not None else (int(file.text_length) if file.text_length is not None else None),
                 "page_count": page_count_map.get(file.id),
                 "doc_type": classification.doc_type if (classification := classification_map.get(file.id)) else None,
-                "dd_doc_type": file.dd_doc_type,
-                "dd_doc_type_confidence": _parse_optional_float(file.dd_doc_type_confidence),
-                "dd_doc_type_source": file.dd_doc_type_source,
+                **_dd_fields_from_row(
+                    dd_doc_type=file.dd_doc_type,
+                    dd_doc_type_confidence=file.dd_doc_type_confidence,
+                    dd_doc_type_source=file.dd_doc_type_source,
+                ),
                 "classification": {
                     "doc_type": classification.doc_type,
                     "relevance_score": classification.relevance_score,
@@ -633,6 +668,10 @@ class MoveFileRequest(BaseModel):
     folder_id: Optional[str] = None
 
 
+class UpdateDdDocTypeRequest(BaseModel):
+    dd_doc_type: str = Field(..., min_length=1, max_length=64)
+
+
 class UpdateCaseFileTextRequest(BaseModel):
     """Replace stored plain text for a case file (e.g. workflow document_draft .txt)."""
     text: str = Field(..., description="UTF-8 plain text body")
@@ -674,6 +713,170 @@ async def move_file_to_folder(
 
     db.commit()
     return {"id": file.id, "folder_id": file.folder_id}
+
+
+@router.patch("/{case_id}/files/{file_id}/dd-doc-type")
+async def update_file_dd_doc_type(
+    case_id: str,
+    file_id: str,
+    request: UpdateDdDocTypeRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Lawyer override for DD document type (canonical library label)."""
+    from app.services.dd_document_classifier import (
+        apply_user_dd_doc_type,
+        file_dd_classification_payload,
+    )
+    from app.services.dd_document_taxonomy import is_valid_dd_doc_type
+
+    require_case_write(db, case_id, current_user.id)
+    if not is_valid_dd_doc_type(request.dd_doc_type):
+        raise HTTPException(status_code=400, detail="Неизвестный тип документа")
+
+    file = db.query(FileModel).filter(
+        FileModel.id == file_id,
+        FileModel.case_id == case_id,
+    ).first()
+    if not file:
+        raise HTTPException(status_code=404, detail="Файл не найден")
+
+    apply_user_dd_doc_type(file, request.dd_doc_type)
+    try:
+        from app.services.dd_auto_catalog import apply_dd_auto_catalog
+        from app.services.dd_document_classifier import DdClassificationResult
+
+        apply_dd_auto_catalog(
+            db,
+            file,
+            classification=DdClassificationResult(
+                doc_type=request.dd_doc_type,
+                confidence=1.0,
+                source="user",
+                rationale="user_override",
+            ),
+            text=file.original_text or "",
+            rename_generic_only=True,
+        )
+    except Exception:
+        logger.warning("DD auto-catalog after user type change failed", exc_info=True)
+    db.add(file)
+    db.commit()
+    db.refresh(file)
+    return {"id": file.id, **file_dd_classification_payload(file)}
+
+
+@router.post("/{case_id}/files/reclassify-dd")
+async def reclassify_case_files_dd(
+    case_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    only_missing: bool = Query(True, description="Only files without a type or with rules/unknown"),
+):
+    """
+    Backfill / refresh rules-based DD types and lawyer data-room folders.
+
+    Never overwrites user type overrides. Always re-applies auto-catalog so
+    files migrate from legacy per-type folders into data-room buckets.
+    """
+    from app.services.dd_auto_catalog import (
+        apply_dd_auto_catalog,
+        prune_empty_legacy_dd_auto_folders,
+    )
+    from app.services.dd_document_classifier import (
+        DdClassificationResult,
+        file_dd_classification_payload,
+        reclassify_file_from_text,
+    )
+
+    require_case_write(db, case_id, current_user.id)
+    files = (
+        db.query(FileModel)
+        .filter(FileModel.case_id == case_id)
+        .order_by(FileModel.created_at.asc())
+        .all()
+    )
+    updated = 0
+    cataloged = 0
+    skipped_user = 0
+    results = []
+    for file in files:
+        source = str(file.dd_doc_type_source or "").strip().lower()
+        result: DdClassificationResult | None = None
+        if source == "user":
+            skipped_user += 1
+            # Keep lawyer type; still place into the matching data-room folder.
+            result = DdClassificationResult(
+                doc_type=str(file.dd_doc_type or "unknown"),
+                confidence=float(file.dd_doc_type_confidence or 1.0),
+                source="user",
+                rationale="user_override",
+            )
+        else:
+            should_reclassify = True
+            if only_missing:
+                current = (file.dd_doc_type or "").strip()
+                conf = _parse_optional_float(file.dd_doc_type_confidence)
+                # Always refresh weak / unknown / likely false appendix tags.
+                should_reclassify = (
+                    current in ("", "unknown", "other", "appendix_spec")
+                    or conf is None
+                    or conf < 0.55
+                )
+            if should_reclassify:
+                result = reclassify_file_from_text(file)
+                updated += 1
+            else:
+                result = DdClassificationResult(
+                    doc_type=str(file.dd_doc_type or "unknown"),
+                    confidence=float(file.dd_doc_type_confidence or 0.0),
+                    source=str(file.dd_doc_type_source or "rules"),
+                    rationale="kept_existing",
+                )
+
+        try:
+            apply_dd_auto_catalog(
+                db,
+                file,
+                classification=result,
+                text=file.original_text or "",
+                rename_generic_only=True,
+            )
+            cataloged += 1
+        except Exception:
+            logger.warning(
+                "DD auto-catalog on reclassify failed file=%s",
+                file.id,
+                exc_info=True,
+            )
+        db.add(file)
+        payload = file_dd_classification_payload(file)
+        results.append(
+            {
+                "id": file.id,
+                "filename": file.filename,
+                "dd_doc_type": payload.get("dd_doc_type") or result.doc_type,
+                "dd_doc_type_confidence": payload.get("dd_doc_type_confidence"),
+                "dd_needs_review": payload.get("dd_needs_review"),
+                "folder_id": file.folder_id,
+            }
+        )
+
+    pruned = 0
+    try:
+        pruned = prune_empty_legacy_dd_auto_folders(db, case_id=case_id)
+    except Exception:
+        logger.warning("Prune legacy DD folders failed case=%s", case_id, exc_info=True)
+
+    db.commit()
+    return {
+        "case_id": case_id,
+        "updated": updated,
+        "cataloged": cataloged,
+        "pruned_legacy_folders": pruned,
+        "skipped_user": skipped_user,
+        "files": results,
+    }
 
 
 @router.post("/{case_id}/files")
@@ -1029,6 +1232,10 @@ async def get_processing_status(
         FileModel.processing_error,
         FileModel.processing_started_at,
         FileModel.processing_progress,
+        FileModel.folder_id,
+        FileModel.dd_doc_type,
+        FileModel.dd_doc_type_confidence,
+        FileModel.dd_doc_type_source,
     ).filter(FileModel.case_id == case_id).all()
     file_statuses = [
         {
@@ -1038,6 +1245,12 @@ async def get_processing_status(
             "error": f.processing_error,
             "processing_started_at": f.processing_started_at.isoformat() if f.processing_started_at else None,
             "progress": f.processing_progress,
+            "folder_id": f.folder_id,
+            **_dd_fields_from_row(
+                dd_doc_type=f.dd_doc_type,
+                dd_doc_type_confidence=f.dd_doc_type_confidence,
+                dd_doc_type_source=f.dd_doc_type_source,
+            ),
         }
         for f in files
     ]

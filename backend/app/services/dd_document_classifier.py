@@ -1,37 +1,130 @@
 """
 Rules-first DD document classifier (no LLM on ingest hot path).
 
-Phase 1: filename + first ~2k chars of text. Returns ``unknown`` below confidence threshold.
+Evidence window: filename + first ~150 chars of text (title/header only).
+Mid-document mentions of «приложение №» must not reclassify a master contract.
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
-from app.services.dd_document_taxonomy import DD_CLASSIFIER_VERSION, DD_DOC_TYPES
+from app.services.dd_document_taxonomy import (
+    DD_CLASSIFIER_HEAD_CHARS,
+    DD_CLASSIFIER_VERSION,
+    DD_DOC_TYPES,
+    DD_NEEDS_REVIEW_CONFIDENCE,
+    is_valid_dd_doc_type,
+)
 
-_DEFAULT_HEAD_CHARS = 2200
-_TITLE_ZONE_CHARS = 520
-_CONFIDENCE_THRESHOLD = 0.55
+_CONFIDENCE_THRESHOLD = DD_NEEDS_REVIEW_CONFIDENCE
 
 _ZONE_FILENAME = "filename"
-_ZONE_TITLE = "title"
-_ZONE_BODY = "body"
+_ZONE_HEAD = "head"
 
-_ZONE_MULTIPLIER = {
-    _ZONE_FILENAME: 1.0,
-    _ZONE_TITLE: 0.98,
-    _ZONE_BODY: 0.92,
-}
+# Explicit subject contracts in the header / filename.
+_SUBJECT_CUES: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    (
+        "lease_commercial",
+        (
+            "договор аренды",
+            "аренды недвижимого",
+            "аренды движимого",
+            "арендная плата",
+            "арендодатель",
+            "арендатор",
+        ),
+    ),
+    (
+        "supply",
+        (
+            "договор поставки",
+            "договор купли-продажи",
+            "поставщик",
+            "покупатель",
+        ),
+    ),
+    (
+        "services",
+        (
+            "договор оказания услуг",
+            "договор на оказание услуг",
+            "оказания услуг",
+        ),
+    ),
+    (
+        "works",
+        (
+            "договор подряда",
+            "договор выполнения работ",
+            "подрядчик",
+            "выполнение работ",
+        ),
+    ),
+)
 
-# A document titled «ДОГОВОР ...» stays a contract even when it mentions appendices,
-# payments or disputes further down the page.
-_MASTER_CONTRACT_TITLE_CUES = (
-    "договор аренды",
-    "договор поставки",
-    "договор оказания",
-    "договор подряда",
+_FORM_CUES: Tuple[Tuple[str, Tuple[str, ...], float], ...] = (
+    ("payment_order", ("платежное поручение", "0401060"), 0.92),
+    ("bank_statement", ("выписка по счету", "банковская выписка", "остаток на начало"), 0.9),
+    (
+        "addendum",
+        ("дополнительное соглашение", "доп. соглашение", "дополнительное соглашение к"),
+        0.9,
+    ),
+    (
+        "appendix_spec",
+        ("приложение №", "приложение no", "спецификация к договору", "спецификация"),
+        0.88,
+    ),
+    (
+        "litigation",
+        (
+            "арбитражный суд",
+            "исковое заявление",
+            "встречный иск",
+            "определение суда",
+            "возражения",
+            "судебный акт",
+        ),
+        0.9,
+    ),
+    (
+        "correspondence",
+        (
+            "претензия",
+            "уважаемый",
+            "уважаемая",
+            "исх. №",
+            "настоящим уведомляем",
+            "уведомление о",
+        ),
+        0.88,
+    ),
+)
+
+_FILENAME_FORM: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    ("payment_order", ("платеж", "платёж", "payment order", "pp_", "п/п")),
+    ("bank_statement", ("выписк", "statement", "bank_")),
+    ("addendum", ("дс ", "дс_", "ds_", "дополн", "addendum", "допсоглаш")),
+    ("appendix_spec", ("прилож", "spec", "специф", "appendix")),
+    ("litigation", ("иск", "жалоб", "возражен", "определен", "решение суда", "a40-", "а40-")),
+    ("correspondence", ("письм", "претенз", "уведом", "notice")),
+)
+
+_FILENAME_SUBJECT: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    ("lease_commercial", ("аренд", "lease", "arenda")),
+    ("supply", ("постав", "supply", "купл-продаж")),
+    ("services", ("услуг", "service")),
+    ("works", ("подряд", "works", "строитель")),
+)
+
+_CONTRACT_NAME_RE = re.compile(r"(?i)(?:^|[^a-zа-яё])(?:договор|dogovor|contract)(?:[^a-zа-яё]|$)")
+_CONTRACT_HEAD_RE = re.compile(r"(?i)\bдоговор\b")
+_GENERIC_NAME_RE = re.compile(
+    r"(?i)^(scan|скан|img|image|photo|фото|document|документ|file|файл|untitled|"
+    r"безымян|новый\s*документ|new\s*document|copy\s*of|dsc_|whatsapp|telegram|"
+    r"screenshot|снимок|doc\d*|file\d*)"
 )
 
 
@@ -43,6 +136,14 @@ class DdClassificationResult:
     rationale: str
     version: str = DD_CLASSIFIER_VERSION
 
+    @property
+    def needs_review(self) -> bool:
+        return dd_classification_needs_review(
+            self.doc_type,
+            self.confidence,
+            self.source,
+        )
+
     def to_json(self) -> dict:
         return {
             "doc_type": self.doc_type,
@@ -50,120 +151,8 @@ class DdClassificationResult:
             "source": self.source,
             "rationale": self.rationale,
             "version": self.version,
+            "needs_review": self.needs_review,
         }
-
-
-@dataclass(frozen=True)
-class _Rule:
-    doc_type: str
-    filename_patterns: Tuple[str, ...]
-    text_patterns: Tuple[str, ...]
-    weight: float
-
-
-_RULES: Tuple[_Rule, ...] = (
-    _Rule(
-        "payment_order",
-        ("платеж", "платёж", "payment order", "pp_", "п/п"),
-        ("платежное поручение", "0401060", "плательщик", "получатель"),
-        0.92,
-    ),
-    _Rule(
-        "bank_statement",
-        ("выписк", "statement", "bank_"),
-        ("выписка по счету", "остаток на начало", "банковская выписка", "движение средств"),
-        0.9,
-    ),
-    _Rule(
-        "addendum",
-        ("дс ", "ds_", "дополн", "addendum"),
-        ("дополнительное соглашение", "доп. соглашение", "дополнительное соглашение к договору"),
-        0.88,
-    ),
-    _Rule(
-        "appendix_spec",
-        ("прилож", "spec", "специф"),
-        ("приложение №", "спецификация", "перечень товаров", "перечень работ"),
-        0.85,
-    ),
-    _Rule(
-        "litigation",
-        ("иск", "жалоб", "определен", "решение суда", "a40-", "а40-"),
-        (
-            "арбитражный суд",
-            "исковое заявление",
-            "встречный иск",
-            "определение суда",
-            "судебный акт",
-        ),
-        0.87,
-    ),
-    _Rule(
-        "correspondence",
-        ("письм", "претенз", "уведом", "notice"),
-        (
-            "претензия",
-            "уважаемый",
-            "уважаемая",
-            "исх. №",
-            "настоящим уведомляем",
-            "просим",
-            "направляем",
-        ),
-        0.88,
-    ),
-    _Rule(
-        "lease_commercial",
-        ("аренд", "lease", "arenda"),
-        (
-            "договор аренды",
-            "арендная плата",
-            "арендодатель",
-            "арендатор",
-            "имущество в аренду",
-            "коммерческой аренды",
-        ),
-        0.86,
-    ),
-    _Rule(
-        "supply",
-        ("постав", "supply", "купл"),
-        ("договор поставки", "поставщик", "покупатель", "товар в собственность"),
-        0.86,
-    ),
-    _Rule(
-        "services",
-        ("услуг", "service", "it_", "saas"),
-        ("договор оказания услуг", "исполнитель оказывает услуги", "заказчик услуг"),
-        0.84,
-    ),
-    _Rule(
-        "works",
-        ("подряд", "works", "contractor"),
-        ("договор подряда", "подрядчик", "результат работ", "выполнение работ"),
-        0.84,
-    ),
-)
-
-# Document *form* wins over contract *subject* (письмо об аренде → correspondence).
-_FORM_TYPES = frozenset(
-    {
-        "payment_order",
-        "bank_statement",
-        "addendum",
-        "appendix_spec",
-        "litigation",
-        "correspondence",
-    }
-)
-_SUBJECT_TYPES = frozenset(
-    {
-        "lease_commercial",
-        "supply",
-        "services",
-        "works",
-    }
-)
 
 
 def _norm(s: str) -> str:
@@ -171,53 +160,29 @@ def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", t.strip())
 
 
-def _score_rule(rule: _Rule, *, name: str, hint: str, head: str) -> Tuple[float, str, List[str]]:
-    score = 0.0
-    zone = ""
-    reasons: List[str] = []
-    for pat in rule.filename_patterns:
-        if pat in name or pat in hint:
-            score = rule.weight * _ZONE_MULTIPLIER[_ZONE_FILENAME]
-            zone = _ZONE_FILENAME
-            reasons = [f"filename:{pat}"]
-            break
-    for pat in rule.text_patterns:
-        # Zone is decided by where the match starts, so a cue straddling the title
-        # boundary is still found.
-        idx = head.find(pat)
-        if idx < 0:
-            continue
-        pat_zone = _ZONE_TITLE if idx < _TITLE_ZONE_CHARS else _ZONE_BODY
-        pat_score = rule.weight * _ZONE_MULTIPLIER[pat_zone]
-        if pat_score > score:
-            score = pat_score
-            zone = pat_zone
-            reasons = [f"{pat_zone}:{pat}"]
-    return score, zone, reasons
+def _first_match(blob: str, cues: Tuple[str, ...]) -> Optional[str]:
+    for cue in cues:
+        if cue in blob:
+            return cue
+    return None
 
 
-def _best_among(
-    rules: Tuple[_Rule, ...],
-    allowed: frozenset,
-    *,
-    name: str,
-    hint: str,
-    head: str,
-) -> Tuple[str, float, str, List[str]]:
-    best_type = "unknown"
-    best_score = 0.0
-    best_zone = ""
-    best_reasons: List[str] = []
-    for rule in rules:
-        if rule.doc_type not in allowed:
-            continue
-        score, zone, reasons = _score_rule(rule, name=name, hint=hint, head=head)
-        if score > best_score:
-            best_score = score
-            best_type = rule.doc_type
-            best_zone = zone
-            best_reasons = reasons
-    return best_type, best_score, best_zone, best_reasons
+def _match_group(
+    groups: Tuple[Tuple[str, Tuple[str, ...]], ...],
+    blob: str,
+) -> Tuple[str, Optional[str]]:
+    for doc_type, cues in groups:
+        hit = _first_match(blob, cues)
+        if hit:
+            return doc_type, hit
+    return "unknown", None
+
+
+def _looks_like_contract(*, name: str, head: str) -> bool:
+    if _CONTRACT_NAME_RE.search(name):
+        return True
+    # Header often has OCR junk before the title — still require «договор» early.
+    return bool(_CONTRACT_HEAD_RE.search(head[: min(len(head), DD_CLASSIFIER_HEAD_CHARS)]))
 
 
 def classify_dd_document(
@@ -225,59 +190,104 @@ def classify_dd_document(
     text: str,
     filename: str = "",
     title_hint: Optional[str] = None,
-    head_chars: int = _DEFAULT_HEAD_CHARS,
+    head_chars: int = DD_CLASSIFIER_HEAD_CHARS,
 ) -> DdClassificationResult:
-    """Classify a document for DD tabular routing."""
-    head = _norm((text or "")[:head_chars])
+    """
+    Classify using filename + first ``head_chars`` of text only.
+
+    Order: payment/bank/litigation/correspondence/addendum → appendix (only if
+    not a master contract) → subject contract → generic contract → other/unknown.
+    """
+    head = _norm((text or "")[: max(80, int(head_chars))])
     name = _norm(filename)
     hint = _norm(title_hint or "")
+    name_blob = f"{name} {hint}".strip()
 
-    form_type, form_score, form_zone, form_reasons = _best_among(
-        _RULES, _FORM_TYPES, name=name, hint=hint, head=head
-    )
-    subject_type, subject_score, subject_zone, subject_reasons = _best_among(
-        _RULES, _SUBJECT_TYPES, name=name, hint=hint, head=head
-    )
+    # 1) Strong form from filename or head (not appendix yet).
+    for doc_type, cues, weight in _FORM_CUES:
+        if doc_type == "appendix_spec":
+            continue
+        hit_name = _first_match(name_blob, _FILENAME_FORM_DICT.get(doc_type, ()))
+        hit_head = _first_match(head, cues)
+        if hit_name or hit_head:
+            reason = f"filename:{hit_name}" if hit_name else f"head:{hit_head}"
+            return DdClassificationResult(
+                doc_type=doc_type,
+                confidence=weight if hit_head else weight * 0.98,
+                source="rules",
+                rationale=reason,
+            )
 
-    # A master contract title beats form cues found mid-document; form cues in the
-    # title zone win instead (a letter about a lease is correspondence).
-    title = head[:_TITLE_ZONE_CHARS]
-    if (
-        subject_score >= _CONFIDENCE_THRESHOLD
-        and subject_zone in (_ZONE_TITLE, _ZONE_FILENAME)
-        and form_zone == _ZONE_BODY
-        and any(cue in title for cue in _MASTER_CONTRACT_TITLE_CUES)
-    ):
+    is_contract = _looks_like_contract(name=name_blob, head=head)
+
+    # 2) Appendix only when the *document itself* is an appendix — never when
+    # the header is already a master «ДОГОВОР …».
+    if not is_contract:
+        app_name = _first_match(name_blob, _FILENAME_FORM_DICT["appendix_spec"])
+        app_head = _first_match(
+            head,
+            ("приложение №", "приложение no", "спецификация к договору", "спецификация"),
+        )
+        # Prefer explicit appendix title at start.
+        if app_name or (app_head and (head.startswith("приложен") or "спецификац" in head[:40])):
+            return DdClassificationResult(
+                doc_type="appendix_spec",
+                confidence=0.88,
+                source="rules",
+                rationale=f"filename:{app_name}" if app_name else f"head:{app_head}",
+            )
+        if app_head and head.find(app_head) < 40:
+            return DdClassificationResult(
+                doc_type="appendix_spec",
+                confidence=0.86,
+                source="rules",
+                rationale=f"head:{app_head}",
+            )
+
+    # 3) Subject matter for contracts (and informative filenames).
+    subj, subj_hit = _match_group(_FILENAME_SUBJECT, name_blob)
+    zone = _ZONE_FILENAME
+    if subj == "unknown":
+        subj, subj_hit = _match_group(_SUBJECT_CUES, head)
+        zone = _ZONE_HEAD
+    if subj != "unknown" and subj_hit:
+        # Filename-only subject without contract cue → still OK for clear names.
+        if is_contract or zone == _ZONE_FILENAME:
+            return DdClassificationResult(
+                doc_type=subj,
+                confidence=0.9 if zone == _ZONE_FILENAME else 0.86,
+                source="rules",
+                rationale=f"{zone}:{subj_hit}",
+            )
+
+    # 4) Generic contract (diverse commercial agreements).
+    if is_contract:
         return DdClassificationResult(
-            doc_type=subject_type if subject_type in DD_DOC_TYPES else "other",
-            confidence=subject_score,
+            doc_type="contract_other",
+            confidence=0.8,
             source="rules",
-            rationale="; ".join(subject_reasons + ["title_master_contract"])
-            or "subject_match",
+            rationale="contract_header_or_filename",
         )
 
-    if form_score >= _CONFIDENCE_THRESHOLD:
+    # 5) Late appendix cue without contract header (standalone spec file with OCR junk).
+    app_head = _first_match(head, ("приложение №", "спецификация"))
+    if app_head:
         return DdClassificationResult(
-            doc_type=form_type if form_type in DD_DOC_TYPES else "other",
-            confidence=form_score,
+            doc_type="appendix_spec",
+            confidence=0.7,
             source="rules",
-            rationale="; ".join(form_reasons) or "form_match",
-        )
-
-    if subject_score >= _CONFIDENCE_THRESHOLD:
-        return DdClassificationResult(
-            doc_type=subject_type if subject_type in DD_DOC_TYPES else "other",
-            confidence=subject_score,
-            source="rules",
-            rationale="; ".join(subject_reasons) or "subject_match",
+            rationale=f"head:{app_head}",
         )
 
     return DdClassificationResult(
         doc_type="unknown",
-        confidence=max(form_score, subject_score),
+        confidence=0.0,
         source="rules",
         rationale="below_threshold",
     )
+
+
+_FILENAME_FORM_DICT = {doc_type: cues for doc_type, cues in _FILENAME_FORM}
 
 
 def save_dd_classification_on_file(file_model, result: DdClassificationResult) -> None:
@@ -307,3 +317,117 @@ def get_file_dd_doc_type(file_model) -> Optional[str]:
             if t:
                 return t
     return None
+
+
+def parse_dd_confidence(raw: Any) -> Optional[float]:
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def dd_classification_needs_review(
+    doc_type: Optional[str],
+    confidence: Optional[float],
+    source: Optional[str] = None,
+) -> bool:
+    """True when a lawyer should confirm the auto label."""
+    if str(source or "").strip().lower() == "user":
+        return False
+    t = str(doc_type or "unknown").strip() or "unknown"
+    if t in {"unknown", "other"}:
+        return True
+    if confidence is None:
+        return True
+    return float(confidence) < DD_NEEDS_REVIEW_CONFIDENCE
+
+
+def apply_user_dd_doc_type(file_model, doc_type: str) -> DdClassificationResult:
+    """Persist a lawyer override as the canonical DD type (source=user)."""
+    cleaned = str(doc_type or "").strip()
+    if not is_valid_dd_doc_type(cleaned):
+        raise ValueError(f"invalid_dd_doc_type:{cleaned}")
+    result = DdClassificationResult(
+        doc_type=cleaned,
+        confidence=1.0,
+        source="user",
+        rationale="user_override",
+    )
+    save_dd_classification_on_file(file_model, result)
+    return result
+
+
+def file_dd_classification_payload(file_model) -> dict:
+    """Stable API shape for case file library rows."""
+    from app.services.dd_document_taxonomy import dd_doc_type_label
+
+    doc_type = get_file_dd_doc_type(file_model) or "unknown"
+    confidence = parse_dd_confidence(getattr(file_model, "dd_doc_type_confidence", None))
+    source = getattr(file_model, "dd_doc_type_source", None)
+    if isinstance(source, str):
+        source = source.strip() or None
+    else:
+        source = None
+    progress = getattr(file_model, "processing_progress", None)
+    rationale = None
+    if isinstance(progress, dict):
+        payload = progress.get("dd_classification")
+        if isinstance(payload, dict):
+            rationale = payload.get("rationale")
+            if confidence is None:
+                confidence = parse_dd_confidence(payload.get("confidence"))
+            if not source:
+                source = str(payload.get("source") or "").strip() or None
+    needs_review = dd_classification_needs_review(doc_type, confidence, source)
+    return {
+        "dd_doc_type": doc_type,
+        "dd_doc_type_label": dd_doc_type_label(doc_type),
+        "dd_doc_type_short_label": dd_doc_type_label(doc_type, short=True),
+        "dd_doc_type_confidence": confidence,
+        "dd_doc_type_source": source,
+        "dd_needs_review": needs_review,
+        "dd_classification_rationale": rationale,
+    }
+
+
+def reclassify_file_from_text(
+    file_model,
+    *,
+    text: Optional[str] = None,
+    filename: Optional[str] = None,
+) -> DdClassificationResult:
+    """Re-run rules classifier; does not overwrite a user override."""
+    existing_source = str(getattr(file_model, "dd_doc_type_source", None) or "").strip().lower()
+    if existing_source == "user":
+        return DdClassificationResult(
+            doc_type=get_file_dd_doc_type(file_model) or "unknown",
+            confidence=parse_dd_confidence(getattr(file_model, "dd_doc_type_confidence", None))
+            or 1.0,
+            source="user",
+            rationale="kept_user_override",
+        )
+    result = classify_dd_document(
+        text=text if text is not None else (getattr(file_model, "original_text", None) or ""),
+        filename=filename if filename is not None else (getattr(file_model, "filename", None) or ""),
+    )
+    save_dd_classification_on_file(file_model, result)
+    return result
+
+
+def filename_looks_generic(filename: str) -> bool:
+    """True for dump names like Scan_1.pdf / Безымянный.pdf."""
+    stem = re.sub(r"\.[^.]+$", "", (filename or "").strip())
+    stem = stem.replace("_", " ").replace("-", " ").strip()
+    if not stem:
+        return True
+    if _GENERIC_NAME_RE.match(stem):
+        return True
+    # Pure numbers / very short codes
+    compact = re.sub(r"\s+", "", stem)
+    if len(compact) <= 2:
+        return True
+    if re.fullmatch(r"\d{1,4}", compact):
+        return True
+    return False

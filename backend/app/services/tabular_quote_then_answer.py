@@ -7,13 +7,18 @@ Architecture (not a special-case hack):
 3) Derive cell_value from the quote alone — the model cannot invent from the rest of the bag.
 
 If no grounded quote exists → «—» (caller may fall back to single-pass + evidence gate).
+
+Quote contract (production):
+- The model may emit a near-quote; we never persist that string as-is when an OCR span exists.
+- ``resolve_quote_span_in_original`` / ``snap_quote_to_corpus`` always return text from the
+  corpus (original_text / retrieval bag), never the model paraphrase.
 """
 from __future__ import annotations
 
 import logging
 import re
 from difflib import SequenceMatcher
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
@@ -33,6 +38,8 @@ from app.services.tabular_review_models import TabularCellExtractionModel
 logger = logging.getLogger(__name__)
 
 _MIN_QUOTE_LEN = 20
+# Contiguous OCR match must cover at least this fraction of the normalized model quote.
+_MIN_SNAP_COVERAGE = 0.75
 
 
 def normalize_for_grounding(text: str) -> str:
@@ -43,17 +50,254 @@ def normalize_for_grounding(text: str) -> str:
     return t
 
 
-def _question_is_english(question: str) -> bool:
-    letters = [c for c in (question or "") if c.isalpha()]
-    if not letters:
+def _grounding_norm_and_map(original: str) -> Tuple[str, List[int]]:
+    """
+    Build normalize_for_grounding(original) plus norm-index → raw-index map.
+
+    Each normalized character maps to the raw offset of the source character in ``original``.
+    """
+    mapping: List[int] = []
+    chars: List[str] = []
+    prev_space = True
+    for i, ch in enumerate(original or ""):
+        if ch == "\u00a0":
+            ch = " "
+        elif ch in "“”":
+            ch = '"'
+        elif ch in "‘’":
+            ch = "'"
+        elif ch in "–—":
+            ch = "-"
+        ch_l = ch.lower()
+        if ch_l.isspace():
+            if prev_space:
+                continue
+            chars.append(" ")
+            mapping.append(i)
+            prev_space = True
+            continue
+        chars.append(ch_l)
+        mapping.append(i)
+        prev_space = False
+    while chars and chars[0] == " ":
+        chars.pop(0)
+        mapping.pop(0)
+    while chars and chars[-1] == " ":
+        chars.pop()
+        mapping.pop()
+    return "".join(chars), mapping
+
+
+def _map_grounding_norm_range_to_raw(
+    mapping: List[int],
+    original_len: int,
+    norm_start: int,
+    norm_end: int,
+) -> Optional[Tuple[int, int]]:
+    if norm_end <= norm_start or norm_start < 0 or not mapping:
+        return None
+    if norm_start >= len(mapping):
+        return None
+    raw_start = mapping[norm_start]
+    if norm_end >= len(mapping):
+        raw_end = original_len
+    else:
+        raw_end = mapping[norm_end]
+    if raw_end <= raw_start:
+        return None
+    return raw_start, raw_end
+
+
+def _alnum_norm_and_map(original: str) -> Tuple[str, List[int]]:
+    """
+    Letter/digit normalization for punctuation drift (commas, periods).
+
+    Punctuation is skipped in the normalized form but still covered by the raw
+    span when mapping back (raw_end advances to the next kept character).
+    """
+    mapping: List[int] = []
+    chars: List[str] = []
+    prev_space = True
+    for i, ch in enumerate(original or ""):
+        if ch == "\u00a0":
+            ch = " "
+        ch_l = ch.lower()
+        if ch_l.isspace():
+            if prev_space:
+                continue
+            chars.append(" ")
+            mapping.append(i)
+            prev_space = True
+            continue
+        if not ch_l.isalnum():
+            continue
+        chars.append(ch_l)
+        mapping.append(i)
+        prev_space = False
+    while chars and chars[0] == " ":
+        chars.pop(0)
+        mapping.pop(0)
+    while chars and chars[-1] == " ":
+        chars.pop()
+        mapping.pop()
+    return "".join(chars), mapping
+
+
+def _expand_span_to_token_bounds(
+    original: str,
+    start: int,
+    end: int,
+    *,
+    max_expand: int = 48,
+) -> Tuple[int, int]:
+    """
+    If a fuzzy match starts/ends mid-token, expand to the nearest whitespace bounds.
+
+    Keeps highlights and displayed quotes on whole OCR words (e.g. полный
+    «недвижимое», а не хвост «ое»).
+    """
+    n = len(original or "")
+    if not original or end <= start or start < 0 or end > n:
+        return start, end
+
+    s, e = start, end
+    if s > 0 and not original[s].isspace() and not original[s - 1].isspace():
+        left = s
+        budget = max_expand
+        while left > 0 and not original[left - 1].isspace() and budget > 0:
+            left -= 1
+            budget -= 1
+        s = left
+
+    if e < n and e > 0 and not original[e - 1].isspace() and not original[e].isspace():
+        right = e
+        budget = max_expand
+        while right < n and not original[right].isspace() and budget > 0:
+            right += 1
+            budget -= 1
+        e = right
+
+    return s, e
+
+
+def resolve_quote_span_in_original(
+    quote: str,
+    original: str,
+    *,
+    min_len: int = _MIN_QUOTE_LEN,
+    min_coverage: float = _MIN_SNAP_COVERAGE,
+) -> Optional[Tuple[int, int]]:
+    """
+    Locate a contiguous OCR/original span for ``quote``.
+
+    Returns half-open [start, end) into ``original``, or None when no contiguous
+    match covers enough of the quote. Never invents offsets outside ``original``.
+    """
+    raw_quote = (quote or "").strip()
+    # Below 12 chars: too ambiguous for production snap (use exact locate elsewhere).
+    if len(raw_quote) < 12 or not original:
+        return None
+
+    q = normalize_for_grounding(raw_quote)
+    need = max(12, int(min_coverage * len(q))) if len(q) < min_len else max(
+        min_len, int(min_coverage * len(q))
+    )
+
+    def _finish(span: Optional[Tuple[int, int]], *, fuzzy: bool) -> Optional[Tuple[int, int]]:
+        if span is None:
+            return None
+        start, end = span
+        if fuzzy:
+            start, end = _expand_span_to_token_bounds(original, start, end)
+        return start, end
+
+    # 1) Exact whitespace/dash-normalized containment.
+    body, mapping = _grounding_norm_and_map(original)
+    if body and len(q) >= 12:
+        idx = body.find(q)
+        if idx != -1:
+            return _finish(
+                _map_grounding_norm_range_to_raw(
+                    mapping, len(original), idx, idx + len(q)
+                ),
+                fuzzy=False,
+            )
+
+    # 2) Punctuation-insensitive containment (commas / periods dropped by model).
+    body_a, map_a = _alnum_norm_and_map(original)
+    q_a, _ = _alnum_norm_and_map(raw_quote)
+    if body_a and len(q_a) >= 12:
+        idx = body_a.find(q_a)
+        if idx != -1:
+            mapped = _map_grounding_norm_range_to_raw(
+                map_a, len(original), idx, idx + len(q_a)
+            )
+            if mapped is not None:
+                start, end = mapped
+                while (
+                    end < len(original)
+                    and not original[end].isalnum()
+                    and not original[end].isspace()
+                ):
+                    end += 1
+                return _finish((start, end), fuzzy=False)
+
+    # Fuzzy paths require the full production minimum length.
+    if len(q) < min_len and len(q_a) < min_len:
+        return None
+
+    # 3) Longest contiguous near-match (one-word paraphrase / OCR drift).
+    if body and len(q) >= min_len:
+        matcher = SequenceMatcher(None, q, body, autojunk=False)
+        match = matcher.find_longest_match(0, len(q), 0, len(body))
+        if match.size >= need:
+            return _finish(
+                _map_grounding_norm_range_to_raw(
+                    mapping, len(original), match.b, match.b + match.size
+                ),
+                fuzzy=True,
+            )
+
+    # 4) Same on alnum-folded strings.
+    if body_a and len(q_a) >= min_len:
+        need_a = max(min_len, int(min_coverage * len(q_a)))
+        matcher = SequenceMatcher(None, q_a, body_a, autojunk=False)
+        match = matcher.find_longest_match(0, len(q_a), 0, len(body_a))
+        if match.size >= need_a:
+            mapped = _map_grounding_norm_range_to_raw(
+                map_a, len(original), match.b, match.b + match.size
+            )
+            if mapped is not None:
+                start, end = mapped
+                while (
+                    end < len(original)
+                    and not original[end].isalnum()
+                    and not original[end].isspace()
+                ):
+                    end += 1
+                return _finish((start, end), fuzzy=True)
+
+    return None
+
+
+def _head_tail_soft_grounded(quote_norm: str, body: str) -> bool:
+    """Soft evidence only: head and tail appear (may be non-contiguous). Not used for snap."""
+    if len(quote_norm) < 48:
         return False
-    latin = sum(1 for c in letters if ("a" <= c.lower() <= "z"))
-    return (latin / len(letters)) >= 0.7
+    head, tail = quote_norm[:36], quote_norm[-36:]
+    return head in body and tail in body
 
 
 def quote_grounded_in_corpus(quote: str, corpus: str, *, min_len: int = _MIN_QUOTE_LEN) -> bool:
-    """True when the quote (normalized) appears in the corpus, with light truncation tolerance."""
-    return snap_quote_to_corpus(quote, corpus, min_len=min_len) is not None
+    """True when the quote maps to a contiguous corpus span, or soft head+tail evidence."""
+    if resolve_quote_span_in_original(quote, corpus, min_len=min_len) is not None:
+        return True
+    raw = (quote or "").strip()
+    if len(raw) < min_len:
+        return False
+    q = normalize_for_grounding(raw)
+    body = normalize_for_grounding(corpus)
+    return bool(body) and _head_tail_soft_grounded(q, body)
 
 
 def snap_quote_to_corpus(
@@ -63,37 +307,94 @@ def snap_quote_to_corpus(
     min_len: int = _MIN_QUOTE_LEN,
 ) -> Optional[str]:
     """
-    Return a corpus-grounded span for the proposed quote.
+    Return the contiguous corpus substring that grounds ``quote``.
 
-    Exact normalized containment first; otherwise the longest near-match
-    (≥75% of quote length, ≥ min_len) via SequenceMatcher.
+    Always returns text copied from ``corpus`` (OCR / retrieval bag), never the
+    model paraphrase. None when no contiguous span covers enough of the quote.
     """
-    raw = (quote or "").strip()
-    if len(raw) < min_len:
+    span = resolve_quote_span_in_original(quote, corpus, min_len=min_len)
+    if span is None:
         return None
-    q = normalize_for_grounding(raw)
-    body = normalize_for_grounding(corpus)
-    if not body or len(q) < min_len:
-        return None
-    if q in body:
-        return raw
+    start, end = span
+    snapped = (corpus or "")[start:end]
+    return snapped.strip() or None
 
-    if len(q) >= 48:
-        head, tail = q[:36], q[-36:]
-        if head in body and tail in body:
-            return raw
 
-    matcher = SequenceMatcher(None, q, body, autojunk=False)
-    match = matcher.find_longest_match(0, len(q), 0, len(body))
-    need = max(min_len, int(0.75 * len(q)))
-    if match.size < need:
-        return None
-    # Reconstruct a readable span from the original corpus around the match.
-    # Approximate by scanning raw corpus windows with the same normalized length.
-    target = body[match.b : match.b + match.size]
-    # Prefer returning the model quote when head/tail already proved presence;
-    # otherwise return the matched normalized span (stable for phase-2).
-    return target
+def canonicalize_extraction_quotes(
+    result: TabularCellExtractionModel,
+    original_text: str,
+) -> TabularCellExtractionModel:
+    """
+    Replace model-emitted quotes with OCR-exact spans from ``original_text``.
+
+    Updates ``verbatim_extract`` and each ``source_references[].text``. When a span
+    resolves, also stamps ``char_start`` / ``char_end`` on that reference.
+    """
+    ot = original_text or ""
+    if not ot or result is None:
+        return result
+
+    updates: Dict[str, Any] = {}
+    snapped_primary: Optional[str] = None
+    primary_span: Optional[Tuple[int, int]] = None
+
+    ve = (result.verbatim_extract or "").strip()
+    if ve:
+        span = resolve_quote_span_in_original(ve, ot)
+        if span is not None:
+            snapped_primary = ot[span[0] : span[1]].strip()
+            primary_span = span
+            if snapped_primary:
+                updates["verbatim_extract"] = snapped_primary[:500]
+
+    refs_in = result.source_references if isinstance(result.source_references, list) else []
+    new_refs: List[Dict[str, Any]] = []
+    refs_changed = False
+    for raw_ref in refs_in:
+        if not isinstance(raw_ref, dict):
+            continue
+        ref = dict(raw_ref)
+        text = str(ref.get("text") or "").strip()
+        if not text:
+            new_refs.append(ref)
+            continue
+        span = resolve_quote_span_in_original(text, ot)
+        if span is None:
+            # Keep the model text; do not steal another quote's OCR span.
+            new_refs.append(ref)
+            continue
+        snapped = ot[span[0] : span[1]].strip()
+        if not snapped:
+            new_refs.append(ref)
+            continue
+        if ref.get("text") != snapped[:500]:
+            refs_changed = True
+        ref["text"] = snapped[:500]
+        ref["char_start"] = int(span[0])
+        ref["char_end"] = int(span[1])
+        ref["verified"] = True
+        new_refs.append(ref)
+        if snapped_primary is None:
+            snapped_primary = snapped
+            primary_span = span
+
+    if refs_changed or (new_refs and new_refs != refs_in):
+        updates["source_references"] = new_refs
+
+    if snapped_primary and not (result.verbatim_extract or "").strip():
+        updates["verbatim_extract"] = snapped_primary[:500]
+
+    if not updates:
+        return result
+    return result.model_copy(update=updates)
+
+
+def _question_is_english(question: str) -> bool:
+    letters = [c for c in (question or "") if c.isalpha()]
+    if not letters:
+        return False
+    latin = sum(1 for c in letters if ("a" <= c.lower() <= "z"))
+    return (latin / len(letters)) >= 0.7
 
 
 class SupportingQuoteModel(BaseModel):
@@ -383,6 +684,13 @@ async def invoke_quote_then_answer_extraction(
             ),
             "no_quote",
         )
+
+    # Prefer the file OCR form when available (retrieval bag may differ slightly).
+    original = getattr(file, "original_text", None) or ""
+    if original:
+        ot_snap = snap_quote_to_corpus(snapped, original)
+        if ot_snap:
+            snapped = ot_snap
 
     extraction = await derive_value_from_quote(
         llm,

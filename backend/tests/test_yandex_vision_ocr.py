@@ -92,14 +92,17 @@ def test_async_max_pages_per_request_defaults_to_200(monkeypatch):
 
 def test_new_ocr_headers_omit_folder_id_for_api_key(monkeypatch):
     from app import config as cfg
+    from app.services.yandex_privacy import HEADER_NAME
+    from app.services.yandex_vision_ocr import _new_ocr_headers
 
     monkeypatch.setattr(cfg.config, "YANDEX_API_KEY", "test-key", raising=False)
     monkeypatch.setattr(cfg.config, "YANDEX_FOLDER_ID", "b1folder", raising=False)
-    from app.services.yandex_vision_ocr import _new_ocr_headers
+    monkeypatch.setattr(cfg.config, "YANDEX_DATA_LOGGING_ENABLED", False, raising=False)
 
     headers = _new_ocr_headers()
     assert headers["Authorization"].startswith("Api-Key ")
     assert "x-folder-id" not in headers
+    assert headers[HEADER_NAME] == "false"
 
 
 def test_pdf_text_quality_ok_uses_chars_per_page_threshold():

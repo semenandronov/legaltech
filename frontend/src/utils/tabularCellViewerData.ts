@@ -176,6 +176,12 @@ export function buildTabularViewerCellData(params: {
 
   const trustGeometry = isTrustedSourceReferenceHighlight(active, refs)
   const bbox = trustGeometry ? bboxFromReference(active) : undefined
+  const bboxRegions =
+    trustGeometry && active?.bbox_regions?.length
+      ? active.bbox_regions.filter(isValidBBox)
+      : bbox
+        ? [bbox]
+        : undefined
   const refIndex = click.sourceReferenceIndex ?? 0
   const activeText = (active?.text || '').trim().toLowerCase()
   const sharedCharSpan = Boolean(
@@ -226,9 +232,9 @@ export function buildTabularViewerCellData(params: {
     sourcePageBasis: 'one',
     highlightMode,
     sourceReferences: refs,
-    highlightBBox: bbox,
-    highlightBBoxRegions: bbox ? [bbox] : undefined,
-    highlightPageBBox: bbox ? active?.page_bbox ?? undefined : undefined,
+    highlightBBox: bbox ?? (bboxRegions?.[0]),
+    highlightBBoxRegions: bboxRegions,
+    highlightPageBBox: (bbox || bboxRegions?.length) ? active?.page_bbox ?? undefined : undefined,
     docId: active?.doc_id ?? click.docId ?? details?.primary_source_doc_id ?? fileId,
     charStart,
     charEnd,

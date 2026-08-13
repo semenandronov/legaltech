@@ -16,6 +16,7 @@ from app.services.yandex_embedding_http import (
     get_embedding_http_engine,
     parse_openai_embeddings_json,
 )
+from app.services.yandex_privacy import ycloud_ml_enable_server_data_logging
 
 logger = logging.getLogger(__name__)
 
@@ -330,7 +331,11 @@ class YandexEmbeddings(Embeddings):
                 )
 
             if self.folder_id:
-                self.sdk = YCloudML(folder_id=self.folder_id, auth=auth)
+                self.sdk = YCloudML(
+                    folder_id=self.folder_id,
+                    auth=auth,
+                    enable_server_data_logging=ycloud_ml_enable_server_data_logging(),
+                )
             else:
                 # SDK требует folder_id - если не указан, не инициализируем
                 logger.warning("YANDEX_FOLDER_ID not set, Yandex embeddings will not work.")

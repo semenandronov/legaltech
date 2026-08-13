@@ -361,6 +361,9 @@ async def assistant_chat_v2(
         if not case_id:
             raise HTTPException(status_code=400, detail="case_id is required")
 
+        # Membership ACL before BM25 prewarm / history prep (prevents cross-case reads).
+        require_case_write(db, str(case_id), current_user.id)
+
         try:
             from app.services.bm25_case_prewarm import schedule_bm25_prewarm
 
@@ -2026,6 +2029,8 @@ async def transcribe_audio(
     if not stt_creds:
         raise HTTPException(status_code=503, detail="STT credentials not configured")
 
+    verify_tls = bool(getattr(config, "GIGACHAT_VERIFY_SSL", True))
+
     # Run synchronous requests in a thread pool to avoid blocking the event loop
     def _get_token() -> str:
         resp = sync_requests.post(
@@ -2038,9 +2043,9 @@ async def transcribe_audio(
             },
             data={"scope": "SALUTE_SPEECH_PERS"},
             timeout=15,
-            verify=False,
+            verify=verify_tls,
         )
-        logger.info(f"[STT] Token response: {resp.status_code}, body: {resp.text[:200]}")
+        logger.info("[STT] Token response status=%s", resp.status_code)
         resp.raise_for_status()
         return resp.json()["access_token"]
 
@@ -2053,11 +2058,11 @@ async def transcribe_audio(
             },
             data=pcm,
             timeout=30,
-            verify=False,
+            verify=verify_tls,
         )
-        logger.info(f"[STT] STT response: {resp.status_code}, body: {resp.text[:300]}")
+        logger.info("[STT] Recognize response status=%s", resp.status_code)
         if resp.status_code != 200:
-            raise ValueError(f"SmartSpeech вернул {resp.status_code}: {resp.text[:200]}")
+            raise ValueError(f"SmartSpeech вернул {resp.status_code}")
         result = resp.json()
         if isinstance(result.get("result"), list) and result["result"]:
             return result["result"][0]
@@ -2071,7 +2076,7 @@ async def transcribe_audio(
 
     try:
         text = await asyncio.to_thread(_recognize, access_token, pcm_data)
-        logger.info(f"[STT] Transcribed: {repr(text[:100])}")
+        logger.info("[STT] Transcribed chars=%s", len(text or ""))
         return {"text": text}
     except HTTPException:
         raise

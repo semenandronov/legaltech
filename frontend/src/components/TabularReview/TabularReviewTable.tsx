@@ -479,7 +479,10 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, documentSea
   })
   
   const shouldVirtualize = sortedRows.length > 100
-  const [scrollContainer, setScrollContainer] = React.useState<HTMLDivElement | null>(null)
+  const scrollContainerRef = React.useRef<HTMLDivElement | null>(null)
+  const handleScrollContainerRef = React.useCallback((node: HTMLDivElement | null) => {
+    scrollContainerRef.current = node
+  }, [])
 
   const columnIds = React.useMemo(
     () => tableData.columns.map((column) => column.id),
@@ -493,7 +496,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, documentSea
 
   const virtualizer = useVirtualizer({
     count: sortedRows.length,
-    getScrollElement: () => scrollContainer,
+    getScrollElement: () => scrollContainerRef.current,
     estimateSize: estimateRowHeight,
     overscan: 8,
     measureElement:
@@ -505,7 +508,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, documentSea
   React.useEffect(() => {
     if (!shouldVirtualize) return
     virtualizer.measure()
-  }, [mikeRows, shouldVirtualize, virtualizer, editingCellKey])
+  }, [shouldVirtualize, mikeRows, editingCellKey, virtualizer.measure])
 
   const virtualRows = virtualizer.getVirtualItems()
   const virtualTopSpacer = virtualRows[0]?.start ?? 0
@@ -571,7 +574,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, documentSea
         onOpenTemplates={readOnly ? undefined : onOpenTemplatesClick}
         selectedDocIds={selectedDocIds}
         onSelectionChange={onSelectionChange}
-        scrollRef={setScrollContainer}
+        scrollRef={handleScrollContainerRef}
         virtualRows={shouldVirtualize ? virtualRows : undefined}
         virtualTopSpacer={shouldVirtualize ? virtualTopSpacer : 0}
         virtualBottomSpacer={shouldVirtualize ? virtualBottomSpacer : 0}
@@ -586,13 +589,7 @@ export const TabularReviewTable = React.memo(({ reviewId, tableData, documentSea
         onDocumentClick={(fileId, firstColumnId) => {
           onCellClick?.(fileId, firstColumnId, { highlightMode: 'none' })
         }}
-        rowRef={
-          shouldVirtualize
-            ? (_rowIndex) => (node: HTMLDivElement | null) => {
-                if (node) virtualizer.measureElement(node)
-              }
-            : undefined
-        }
+        rowMeasureRef={shouldVirtualize ? virtualizer.measureElement : undefined}
       />
       <CellHistoryPanel
         reviewId={reviewId}

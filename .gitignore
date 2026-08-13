@@ -85,6 +85,7 @@ backend/uploads/
 *.temp
 tmp/
 temp/
+docs/user-guide/node_modules/
 
 # OS files
 Thumbs.db

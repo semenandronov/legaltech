@@ -10,23 +10,36 @@ const DEFAULT_POLL_MS = 3000
 
 function mergeProcessingFiles(
   prev: FileProcessingStatus[],
-  incoming: Array<{
-    id: string
-    filename: string
-    processing_status?: string
-    status?: string
-    error?: string | null
-    progress?: FileProcessingStatus['progress']
-  }>,
+  incoming: Array<Partial<FileProcessingStatus> & { id: string; filename: string }>,
 ): FileProcessingStatus[] {
   const map = new Map(prev.map((f) => [f.id, f]))
   for (const f of incoming) {
+    const prevRow = map.get(f.id)
     map.set(f.id, {
       id: f.id,
-      filename: f.filename,
-      status: ((f.status || f.processing_status) as FileProcessingStatus['status']) || 'pending',
-      error: f.error ?? null,
-      progress: f.progress ?? null,
+      filename: f.filename || prevRow?.filename || '',
+      status:
+        ((f.status || (f as { processing_status?: string }).processing_status) as FileProcessingStatus['status']) ||
+        prevRow?.status ||
+        'pending',
+      error: f.error ?? prevRow?.error ?? null,
+      progress: f.progress ?? prevRow?.progress ?? null,
+      folder_id: f.folder_id !== undefined ? f.folder_id : prevRow?.folder_id,
+      dd_doc_type: f.dd_doc_type !== undefined ? f.dd_doc_type : prevRow?.dd_doc_type,
+      dd_doc_type_label:
+        f.dd_doc_type_label !== undefined ? f.dd_doc_type_label : prevRow?.dd_doc_type_label,
+      dd_doc_type_short_label:
+        f.dd_doc_type_short_label !== undefined
+          ? f.dd_doc_type_short_label
+          : prevRow?.dd_doc_type_short_label,
+      dd_doc_type_confidence:
+        f.dd_doc_type_confidence !== undefined
+          ? f.dd_doc_type_confidence
+          : prevRow?.dd_doc_type_confidence,
+      dd_doc_type_source:
+        f.dd_doc_type_source !== undefined ? f.dd_doc_type_source : prevRow?.dd_doc_type_source,
+      dd_needs_review:
+        f.dd_needs_review !== undefined ? f.dd_needs_review : prevRow?.dd_needs_review,
     })
   }
   return Array.from(map.values())
@@ -44,6 +57,8 @@ export type UseCaseProcessingPollOptions = {
   pollIntervalMs?: number
   /** Вызывается один раз, когда все файлы в статусе ready/error/cancelled */
   onAllDone?: (caseId: string) => void
+  /** Каждый успешный poll — чтобы UI подтягивал типы/папки по мере готовности */
+  onStatus?: (files: FileProcessingStatus[], meta: { allDone: boolean; anyProcessing: boolean }) => void
 }
 
 /**
@@ -53,14 +68,17 @@ export function useCaseProcessingPoll(
   caseId: string | null,
   options: UseCaseProcessingPollOptions = {},
 ) {
-  const { pollIntervalMs = DEFAULT_POLL_MS, onAllDone } = options
+  const { pollIntervalMs = DEFAULT_POLL_MS, onAllDone, onStatus } = options
   const onAllDoneRef = useRef(onAllDone)
   onAllDoneRef.current = onAllDone
+  const onStatusRef = useRef(onStatus)
+  onStatusRef.current = onStatus
 
   const [processingFiles, setProcessingFiles] = useState<FileProcessingStatus[]>([])
   const [allDone, setAllDone] = useState(false)
   const [anyProcessing, setAnyProcessing] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const allDoneFiredRef = useRef(false)
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -74,6 +92,7 @@ export function useCaseProcessingPoll(
       setProcessingFiles(files)
       setAllDone(done)
       setAnyProcessing(processing)
+      onStatusRef.current?.(files, { allDone: done, anyProcessing: processing })
     },
     [],
   )
@@ -81,16 +100,21 @@ export function useCaseProcessingPoll(
   const fetchStatus = useCallback(async (): Promise<boolean> => {
     if (!caseId) return false
     const status = await getProcessingStatus(caseId)
-    applyStatus(status.files, status.all_done, status.any_processing)
+    const merged = mergeProcessingFiles([], status.files)
+    applyStatus(merged, status.all_done, status.any_processing)
     if (status.all_done) {
       stopPolling()
-      onAllDoneRef.current?.(caseId)
+      if (!allDoneFiredRef.current) {
+        allDoneFiredRef.current = true
+        onAllDoneRef.current?.(caseId)
+      }
     }
     return status.all_done
   }, [applyStatus, caseId, stopPolling])
 
   const startPolling = useCallback(() => {
     if (!caseId) return
+    allDoneFiredRef.current = false
     stopPolling()
     void fetchStatus()
     pollRef.current = setInterval(() => {
@@ -109,6 +133,7 @@ export function useCaseProcessingPoll(
       }
       setAllDone(false)
       setAnyProcessing(true)
+      allDoneFiredRef.current = false
       startPolling()
     },
     [startPolling],
@@ -124,6 +149,7 @@ export function useCaseProcessingPoll(
       setProcessingFiles([])
       setAllDone(false)
       setAnyProcessing(false)
+      allDoneFiredRef.current = false
       stopPolling()
       return
     }

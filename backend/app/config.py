@@ -52,6 +52,37 @@ def clean_env_str(value: Optional[str], default: str = "") -> str:
     return cleaned if cleaned else default
 
 
+def _env_flag(name: str) -> Optional[bool]:
+    """Parse a tri-state env flag: unset/empty → None, else true/false."""
+    raw = os.getenv(name)
+    if raw is None:
+        return None
+    cleaned = clean_env_str(raw, "")
+    if not cleaned:
+        return None
+    return cleaned.lower() in ("1", "true", "yes", "on")
+
+
+def _resolve_yandex_data_logging_enabled() -> bool:
+    """
+    Whether Yandex may retain request payloads server-side.
+
+    Secure legaltech default: False → clients send ``x-data-logging-enabled: false``.
+
+    Resolution:
+    1. ``YANDEX_DATA_LOGGING_ENABLED`` if set
+    2. else legacy ``YANDEX_OCR_DATA_LOGGING_ENABLED`` if set
+    3. else False
+    """
+    primary = _env_flag("YANDEX_DATA_LOGGING_ENABLED")
+    if primary is not None:
+        return primary
+    legacy = _env_flag("YANDEX_OCR_DATA_LOGGING_ENABLED")
+    if legacy is not None:
+        return legacy
+    return False
+
+
 def redact_database_url(url: str) -> str:
     """Маскирует пароль (и при необходимости user) в DSN для логов и исключений."""
     if not url or not isinstance(url, str):
@@ -384,9 +415,12 @@ class Config:
     YANDEX_OCR_HTTP_POLL_TIMEOUT_SEC: float = float(
         os.getenv("YANDEX_OCR_HTTP_POLL_TIMEOUT_SEC", "120") or "120"
     )
-    YANDEX_OCR_DATA_LOGGING_ENABLED: bool = os.getenv(
-        "YANDEX_OCR_DATA_LOGGING_ENABLED", "true"
-    ).lower() == "true"
+    # Yandex AI Studio / Foundation Models / Vision: server-side prompt & payload logging.
+    # Official opt-out header: x-data-logging-enabled: false (see app.services.yandex_privacy).
+    # Default False — legal documents must not be retained by the provider.
+    YANDEX_DATA_LOGGING_ENABLED: bool = _resolve_yandex_data_logging_enabled()
+    # Deprecated alias (same policy). Prefer YANDEX_DATA_LOGGING_ENABLED.
+    YANDEX_OCR_DATA_LOGGING_ENABLED: bool = YANDEX_DATA_LOGGING_ENABLED
 
     # XLSX: собрать PDF с таблицами и распознать через Yandex Vision (лимит страниц PDF — чанками)
     XLSX_OCR_VIA_PDF_YANDEX: bool = os.getenv("XLSX_OCR_VIA_PDF_YANDEX", "true").lower() == "true"
@@ -435,15 +469,15 @@ class Config:
     )
     # Детальные nested spans в Langfuse для court_practice (planner, hybrid, FTS, rerank)
     COURT_PRACTICE_LANGFUSE_DETAILED: bool = (
-        os.getenv("COURT_PRACTICE_LANGFUSE_DETAILED", "true").strip().lower() in ("1", "true", "yes")
+        os.getenv("COURT_PRACTICE_LANGFUSE_DETAILED", "false").strip().lower() in ("1", "true", "yes")
     )
     # Детальные nested spans в Langfuse для case assistant (router, hybrid funnel, rerank)
     CASE_ASSISTANT_LANGFUSE_DETAILED: bool = (
-        os.getenv("CASE_ASSISTANT_LANGFUSE_DETAILED", "true").strip().lower() in ("1", "true", "yes")
+        os.getenv("CASE_ASSISTANT_LANGFUSE_DETAILED", "false").strip().lower() in ("1", "true", "yes")
     )
     # Пошаговые span'ы orchestrator / session / HTTP (case + global assistant).
     ASSISTANT_PIPELINE_LANGFUSE_DETAILED: bool = (
-        os.getenv("ASSISTANT_PIPELINE_LANGFUSE_DETAILED", "true").strip().lower() in ("1", "true", "yes")
+        os.getenv("ASSISTANT_PIPELINE_LANGFUSE_DETAILED", "false").strip().lower() in ("1", "true", "yes")
     )
 
     # Chunking budgets (safety limits)
@@ -1241,6 +1275,13 @@ class Config:
     CONTRACT_FACTS_EXTRACT_MAX_CHARS: int = int(
         os.getenv("CONTRACT_FACTS_EXTRACT_MAX_CHARS", "12000") or "12000"
     )
+    # After DD classify: place into virtual type folders + rename Scan_*/Безымянный.
+    DD_AUTO_CATALOG_ENABLED: bool = (
+        os.getenv("DD_AUTO_CATALOG_ENABLED", "true").strip().lower() == "true"
+    )
+    DD_AUTO_RENAME_ENABLED: bool = (
+        os.getenv("DD_AUTO_RENAME_ENABLED", "true").strip().lower() == "true"
+    )
     # Phase 4: risk_analysis columns use a fixed 3-node graph (not a free agent).
     TABULAR_RISK_ANALYSIS_ENABLED: bool = (
         os.getenv("TABULAR_RISK_ANALYSIS_ENABLED", "true").strip().lower() == "true"
@@ -1302,10 +1343,14 @@ class Config:
         os.getenv("TABULAR_MAX_RETRIEVAL_ROUNDS", "2") or "2"
     )
     TABULAR_CROSS_REF_FOLLOW_ENABLED: bool = (
-        os.getenv("TABULAR_CROSS_REF_FOLLOW_ENABLED", "false").strip().lower() == "true"
+        os.getenv("TABULAR_CROSS_REF_FOLLOW_ENABLED", "true").strip().lower() == "true"
     )
     TABULAR_CROSS_REF_MAX_CHARS: int = int(
         os.getenv("TABULAR_CROSS_REF_MAX_CHARS", "2500") or "2500"
+    )
+    # Appendix/specification follow needs room for the full inventory table.
+    TABULAR_CROSS_REF_APPENDIX_MAX_CHARS: int = int(
+        os.getenv("TABULAR_CROSS_REF_APPENDIX_MAX_CHARS", "9000") or "9000"
     )
     TABULAR_SECOND_EXTRACT_ON_WEAK: bool = (
         os.getenv("TABULAR_SECOND_EXTRACT_ON_WEAK", "false").strip().lower() == "true"
@@ -1692,6 +1737,10 @@ class Config:
 
     # Langfuse (LLM observability)
     LANGFUSE_ENABLED: bool = clean_env_str(os.getenv("LANGFUSE_ENABLED"), "false").lower() == "true"
+    # When false (legaltech default), traces carry metadata only — no prompts/questions/completions.
+    LANGFUSE_CAPTURE_CONTENT: bool = (
+        clean_env_str(os.getenv("LANGFUSE_CAPTURE_CONTENT"), "false").lower() == "true"
+    )
     LANGFUSE_PUBLIC_KEY: str = clean_env_str(os.getenv("LANGFUSE_PUBLIC_KEY"))
     LANGFUSE_SECRET_KEY: str = clean_env_str(os.getenv("LANGFUSE_SECRET_KEY"))
     LANGFUSE_HOST: str = clean_env_str(os.getenv("LANGFUSE_HOST")).rstrip("/")
@@ -1700,6 +1749,10 @@ class Config:
     )
     LANGFUSE_DEBUG: bool = clean_env_str(os.getenv("LANGFUSE_DEBUG"), "false").lower() == "true"
     LANGFUSE_FLUSH_ON_END: bool = clean_env_str(os.getenv("LANGFUSE_FLUSH_ON_END"), "true").lower() == "true"
+    # NDJSON writers under .cursor/ /tmp — must stay off with real matters.
+    AGENT_DEBUG_FILE_LOG: bool = (
+        clean_env_str(os.getenv("AGENT_DEBUG_FILE_LOG"), "false").lower() == "true"
+    )
     
     # File Storage
     UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", "./uploads")
@@ -1765,6 +1818,12 @@ class Config:
 # Create config instance
 config = Config()
 
+logger.info(
+    "Yandex server data logging: %s (x-data-logging-enabled=%s)",
+    "ENABLED" if config.YANDEX_DATA_LOGGING_ENABLED else "DISABLED",
+    "true" if config.YANDEX_DATA_LOGGING_ENABLED else "false",
+)
+
 
 def validate_production_security() -> None:
     """Fail fast instead of starting production with unsafe security defaults."""
@@ -1799,6 +1858,31 @@ def validate_production_security() -> None:
     ]
     if insecure_origins:
         raise RuntimeError("Plain HTTP CORS origins are forbidden in production")
+
+    if bool(getattr(config, "YANDEX_DATA_LOGGING_ENABLED", False)):
+        raise RuntimeError(
+            "YANDEX_DATA_LOGGING_ENABLED must be false in production "
+            "(legal documents must not be retained by the LLM provider)"
+        )
+
+    if bool(getattr(config, "AGENT_DEBUG_FILE_LOG", False)):
+        raise RuntimeError("AGENT_DEBUG_FILE_LOG must be false in production")
+
+    langfuse_on = bool(getattr(config, "LANGFUSE_ENABLED", False))
+    capture_content = bool(getattr(config, "LANGFUSE_CAPTURE_CONTENT", False))
+    host = (getattr(config, "LANGFUSE_HOST", "") or "").strip().lower()
+    if langfuse_on and capture_content:
+        allow = clean_env_str(os.getenv("LANGFUSE_ALLOW_CONTENT_IN_PRODUCTION"), "false").lower() == "true"
+        if not allow:
+            raise RuntimeError(
+                "LANGFUSE_CAPTURE_CONTENT=true is forbidden in production unless "
+                "LANGFUSE_ALLOW_CONTENT_IN_PRODUCTION=true (self-hosted Langfuse + DPA only)"
+            )
+    if langfuse_on and "cloud.langfuse.com" in host and capture_content:
+        raise RuntimeError(
+            "Cloud Langfuse must not receive prompt/document content in production; "
+            "set LANGFUSE_CAPTURE_CONTENT=false or disable LANGFUSE_ENABLED"
+        )
 
 
 validate_production_security()

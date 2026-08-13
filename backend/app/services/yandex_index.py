@@ -11,6 +11,7 @@ from langchain_core.retrievers import BaseRetriever
 from yandex_cloud_ml_sdk import YCloudML
 from yandex_cloud_ml_sdk.auth import APIKeyAuth
 from app.config import config
+from app.services.yandex_privacy import ycloud_ml_enable_server_data_logging
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +98,11 @@ class YandexIndexService:
         # Инициализируем SDK
         try:
             auth = APIKeyAuth(self.api_key) if self.use_api_key else self.iam_token
-            self.sdk = YCloudML(folder_id=self.folder_id, auth=auth)
+            self.sdk = YCloudML(
+                folder_id=self.folder_id,
+                auth=auth,
+                enable_server_data_logging=ycloud_ml_enable_server_data_logging(),
+            )
             logger.info(f"✅ Yandex Cloud ML SDK initialized for Vector Store with folder_id: {self.folder_id}")
             logger.info(f"📋 Using folder_id from environment: {self.folder_id}")
         except Exception as e:

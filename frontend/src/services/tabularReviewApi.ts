@@ -130,6 +130,13 @@ export interface SourceReference {
     x1: number
     y1: number
   } | null
+  /** All overlapping Docling/OCR boxes for the quote span (multi-line). */
+  bbox_regions?: Array<{
+    x0: number
+    y0: number
+    x1: number
+    y1: number
+  }> | null
   page_bbox?: {
     width: number
     height: number
@@ -1040,7 +1047,10 @@ export const tabularReviewApi = {
       id: string
       filename: string
       file_type?: string
+      folder_id?: string | null
       created_at?: string
+      dd_doc_type?: string | null
+      dd_doc_type_short_label?: string | null
     }>
     total: number
     selected_count: number

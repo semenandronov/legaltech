@@ -184,10 +184,14 @@ def apply_evidence_first_policy(
     """
     Enforce evidence rules on LLM output before persistence.
 
+    Canonicalizes quotes onto OCR spans first, then requires grounded evidence.
     Any evidence-required column without a grounded model citation → N/A.
-    Descriptive soft-keep is intentionally removed: ungrounded answers are rejected.
     """
+    from app.services.tabular_quote_then_answer import canonicalize_extraction_quotes
+
     issues: List[str] = []
+    result = canonicalize_extraction_quotes(result, file.original_text or "")
+
     if is_na_cell_value(result.cell_value):
         return CellVerificationOutcome(result=result, issues=issues)
 

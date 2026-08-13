@@ -2,13 +2,18 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from langchain_core.documents import Document
+
+from app.services.contract_cross_ref_resolve import (
+    annotate_outline_containers,
+    detect_appendix_heading,
+    OutlineAnchorRow,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +32,8 @@ class OutlineSectionEntry:
     char_start: int
     char_end: int
     section_label: str = ""
+    section_kind: str = "body"  # body | appendix | appendix_part
+    appendix_no: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -36,17 +43,27 @@ class OutlineSectionEntry:
             "char_start": self.char_start,
             "char_end": self.char_end,
             "section_label": self.section_label,
+            "section_kind": self.section_kind,
+            "appendix_no": self.appendix_no,
         }
 
     @classmethod
     def from_dict(cls, raw: Dict[str, Any]) -> "OutlineSectionEntry":
+        title = str(raw.get("section_title") or "").strip()
+        label = str(raw.get("section_label") or "").strip()
+        kind = str(raw.get("section_kind") or "").strip()
+        app = str(raw.get("appendix_no") or "").strip()
+        if not kind:
+            kind, app = detect_appendix_heading(title, label)
         return cls(
             section_root_id=str(raw.get("section_root_id") or "").strip(),
-            section_title=str(raw.get("section_title") or "").strip(),
+            section_title=title,
             section_number=str(raw.get("section_number") or "").strip(),
             char_start=int(raw.get("char_start") or 0),
             char_end=int(raw.get("char_end") or 0),
-            section_label=str(raw.get("section_label") or "").strip(),
+            section_label=label,
+            section_kind=kind or "body",
+            appendix_no=app,
         )
 
 
@@ -56,6 +73,46 @@ def _int_meta(md: Dict[str, Any], key: str) -> int:
     except (TypeError, ValueError):
         return 0
 
+
+def propagate_outline_appendix_containers(
+    entries: Sequence[OutlineSectionEntry],
+) -> List[OutlineSectionEntry]:
+    """Stamp appendix containers and propagate appendix_no onto following parts."""
+    rows = [
+        OutlineAnchorRow(
+            section_root_id=e.section_root_id,
+            section_number=e.section_number,
+            section_title=e.section_title,
+            section_label=e.section_label,
+            section_kind=e.section_kind or "body",
+            appendix_no=e.appendix_no or "",
+            char_start=e.char_start,
+            char_end=e.char_end,
+        )
+        for e in entries
+    ]
+    annotated = annotate_outline_containers(rows)
+    out: List[OutlineSectionEntry] = []
+    for row in annotated:
+        out.append(
+            OutlineSectionEntry(
+                section_root_id=row.section_root_id,
+                section_title=row.section_title,
+                section_number=row.section_number,
+                char_start=row.char_start,
+                char_end=row.char_end,
+                section_label=row.section_label,
+                section_kind=row.section_kind,
+                appendix_no=row.appendix_no,
+            )
+        )
+    return out
+
+
+def _entries_with_appendix_propagation(
+    entries: Sequence[OutlineSectionEntry],
+) -> List[OutlineSectionEntry]:
+    return propagate_outline_appendix_containers(entries)
 
 def build_outline_from_chunks(chunks: Sequence[Document]) -> Tuple[List[OutlineSectionEntry], List[str]]:
     """Aggregate macro/micro chunks into one row per section_root_id."""
@@ -73,6 +130,7 @@ def build_outline_from_chunks(chunks: Sequence[Document]) -> Tuple[List[OutlineS
         title = str(md.get("section_title") or "").strip()
         num = str(md.get("section_number") or "").strip()
         label = str(md.get("section_retrieval_label") or md.get("section_embedding_label") or "").strip()
+        kind, app = detect_appendix_heading(title, label)
         row = by_root.get(sid)
         if row is None:
             by_root[sid] = {
@@ -82,12 +140,17 @@ def build_outline_from_chunks(chunks: Sequence[Document]) -> Tuple[List[OutlineS
                 "char_start": cs,
                 "char_end": ce,
                 "section_label": label,
+                "section_kind": kind,
+                "appendix_no": app,
             }
             continue
         if cs and cs < int(row.get("char_start") or 0) or not row.get("char_start"):
             row["char_start"] = cs
             if title:
                 row["section_title"] = title
+                k2, a2 = detect_appendix_heading(title, label)
+                row["section_kind"] = k2
+                row["appendix_no"] = a2
             if num:
                 row["section_number"] = num
         if ce > int(row.get("char_end") or 0):
@@ -95,7 +158,7 @@ def build_outline_from_chunks(chunks: Sequence[Document]) -> Tuple[List[OutlineS
         if label and not row.get("section_label"):
             row["section_label"] = label
 
-    outline = [
+    raw_entries = [
         OutlineSectionEntry.from_dict(v)
         for v in sorted(by_root.values(), key=lambda x: (x.get("char_start") or 0, x.get("section_root_id") or ""))
         if (
@@ -104,6 +167,7 @@ def build_outline_from_chunks(chunks: Sequence[Document]) -> Tuple[List[OutlineS
             or str(v.get("section_label") or "").strip()
         )
     ]
+    outline = _entries_with_appendix_propagation(raw_entries)
     def_roots: List[str] = []
     for entry in outline:
         blob = f"{entry.section_title} {entry.section_label}".strip()

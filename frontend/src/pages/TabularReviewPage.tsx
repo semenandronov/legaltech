@@ -26,7 +26,8 @@ import {
 } from "../utils/tabularColumnExtractionPoll"
 import { buildTabularViewerCellData, type TabularCellClickPayload } from "../utils/tabularCellViewerData"
 import { useTabularReviewWebSocket } from "../hooks/useTabularReviewWebSocket"
-import { getCase, getDocuments } from "../services/api"
+import { getCase, getDocuments, getCaseFolders, type FolderItem } from "../services/api"
+import type { PickableCaseFile } from "../utils/groupFilesByFolder"
 import { CaseParticipantsModal } from "../components/CaseOverview/CaseParticipantsModal"
 import { buildMainNavItems } from "@/lib/mainNavItems"
 import { caseHomePath } from "@/lib/productFeatures"
@@ -105,7 +106,8 @@ const TabularReviewPage: React.FC = () => {
   const [showTableChat, setShowTableChat] = useState(true)
   const [documentSearch, setDocumentSearch] = useState('')
   const [selectedTableDocIds, setSelectedTableDocIds] = useState<string[]>([])
-  const [caseFilesForHub, setCaseFilesForHub] = useState<Array<{ id: string; filename: string }>>([])
+  const [caseFilesForHub, setCaseFilesForHub] = useState<PickableCaseFile[]>([])
+  const [caseFoldersForHub, setCaseFoldersForHub] = useState<FolderItem[]>([])
   const columnPollControllersRef = useRef<Map<string, ColumnExtractionPollController>>(new Map())
   const wsCompletedColumnRef = useRef<Set<string>>(new Set())
 
@@ -177,13 +179,23 @@ const TabularReviewPage: React.FC = () => {
 
   useEffect(() => {
     if (!caseId || reviewId) return
-    getDocuments(caseId)
-      .then((res) => {
+    Promise.all([getDocuments(caseId), getCaseFolders(caseId)])
+      .then(([docsRes, folderList]) => {
         setCaseFilesForHub(
-          (res.documents || []).map((d) => ({ id: d.id, filename: d.filename })),
+          (docsRes.documents || []).map((d) => ({
+            id: d.id,
+            filename: d.filename,
+            folder_id: d.folder_id,
+            dd_doc_type: d.dd_doc_type,
+            dd_doc_type_short_label: d.dd_doc_type_short_label,
+          })),
         )
+        setCaseFoldersForHub(folderList || [])
       })
-      .catch(() => setCaseFilesForHub([]))
+      .catch(() => {
+        setCaseFilesForHub([])
+        setCaseFoldersForHub([])
+      })
   }, [caseId, reviewId])
 
   useEffect(() => {
@@ -782,6 +794,7 @@ const TabularReviewPage: React.FC = () => {
           onClose={() => navigate(`/cases/${caseId}`)}
           caseId={caseId}
           files={caseFilesForHub}
+          folders={caseFoldersForHub}
           reviews={existingReviews}
           loadingReviews={loadingReviews}
           onReviewOpen={(id) =>

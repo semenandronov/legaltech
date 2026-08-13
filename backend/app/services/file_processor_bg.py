@@ -430,6 +430,24 @@ def _process_one_file_body(
             title_hint=passport_doc_type,
         )
         save_dd_classification_on_file(file_model, dd_cls)
+        try:
+            from app.services.dd_auto_catalog import apply_dd_auto_catalog
+
+            apply_dd_auto_catalog(
+                db,
+                file_model,
+                classification=dd_cls,
+                text=text,
+                rename_generic_only=True,
+            )
+        except Exception as catalog_exc:
+            logger.warning(
+                "DD auto-catalog skipped for %s (%s): %s",
+                filename,
+                file_id,
+                catalog_exc,
+                exc_info=True,
+            )
         logger.info(
             "DD classification for %s: type=%s confidence=%s",
             filename,

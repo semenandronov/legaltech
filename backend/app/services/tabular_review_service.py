@@ -45,10 +45,34 @@ from langchain_core.prompts import ChatPromptTemplate
 import json
 import logging
 import asyncio
+import os
 import re
 from datetime import datetime, timedelta
 
+from app.security.sensitive_data import agent_debug_file_logging_enabled
+
 logger = logging.getLogger(__name__)
+
+def _emit_agent_debug(log_data: Dict[str, Any]) -> None:
+    """Cursor agent NDJSON debug sink — disabled for legal matters by default."""
+    if not agent_debug_file_logging_enabled():
+        return
+    try:
+        logger.info("[DEBUG] %s", json.dumps(log_data, ensure_ascii=False)[:500])
+    except Exception:
+        pass
+    log_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+        ".cursor",
+        "debug.log",
+    )
+    try:
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, "a") as f:
+            f.write(json.dumps(log_data, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
 
 
 def sanitize_sheet_title(name: str) -> str:
@@ -1014,15 +1038,7 @@ class TabularReviewService:
                         "runId": "run1",
                         "hypothesisId": "A"
                     }
-                    logger.info(f"[DEBUG] {json.dumps(log_data)}")
-                    # Try to write to file if local
-                    log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.cursor', 'debug.log')
-                    try:
-                        os.makedirs(os.path.dirname(log_path), exist_ok=True)
-                        with open(log_path, 'a') as f:
-                            f.write(json.dumps(log_data) + "\n")
-                    except Exception:
-                        pass  # File logging not available (e.g., on Render)
+                    _emit_agent_debug(log_data)
                     # #endregion
                     
                     if result is None:
@@ -1063,13 +1079,7 @@ class TabularReviewService:
                         "runId": "run1",
                         "hypothesisId": "B"
                     }
-                    logger.info(f"[DEBUG] {json.dumps(log_data)}")
-                    log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.cursor', 'debug.log')
-                    try:
-                        with open(log_path, 'a') as f:
-                            f.write(json.dumps(log_data) + "\n")
-                    except Exception:
-                        pass
+                    _emit_agent_debug(log_data)
                     # #endregion
                     
                     result_dict['column_type'] = column.column_type
@@ -1094,13 +1104,7 @@ class TabularReviewService:
                         "runId": "run1",
                         "hypothesisId": "B"
                     }
-                    logger.info(f"[DEBUG] {json.dumps(log_data)}")
-                    log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.cursor', 'debug.log')
-                    try:
-                        with open(log_path, 'a') as f:
-                            f.write(json.dumps(log_data) + "\n")
-                    except Exception:
-                        pass
+                    _emit_agent_debug(log_data)
                     # #endregion
                     
                     cell_value = validated_result.cell_value  # Уже валидировано и нормализовано
@@ -1184,13 +1188,7 @@ class TabularReviewService:
                         "runId": "run1",
                         "hypothesisId": "C"
                     }
-                    logger.info(f"[DEBUG] {json.dumps(log_data)}")
-                    log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.cursor', 'debug.log')
-                    try:
-                        with open(log_path, 'a') as f:
-                            f.write(json.dumps(log_data) + "\n")
-                    except Exception:
-                        pass
+                    _emit_agent_debug(log_data)
                     # #endregion
                     
                     try:
@@ -1219,13 +1217,7 @@ class TabularReviewService:
                             "runId": "run1",
                             "hypothesisId": "C"
                         }
-                        logger.info(f"[DEBUG] {json.dumps(log_data)}")
-                        log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.cursor', 'debug.log')
-                        try:
-                            with open(log_path, 'a') as f:
-                                f.write(json.dumps(log_data) + "\n")
-                        except Exception:
-                            pass
+                        _emit_agent_debug(log_data)
                         # #endregion
                         
                         cell_value = parsed_result.cell_value  # Валидированное значение
@@ -1250,13 +1242,7 @@ class TabularReviewService:
                             "runId": "run1",
                             "hypothesisId": "D"
                         }
-                        logger.info(f"[DEBUG] {json.dumps(log_data)}")
-                        log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.cursor', 'debug.log')
-                        try:
-                            with open(log_path, 'a') as f:
-                                f.write(json.dumps(log_data) + "\n")
-                        except Exception:
-                            pass
+                        _emit_agent_debug(log_data)
                         # #endregion
                         cell_value = cell_value_raw
                         normalized_value = None
@@ -1293,13 +1279,7 @@ class TabularReviewService:
                     "runId": "run1",
                     "hypothesisId": "E"
                 }
-                logger.info(f"[DEBUG] {json.dumps(log_data)}")
-                log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.cursor', 'debug.log')
-                try:
-                    with open(log_path, 'a') as f:
-                        f.write(json.dumps(log_data) + "\n")
-                except Exception:
-                    pass
+                _emit_agent_debug(log_data)
                 # #endregion
                 
                 try:
@@ -1328,13 +1308,7 @@ class TabularReviewService:
                         "runId": "run1",
                         "hypothesisId": "E"
                     }
-                    logger.info(f"[DEBUG] {json.dumps(log_data)}")
-                    log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.cursor', 'debug.log')
-                    try:
-                        with open(log_path, 'a') as f:
-                            f.write(json.dumps(log_data) + "\n")
-                    except Exception:
-                        pass
+                    _emit_agent_debug(log_data)
                     # #endregion
                     
                     cell_value = parsed_result.cell_value
@@ -1359,13 +1333,7 @@ class TabularReviewService:
                         "runId": "run1",
                         "hypothesisId": "E"
                     }
-                    logger.info(f"[DEBUG] {json.dumps(log_data)}")
-                    log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.cursor', 'debug.log')
-                    try:
-                        with open(log_path, 'a') as f:
-                            f.write(json.dumps(log_data) + "\n")
-                    except Exception:
-                        pass
+                    _emit_agent_debug(log_data)
                     # #endregion
                     cell_value = cell_value_raw
                     normalized_value = None

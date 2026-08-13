@@ -762,57 +762,97 @@ async def get_cell_details(
             case_file = db.query(CaseFile).filter(CaseFile.id == file_id).first()
             if review and case_file and source_references:
                 # Always re-resolve from leaf chunks: micro may replace a wrong macro bbox.
+                from app.services.tabular_quote_then_answer import (
+                    canonicalize_extraction_quotes,
+                )
+                from app.services.tabular_review_models import TabularCellExtractionModel
+
+                original_refs = [
+                    dict(r) if isinstance(r, dict) else r
+                    for r in (cell.source_references or [])
+                ]
+                original_verbatim = cell.verbatim_extract
+
+                # Repair paraphrased quotes on read before geometry attach.
+                temp = TabularCellExtractionModel(
+                    cell_value=cell.cell_value or "",
+                    verbatim_extract=cell.verbatim_extract,
+                    source_references=source_references,
+                    reasoning=cell.reasoning or "",
+                    confidence=float(cell.confidence_score or 0.0),
+                    column_type=(column.column_type if column else "text") or "text",
+                )
+                repaired = canonicalize_extraction_quotes(
+                    temp, case_file.original_text or ""
+                )
+                source_references = repaired.source_references or source_references
+                if repaired.verbatim_extract:
+                    cell.verbatim_extract = repaired.verbatim_extract
+
                 docs = load_file_chunk_docs(case_id=review.case_id, file_id=file_id)
-                if docs:
-                    enriched = enrich_source_references_with_geometry(
+                enriched = (
+                    enrich_source_references_with_geometry(
                         refs=source_references,
                         docs=docs,
                         original_text=case_file.original_text or "",
+                        quote_fallback=(cell.verbatim_extract or ""),
                     )
+                    if docs
+                    else [
+                        dict(r) if isinstance(r, dict) else r
+                        for r in source_references
+                        if isinstance(r, dict)
+                    ]
+                )
 
-                    def _bbox_key(ref: Any) -> Optional[Tuple[float, float, float, float]]:
-                        if not isinstance(ref, dict):
-                            return None
-                        b = ref.get("bbox")
-                        if not isinstance(b, dict):
-                            return None
-                        try:
-                            return (
-                                float(b["x0"]),
-                                float(b["y0"]),
-                                float(b["x1"]),
-                                float(b["y1"]),
-                            )
-                        except (KeyError, TypeError, ValueError):
-                            return None
-
-                    def _span_key(ref: Any) -> Optional[Tuple[Any, ...]]:
-                        if not isinstance(ref, dict):
-                            return None
-                        return (ref.get("char_start"), ref.get("char_end"), ref.get("page"))
-
-                    changed = (
-                        any(
-                            _bbox_key(before) != _bbox_key(after)
-                            or _span_key(before) != _span_key(after)
-                            for before, after in zip(source_references, enriched)
+                def _bbox_key(ref: Any) -> Optional[Tuple[float, float, float, float]]:
+                    if not isinstance(ref, dict):
+                        return None
+                    b = ref.get("bbox")
+                    if not isinstance(b, dict):
+                        return None
+                    try:
+                        return (
+                            float(b["x0"]),
+                            float(b["y0"]),
+                            float(b["x1"]),
+                            float(b["y1"]),
                         )
-                        or len(source_references) != len(enriched)
+                    except (KeyError, TypeError, ValueError):
+                        return None
+
+                def _span_key(ref: Any) -> Optional[Tuple[Any, ...]]:
+                    if not isinstance(ref, dict):
+                        return None
+                    return (
+                        ref.get("char_start"),
+                        ref.get("char_end"),
+                        ref.get("page"),
+                        (ref.get("text") or "")[:80],
                     )
-                    source_references = enriched
-                    if changed:
-                        cell.source_references = enriched
-                        # Keep primary deep-link columns in sync with repaired refs.
-                        first = enriched[0] if enriched else None
-                        if isinstance(first, dict):
-                            if first.get("char_start") is not None:
-                                cell.primary_source_char_start = first.get("char_start")
-                            if first.get("char_end") is not None:
-                                cell.primary_source_char_end = first.get("char_end")
-                            if first.get("page") is not None:
-                                cell.source_page = first.get("page")
-                        db.add(cell)
-                        db.commit()
+
+                changed = (
+                    cell.verbatim_extract != original_verbatim
+                    or len(original_refs) != len(enriched)
+                    or any(
+                        _bbox_key(before) != _bbox_key(after)
+                        or _span_key(before) != _span_key(after)
+                        for before, after in zip(original_refs, enriched)
+                    )
+                )
+                source_references = enriched
+                if changed:
+                    cell.source_references = enriched
+                    first = enriched[0] if enriched else None
+                    if isinstance(first, dict):
+                        if first.get("char_start") is not None:
+                            cell.primary_source_char_start = first.get("char_start")
+                        if first.get("char_end") is not None:
+                            cell.primary_source_char_end = first.get("char_end")
+                        if first.get("page") is not None:
+                            cell.source_page = first.get("page")
+                    db.add(cell)
+                    db.commit()
         except Exception:
             logger.debug(
                 "source_references geometry enrich skipped review=%s file=%s",
@@ -2153,16 +2193,29 @@ async def get_available_files(
         # Get all files for the case
         files = db.query(FileModel).filter(FileModel.case_id == review.case_id).all()
         
-        return {
-            "files": [
+        from app.routes.cases import _dd_fields_from_row
+
+        file_payloads = []
+        for file in files:
+            dd = _dd_fields_from_row(
+                dd_doc_type=file.dd_doc_type,
+                dd_doc_type_confidence=file.dd_doc_type_confidence,
+                dd_doc_type_source=file.dd_doc_type_source,
+            )
+            file_payloads.append(
                 {
                     "id": file.id,
                     "filename": file.filename,
                     "file_type": file.file_type,
-                    "created_at": file.created_at.isoformat() if file.created_at else None
+                    "folder_id": file.folder_id,
+                    "created_at": file.created_at.isoformat() if file.created_at else None,
+                    "dd_doc_type": dd["dd_doc_type"],
+                    "dd_doc_type_short_label": dd["dd_doc_type_short_label"],
                 }
-                for file in files
-            ],
+            )
+
+        return {
+            "files": file_payloads,
             "total": len(files),
             "selected_count": len(review.selected_file_ids) if review.selected_file_ids else 0
         }

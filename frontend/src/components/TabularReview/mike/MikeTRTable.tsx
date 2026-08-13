@@ -66,7 +66,8 @@ export interface MikeTRTableProps {
   virtualTopSpacer?: number
   virtualBottomSpacer?: number
   virtualRows?: Array<{ index: number }>
-  rowRef?: (rowIndex: number) => (node: HTMLDivElement | null) => void
+  /** TanStack Virtual measureElement — stable ref; row must have data-index. */
+  rowMeasureRef?: React.Ref<HTMLDivElement>
   emptyFilteredMessage?: string
 }
 
@@ -106,7 +107,7 @@ export const MikeTRTable = forwardRef<MikeTRTableHandle, MikeTRTableProps>(funct
     virtualTopSpacer = 0,
     virtualBottomSpacer = 0,
     virtualRows,
-    rowRef,
+    rowMeasureRef,
     emptyFilteredMessage = 'Нет результатов.',
   },
   ref,
@@ -176,10 +177,13 @@ export const MikeTRTable = forwardRef<MikeTRTableHandle, MikeTRTableProps>(funct
     )
   }
 
-  function handleScrollRef(node: HTMLDivElement | null) {
-    internalScrollRef.current = node
-    scrollRef?.(node)
-  }
+  const handleScrollRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      internalScrollRef.current = node
+      scrollRef?.(node)
+    },
+    [scrollRef],
+  )
 
   if (loading) {
     return (
@@ -374,7 +378,7 @@ export const MikeTRTable = forwardRef<MikeTRTableHandle, MikeTRTableProps>(funct
             <div
               key={row.fileId}
               data-index={rowIndex}
-              ref={rowRef?.(rowIndex)}
+              ref={rowMeasureRef}
               className={`flex items-stretch ${rowBg}`}
               style={{ minWidth: totalContentWidth }}
             >

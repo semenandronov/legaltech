@@ -41,6 +41,7 @@ _CONTRACT_LIKE = frozenset(
         "supply",
         "services",
         "works",
+        "contract_other",
         "addendum",
         "appendix_spec",
     }
@@ -412,7 +413,25 @@ def extract_contract_facts_rules(
     obj_m = _LEASED_OBJECT_EXPLICIT_RE.search(head) or _LEASED_OBJECT_FROM_TITLE_RE.search(head)
     if obj_m:
         obj = re.sub(r"\s+", " ", obj_m.group(1)).strip(" .,;:«»\"'")
-        if is_plausible_leased_object(obj) and not _GENERIC_LEASE_OBJECT_RE.match(obj):
+        # Subject that defers composition to an appendix/spec is not a complete
+        # leased_object — tabular must follow the appendix node instead.
+        defer_window = head[obj_m.start() : min(len(head), obj_m.end() + 220)]
+        defers_to_appendix = bool(
+            re.search(
+                r"(?i)(?:указан\w*|приведен\w*|см\.?|согласно|детализац\w*)"
+                r".{0,40}(?:приложени|спецификац|exhibit|schedule|annex)",
+                defer_window,
+            )
+            or re.search(
+                r"(?i)(?:приложени|спецификац).{0,40}(?:указан|приведен|см\.?)",
+                defer_window,
+            )
+        )
+        if (
+            is_plausible_leased_object(obj)
+            and not _GENERIC_LEASE_OBJECT_RE.match(obj)
+            and not defers_to_appendix
+        ):
             fields["leased_object"] = _pack_field(
                 obj,
                 verbatim=obj_m.group(0)[:240],
