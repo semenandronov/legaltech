@@ -13,7 +13,7 @@ asyncpg>=0.29.0
 greenlet>=3.0.0
 openai==2.30.0
 python-dotenv==1.0.1
-pypdf==6.14.2
+pypdf==6.21.2
 aiofiles==24.1.0
 pymupdf>=1.24.0
 # Required for borderless statement tables (T-Bank). Part of normal `pip install -r …`.
